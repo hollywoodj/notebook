@@ -1,0 +1,16 @@
+/target/
+**/.DS_Store
+node_modules/
+dist/
+*.db
+*.db-*
+attachments/
+.env
+.idea/
+.vscode/
+*.log
+.cargo/
+.rustup/
+apps/desktop/release/
+apps/desktop/electron-resources/bin/*
+!apps/desktop/electron-resources/bin/.gitkeep
