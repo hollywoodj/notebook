@@ -166,7 +166,9 @@ export default function App() {
       <div className="boot-screen">
         <h1>Notebook</h1>
         <p className="error">{error}</p>
-        <p>Start the API with: <code>cargo run -p notebook-api</code></p>
+        {!window.notebookDesktop?.isElectron && (
+          <p>Start the API with: <code>cargo run -p notebook-api</code></p>
+        )}
       </div>
     );
   }
@@ -174,7 +176,7 @@ export default function App() {
   if (!ready) {
     return (
       <div className="boot-screen">
-        <div className="logo-mark">P</div>
+        <div className="logo-mark">N</div>
         <p>Starting Notebook…</p>
       </div>
     );
@@ -185,7 +187,7 @@ export default function App() {
       <aside className="sidebar">
         <div className="sidebar-header">
           <div className="logo">
-            <span className="logo-mark">P</span>
+            <span className="logo-mark">N</span>
             <span>Notebook</span>
           </div>
           <button className="primary-btn" onClick={createNote} title="New Note">

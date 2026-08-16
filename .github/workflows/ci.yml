@@ -11,8 +11,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build workspace
-        run: cargo build --workspace --release
+      - name: Build API and CLI
+        run: cargo build --release -p notebook-core -p notebook-api -p notebook-cli
       - name: Smoke test API + CLI
         run: |
           ./target/release/notebook-api &
@@ -22,23 +22,7 @@ jobs:
           ./target/release/notebook --api http://127.0.0.1:8787 notebook list
           kill $API_PID
 
-  build-desktop-macos:
-    runs-on: macos-latest
-    needs: test-rust
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Install desktop deps
-        working-directory: apps/desktop
-        run: npm install
-      - name: Build Tauri app (macOS)
-        working-directory: apps/desktop
-        run: npm run tauri build
-
-  build-desktop-windows:
+  build-electron-windows:
     runs-on: windows-latest
     needs: test-rust
     steps:
@@ -47,9 +31,34 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Build API
+        run: cargo build --release -p notebook-api
       - name: Install desktop deps
         working-directory: apps/desktop
         run: npm install
-      - name: Build Tauri app (Windows)
+      - name: Build Electron installer (Windows)
         working-directory: apps/desktop
-        run: npm run tauri build
+        run: npm run electron:build:win
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: notebook-windows-installer
+          path: apps/desktop/release/
+
+  build-electron-macos:
+    runs-on: macos-latest
+    needs: test-rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build API
+        run: cargo build --release -p notebook-api
+      - name: Install desktop deps
+        working-directory: apps/desktop
+        run: npm install
+      - name: Build Electron app (macOS)
+        working-directory: apps/desktop
+        run: npm run electron:build:mac

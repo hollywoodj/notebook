@@ -7,3 +7,11 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+interface NotebookDesktopBridge {
+  isElectron: boolean;
+}
+
+interface Window {
+  notebookDesktop?: NotebookDesktopBridge;
+}

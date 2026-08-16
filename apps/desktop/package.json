@@ -2,12 +2,22 @@
   "name": "notebook-desktop",
   "private": true,
   "version": "0.1.0",
+  "description": "Notebook desktop app (Electron + React)",
+  "author": "Notebook Contributors",
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "electron:dev": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:1420 && electron .\"",
+    "build:electron": "cross-env ELECTRON=true tsc && cross-env ELECTRON=true vite build",
+    "electron:prepare": "node scripts/prepare-electron-resources.mjs",
+    "electron:build": "npm run build:electron && npm run electron:prepare && electron-builder",
+    "electron:build:win": "npm run build:electron && npm run electron:prepare && electron-builder --win",
+    "electron:build:mac": "npm run build:electron && npm run electron:prepare && electron-builder --mac",
+    "electron:build:linux": "npm run build:electron && npm run electron:prepare && electron-builder --linux"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.2.0",
@@ -30,7 +40,59 @@
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8",
     "typescript": "^5.7.3",
-    "vite": "^6.0.7"
+    "vite": "^6.0.7",
+    "wait-on": "^8.0.2"
+  },
+  "build": {
+    "appId": "app.notebook.desktop",
+    "productName": "Notebook",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "electron-resources/bin",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "build/icons",
+      "category": "Office"
+    }
   }
 }
