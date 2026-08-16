@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use pinbook_api::ServerConfig;
+use notebook_api::ServerConfig;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -11,8 +11,8 @@ pub fn run() {
             let db_path = app
                 .path()
                 .app_data_dir()
-                .map(|p| p.join("pinbook.db"))
-                .unwrap_or_else(|_| PathBuf::from("pinbook.db"));
+                .map(|p| p.join("notebook.db"))
+                .unwrap_or_else(|_| PathBuf::from("notebook.db"));
 
             if let Some(parent) = db_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -21,8 +21,8 @@ pub fn run() {
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
                 rt.block_on(async {
-                    pinbook_api::init_tracing();
-                    let _ = pinbook_api::run(ServerConfig {
+                    notebook_api::init_tracing();
+                    let _ = notebook_api::run(ServerConfig {
                         host: "127.0.0.1".into(),
                         port: 8787,
                         db_path: Some(db_path.to_string_lossy().to_string()),

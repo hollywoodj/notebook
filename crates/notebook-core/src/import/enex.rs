@@ -7,7 +7,7 @@ use md5;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
-use crate::error::{PinbookError, Result};
+use crate::error::{NotebookError, Result};
 
 #[derive(Debug, Clone)]
 pub struct EnexExport {
@@ -166,7 +166,7 @@ pub fn parse_enex(data: &[u8]) -> Result<EnexExport> {
                 }
             }
             Ok(Event::Eof) => break,
-            Err(err) => return Err(PinbookError::Other(err.to_string())),
+            Err(err) => return Err(NotebookError::Other(err.to_string())),
             _ => {}
         }
         buf.clear();
@@ -219,7 +219,7 @@ impl PartialResource {
     fn into_resource(self) -> Result<EnexResource> {
         let data = base64::engine::general_purpose::STANDARD
             .decode(self.data_b64.replace('\n', "").replace('\r', ""))
-            .map_err(|e| PinbookError::Other(format!("invalid base64 in resource: {e}")))?;
+            .map_err(|e| NotebookError::Other(format!("invalid base64 in resource: {e}")))?;
         let hash = format!("{:x}", md5::compute(&data));
         Ok(EnexResource {
             data,
@@ -354,7 +354,7 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
             Ok(Event::Eof) => break,
             Err(err) => {
                 if out.is_empty() {
-                    return Err(PinbookError::Other(format!("invalid ENML: {err}")));
+                    return Err(NotebookError::Other(format!("invalid ENML: {err}")));
                 }
                 break;
             }
@@ -415,12 +415,12 @@ mod tests {
 
     #[test]
     fn imports_enex_into_database() {
-        let dir = std::env::temp_dir().join("pinbook-import-test");
+        let dir = std::env::temp_dir().join("notebook-import-test");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let db_path = dir.join("test.db");
         let db = crate::db::Database::open(&db_path).unwrap();
-        let service = crate::service::PinbookService::new(db);
+        let service = crate::service::NotebookService::new(db);
         let result = service
             .import_enex(
                 SAMPLE.as_bytes(),

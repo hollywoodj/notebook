@@ -9,9 +9,9 @@ use axum::{
     routing::{delete, get, post},
     Json, Router,
 };
-use pinbook_core::{
+use notebook_core::{
     CreateNotebookRequest, CreateNoteRequest, CreateStackRequest, CreateTagRequest, Database,
-    EnexImportRequest, HealthResponse, PinbookService, SearchQuery, UpdateNoteRequest,
+    EnexImportRequest, HealthResponse, NotebookService, SearchQuery, UpdateNoteRequest,
     UpdateNotebookRequest,
 };
 use serde::Deserialize;
@@ -30,12 +30,12 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            host: std::env::var("PINBOOK_HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
-            port: std::env::var("PINBOOK_PORT")
+            host: std::env::var("NOTEBOOK_HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
+            port: std::env::var("NOTEBOOK_PORT")
                 .ok()
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(8787),
-            db_path: std::env::var("PINBOOK_DB").ok(),
+            db_path: std::env::var("NOTEBOOK_DB").ok(),
         }
     }
 }
@@ -44,7 +44,7 @@ pub fn init_tracing() {
     let _ = tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "pinbook_api=info,tower_http=info".into()),
+                .unwrap_or_else(|_| "notebook_api=info,tower_http=info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .try_init();
@@ -54,14 +54,14 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     let db_path = config.db_path.unwrap_or_else(|| {
         dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("pinbook")
-            .join("pinbook.db")
+            .join("notebook")
+            .join("notebook.db")
             .to_string_lossy()
             .to_string()
     });
 
     let db = Database::open(&db_path)?;
-    let service = PinbookService::new(db);
+    let service = NotebookService::new(db);
     let state = AppState {
         service: Arc::new(Mutex::new(service)),
     };
@@ -69,7 +69,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     let app = build_router(state);
 
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
-    tracing::info!("Pinbook API listening on http://{addr}");
+    tracing::info!("Notebook API listening on http://{addr}");
     tracing::info!("Database: {db_path}");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -128,7 +128,7 @@ fn build_router(state: AppState) -> Router {
 
 #[derive(Clone)]
 struct AppState {
-    service: Arc<Mutex<PinbookService>>,
+    service: Arc<Mutex<NotebookService>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -156,7 +156,7 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
 async fn list_notebooks(
     State(state): State<AppState>,
     Query(q): Query<ListNotebooksQuery>,
-) -> Result<Json<Vec<pinbook_core::Notebook>>, AppError> {
+) -> Result<Json<Vec<notebook_core::Notebook>>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.list_notebooks(q.include_deleted.unwrap_or(false))?))
 }
@@ -164,7 +164,7 @@ async fn list_notebooks(
 async fn create_notebook(
     State(state): State<AppState>,
     Json(req): Json<CreateNotebookRequest>,
-) -> Result<Json<pinbook_core::Notebook>, AppError> {
+) -> Result<Json<notebook_core::Notebook>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.create_notebook(req)?))
 }
@@ -172,7 +172,7 @@ async fn create_notebook(
 async fn get_notebook(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<pinbook_core::Notebook>, AppError> {
+) -> Result<Json<notebook_core::Notebook>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.get_notebook(id)?))
 }
@@ -181,7 +181,7 @@ async fn update_notebook(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateNotebookRequest>,
-) -> Result<Json<pinbook_core::Notebook>, AppError> {
+) -> Result<Json<notebook_core::Notebook>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.update_notebook(id, req)?))
 }
@@ -198,14 +198,14 @@ async fn delete_notebook(
 async fn restore_notebook(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<pinbook_core::Notebook>, AppError> {
+) -> Result<Json<notebook_core::Notebook>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.restore_notebook(id)?))
 }
 
 async fn list_stacks(
     State(state): State<AppState>,
-) -> Result<Json<Vec<pinbook_core::Stack>>, AppError> {
+) -> Result<Json<Vec<notebook_core::Stack>>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.list_stacks()?))
 }
@@ -213,7 +213,7 @@ async fn list_stacks(
 async fn create_stack(
     State(state): State<AppState>,
     Json(req): Json<CreateStackRequest>,
-) -> Result<Json<pinbook_core::Stack>, AppError> {
+) -> Result<Json<notebook_core::Stack>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.create_stack(req)?))
 }
@@ -221,7 +221,7 @@ async fn create_stack(
 async fn get_stack(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<pinbook_core::Stack>, AppError> {
+) -> Result<Json<notebook_core::Stack>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.get_stack(id)?))
 }
@@ -237,7 +237,7 @@ async fn delete_stack(
 
 async fn list_tags(
     State(state): State<AppState>,
-) -> Result<Json<Vec<pinbook_core::Tag>>, AppError> {
+) -> Result<Json<Vec<notebook_core::Tag>>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.list_tags()?))
 }
@@ -245,7 +245,7 @@ async fn list_tags(
 async fn create_tag(
     State(state): State<AppState>,
     Json(req): Json<CreateTagRequest>,
-) -> Result<Json<pinbook_core::Tag>, AppError> {
+) -> Result<Json<notebook_core::Tag>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.create_tag(req)?))
 }
@@ -253,7 +253,7 @@ async fn create_tag(
 async fn get_tag(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<pinbook_core::Tag>, AppError> {
+) -> Result<Json<notebook_core::Tag>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.get_tag(id)?))
 }
@@ -270,7 +270,7 @@ async fn delete_tag(
 async fn list_notes(
     State(state): State<AppState>,
     Query(q): Query<ListNotesQuery>,
-) -> Result<Json<Vec<pinbook_core::NoteSummary>>, AppError> {
+) -> Result<Json<Vec<notebook_core::NoteSummary>>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.list_notes(
         q.notebook_id,
@@ -283,7 +283,7 @@ async fn list_notes(
 async fn create_note(
     State(state): State<AppState>,
     Json(req): Json<CreateNoteRequest>,
-) -> Result<Json<pinbook_core::Note>, AppError> {
+) -> Result<Json<notebook_core::Note>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.create_note(req)?))
 }
@@ -291,7 +291,7 @@ async fn create_note(
 async fn get_note(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<pinbook_core::Note>, AppError> {
+) -> Result<Json<notebook_core::Note>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.get_note(id)?))
 }
@@ -300,7 +300,7 @@ async fn update_note(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateNoteRequest>,
-) -> Result<Json<pinbook_core::Note>, AppError> {
+) -> Result<Json<notebook_core::Note>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.update_note(id, req)?))
 }
@@ -317,7 +317,7 @@ async fn delete_note(
 async fn restore_note(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<pinbook_core::Note>, AppError> {
+) -> Result<Json<notebook_core::Note>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.restore_note(id)?))
 }
@@ -334,7 +334,7 @@ async fn permanently_delete_note(
 async fn list_revisions(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<Vec<pinbook_core::NoteRevision>>, AppError> {
+) -> Result<Json<Vec<notebook_core::NoteRevision>>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.list_revisions(id)?))
 }
@@ -342,7 +342,7 @@ async fn list_revisions(
 async fn restore_revision(
     State(state): State<AppState>,
     Path((id, revision_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<pinbook_core::Note>, AppError> {
+) -> Result<Json<notebook_core::Note>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.restore_revision(id, revision_id)?))
 }
@@ -350,7 +350,7 @@ async fn restore_revision(
 async fn list_attachments(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<Vec<pinbook_core::Attachment>>, AppError> {
+) -> Result<Json<Vec<notebook_core::Attachment>>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.list_attachments(id)?))
 }
@@ -359,7 +359,7 @@ async fn upload_attachment(
     State(state): State<AppState>,
     Path(note_id): Path<Uuid>,
     mut multipart: Multipart,
-) -> Result<Json<pinbook_core::Attachment>, AppError> {
+) -> Result<Json<notebook_core::Attachment>, AppError> {
     let mut filename = String::from("attachment");
     let mut mime = String::from("application/octet-stream");
     let mut data = Vec::new();
@@ -391,7 +391,7 @@ async fn upload_attachment(
 async fn get_attachment(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<pinbook_core::Attachment>, AppError> {
+) -> Result<Json<notebook_core::Attachment>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.get_attachment(id)?))
 }
@@ -427,7 +427,7 @@ async fn delete_attachment(
 
 async fn list_shortcuts(
     State(state): State<AppState>,
-) -> Result<Json<Vec<pinbook_core::NoteSummary>>, AppError> {
+) -> Result<Json<Vec<notebook_core::NoteSummary>>, AppError> {
     let svc = state.service.lock().await;
     let shortcuts = svc.list_shortcuts()?;
     Ok(Json(shortcuts.into_iter().map(|(_, n)| n).collect()))
@@ -436,7 +436,7 @@ async fn list_shortcuts(
 async fn add_shortcut(
     State(state): State<AppState>,
     Path(note_id): Path<Uuid>,
-) -> Result<Json<pinbook_core::Shortcut>, AppError> {
+) -> Result<Json<notebook_core::Shortcut>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.add_shortcut(note_id)?))
 }
@@ -453,7 +453,7 @@ async fn remove_shortcut(
 async fn search(
     State(state): State<AppState>,
     Query(q): Query<SearchQuery>,
-) -> Result<Json<pinbook_core::SearchResult>, AppError> {
+) -> Result<Json<notebook_core::SearchResult>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.search(q)?))
 }
@@ -475,7 +475,7 @@ async fn import_enex(
     State(state): State<AppState>,
     Query(q): Query<ImportEnexQuery>,
     mut multipart: Multipart,
-) -> Result<Json<pinbook_core::EnexImportResult>, AppError> {
+) -> Result<Json<notebook_core::EnexImportResult>, AppError> {
     let mut data = Vec::new();
     while let Some(field) = multipart
         .next_field()
@@ -505,25 +505,25 @@ async fn import_enex(
     )?))
 }
 
-struct AppError(pinbook_core::PinbookError);
+struct AppError(notebook_core::NotebookError);
 
-impl From<pinbook_core::PinbookError> for AppError {
-    fn from(e: pinbook_core::PinbookError) -> Self {
+impl From<notebook_core::NotebookError> for AppError {
+    fn from(e: notebook_core::NotebookError) -> Self {
         Self(e)
     }
 }
 
 impl AppError {
     fn bad_request(msg: String) -> Self {
-        Self(pinbook_core::PinbookError::InvalidInput(msg))
+        Self(notebook_core::NotebookError::InvalidInput(msg))
     }
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match &self.0 {
-            pinbook_core::PinbookError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
-            pinbook_core::PinbookError::InvalidInput(msg) => {
+            notebook_core::NotebookError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
+            notebook_core::NotebookError::InvalidInput(msg) => {
                 (StatusCode::BAD_REQUEST, msg.clone())
             }
             _ => (

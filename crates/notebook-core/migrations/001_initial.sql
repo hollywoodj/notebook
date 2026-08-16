@@ -1,4 +1,4 @@
--- Pinbook schema: Evernote-compatible note storage (no AI features)
+-- Notebook schema: Evernote-compatible note storage (no AI features)
 
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,

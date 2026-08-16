@@ -96,7 +96,7 @@ export default function App() {
           await new Promise((r) => setTimeout(r, 200));
         }
       }
-      setError("Could not connect to Pinbook API on http://127.0.0.1:8787");
+      setError("Could not connect to Notebook API on http://127.0.0.1:8787");
     })();
   }, [refreshMeta, refreshNotes]);
 
@@ -164,9 +164,9 @@ export default function App() {
   if (error) {
     return (
       <div className="boot-screen">
-        <h1>Pinbook</h1>
+        <h1>Notebook</h1>
         <p className="error">{error}</p>
-        <p>Start the API with: <code>cargo run -p pinbook-api</code></p>
+        <p>Start the API with: <code>cargo run -p notebook-api</code></p>
       </div>
     );
   }
@@ -175,7 +175,7 @@ export default function App() {
     return (
       <div className="boot-screen">
         <div className="logo-mark">P</div>
-        <p>Starting Pinbook…</p>
+        <p>Starting Notebook…</p>
       </div>
     );
   }
@@ -186,7 +186,7 @@ export default function App() {
         <div className="sidebar-header">
           <div className="logo">
             <span className="logo-mark">P</span>
-            <span>Pinbook</span>
+            <span>Notebook</span>
           </div>
           <button className="primary-btn" onClick={createNote} title="New Note">
             +

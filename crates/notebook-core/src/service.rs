@@ -3,14 +3,14 @@ use rusqlite::{params, OptionalExtension};
 use uuid::Uuid;
 
 use crate::db::Database;
-use crate::error::{PinbookError, Result};
+use crate::error::{NotebookError, Result};
 use crate::models::*;
 
-pub struct PinbookService {
+pub struct NotebookService {
     db: Database,
 }
 
-impl PinbookService {
+impl NotebookService {
     pub fn new(db: Database) -> Self {
         Self { db }
     }
@@ -30,7 +30,7 @@ impl PinbookService {
     fn parse_dt(s: &str) -> Result<DateTime<Utc>> {
         DateTime::parse_from_rfc3339(s)
             .map(|dt| dt.with_timezone(&Utc))
-            .map_err(|e| PinbookError::Other(e.to_string()))
+            .map_err(|e| NotebookError::Other(e.to_string()))
     }
 
     fn optional_dt(s: Option<String>) -> Result<Option<DateTime<Utc>>> {
@@ -64,7 +64,7 @@ impl PinbookService {
             })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(PinbookError::from)
+            .map_err(NotebookError::from)
     }
 
     pub fn create_notebook(&self, req: CreateNotebookRequest) -> Result<Notebook> {
@@ -114,7 +114,7 @@ impl PinbookService {
             },
         )
         .optional()?
-        .ok_or_else(|| PinbookError::NotFound(format!("notebook {id}")))
+        .ok_or_else(|| NotebookError::NotFound(format!("notebook {id}")))
     }
 
     pub fn update_notebook(&self, id: Uuid, req: UpdateNotebookRequest) -> Result<Notebook> {
@@ -150,7 +150,7 @@ impl PinbookService {
             params![now, id.to_string()],
         )?;
         if affected == 0 {
-            return Err(PinbookError::NotFound(format!("notebook {id}")));
+            return Err(NotebookError::NotFound(format!("notebook {id}")));
         }
         Ok(())
     }
@@ -183,7 +183,7 @@ impl PinbookService {
             })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(PinbookError::from)
+            .map_err(NotebookError::from)
     }
 
     pub fn create_stack(&self, req: CreateStackRequest) -> Result<Stack> {
@@ -215,7 +215,7 @@ impl PinbookService {
                 },
             )
             .optional()?
-            .ok_or_else(|| PinbookError::NotFound(format!("stack {id}")))
+            .ok_or_else(|| NotebookError::NotFound(format!("stack {id}")))
     }
 
     pub fn delete_stack(&self, id: Uuid) -> Result<()> {
@@ -228,7 +228,7 @@ impl PinbookService {
             .connection()
             .execute("DELETE FROM stacks WHERE id = ?1", params![id.to_string()])?;
         if affected == 0 {
-            return Err(PinbookError::NotFound(format!("stack {id}")));
+            return Err(NotebookError::NotFound(format!("stack {id}")));
         }
         Ok(())
     }
@@ -251,7 +251,7 @@ impl PinbookService {
             })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(PinbookError::from)
+            .map_err(NotebookError::from)
     }
 
     pub fn create_tag(&self, req: CreateTagRequest) -> Result<Tag> {
@@ -282,7 +282,7 @@ impl PinbookService {
                 },
             )
             .optional()?
-            .ok_or_else(|| PinbookError::NotFound(format!("tag {id}")))
+            .ok_or_else(|| NotebookError::NotFound(format!("tag {id}")))
     }
 
     pub fn delete_tag(&self, id: Uuid) -> Result<()> {
@@ -291,7 +291,7 @@ impl PinbookService {
             .connection()
             .execute("DELETE FROM tags WHERE id = ?1", params![id.to_string()])?;
         if affected == 0 {
-            return Err(PinbookError::NotFound(format!("tag {id}")));
+            return Err(NotebookError::NotFound(format!("tag {id}")));
         }
         Ok(())
     }
@@ -489,7 +489,7 @@ impl PinbookService {
                 },
             )
             .optional()?
-            .ok_or_else(|| PinbookError::NotFound(format!("note {id}")))
+            .ok_or_else(|| NotebookError::NotFound(format!("note {id}")))
     }
 
     pub fn update_note(&self, id: Uuid, req: UpdateNoteRequest) -> Result<Note> {
@@ -566,7 +566,7 @@ impl PinbookService {
             params![now, id.to_string()],
         )?;
         if affected == 0 {
-            return Err(PinbookError::NotFound(format!("note {id}")));
+            return Err(NotebookError::NotFound(format!("note {id}")));
         }
         Ok(())
     }
@@ -591,7 +591,7 @@ impl PinbookService {
             .connection()
             .execute("DELETE FROM notes WHERE id = ?1", params![id.to_string()])?;
         if affected == 0 {
-            return Err(PinbookError::NotFound(format!("note {id}")));
+            return Err(NotebookError::NotFound(format!("note {id}")));
         }
         Ok(())
     }
@@ -632,7 +632,7 @@ impl PinbookService {
             })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(PinbookError::from)
+            .map_err(NotebookError::from)
     }
 
     pub fn restore_revision(&self, note_id: Uuid, revision_id: Uuid) -> Result<Note> {
@@ -645,7 +645,7 @@ impl PinbookService {
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
             .optional()?
-            .ok_or_else(|| PinbookError::NotFound(format!("revision {revision_id}")))?;
+            .ok_or_else(|| NotebookError::NotFound(format!("revision {revision_id}")))?;
         self.update_note(
             note_id,
             UpdateNoteRequest {
@@ -677,7 +677,7 @@ impl PinbookService {
             })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(PinbookError::from)
+            .map_err(NotebookError::from)
     }
 
     pub fn add_attachment(
@@ -728,13 +728,13 @@ impl PinbookService {
                 },
             )
             .optional()?
-            .ok_or_else(|| PinbookError::NotFound(format!("attachment {id}")))
+            .ok_or_else(|| NotebookError::NotFound(format!("attachment {id}")))
     }
 
     pub fn read_attachment_data(&self, id: Uuid) -> Result<Vec<u8>> {
         let path = self.db.attachment_path(&id);
         self.get_attachment(id)?;
-        std::fs::read(path).map_err(PinbookError::from)
+        std::fs::read(path).map_err(NotebookError::from)
     }
 
     pub fn delete_attachment(&self, id: Uuid) -> Result<()> {
@@ -744,7 +744,7 @@ impl PinbookService {
             params![id.to_string()],
         )?;
         if affected == 0 {
-            return Err(PinbookError::NotFound(format!("attachment {id}")));
+            return Err(NotebookError::NotFound(format!("attachment {id}")));
         }
         let _ = std::fs::remove_file(path);
         Ok(())
@@ -802,7 +802,7 @@ impl PinbookService {
                     })
                 },
             )
-            .map_err(PinbookError::from)
+            .map_err(NotebookError::from)
     }
 
     pub fn remove_shortcut(&self, note_id: Uuid) -> Result<()> {

@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/pinbook-core",
-    "crates/pinbook-api",
-    "crates/pinbook-cli",
+    "crates/notebook-core",
+    "crates/notebook-api",
+    "crates/notebook-cli",
     "apps/desktop/src-tauri",
 ]
 
@@ -11,7 +11,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-authors = ["Pinbook Contributors"]
+authors = ["Notebook Contributors"]
 
 [workspace.dependencies]
 anyhow = "1"

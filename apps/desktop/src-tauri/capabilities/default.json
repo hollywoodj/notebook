@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "identifier": "app.pinbook.desktop",
+  "identifier": "app.notebook.desktop",
   "permissions": [
     "core:default",
     "shell:allow-open"

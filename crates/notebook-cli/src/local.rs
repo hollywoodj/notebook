@@ -1,6 +1,6 @@
 use anyhow::Result;
-use pinbook_core::{
-    CreateNotebookRequest, CreateStackRequest, CreateTagRequest, CreateNoteRequest, PinbookService,
+use notebook_core::{
+    CreateNotebookRequest, CreateStackRequest, CreateTagRequest, CreateNoteRequest, NotebookService,
     EnexImportRequest, EnexImportResult, SearchQuery, UpdateNoteRequest,
 };
 use uuid::Uuid;
@@ -9,7 +9,7 @@ use crate::{
     ImportAction, NotebookAction, NoteAction, ShortcutAction, StackAction, TagAction, TrashAction,
 };
 
-pub fn import(service: &PinbookService, action: &ImportAction, json_out: bool) -> Result<()> {
+pub fn import(service: &NotebookService, action: &ImportAction, json_out: bool) -> Result<()> {
     match action {
         ImportAction::Enex {
             path,
@@ -61,7 +61,7 @@ pub fn import(service: &PinbookService, action: &ImportAction, json_out: bool) -
     Ok(())
 }
 
-pub fn print_info(service: &PinbookService, json_out: bool) -> Result<()> {
+pub fn print_info(service: &NotebookService, json_out: bool) -> Result<()> {
     let path = service
         .db()
         .connection()
@@ -83,7 +83,7 @@ pub fn print_info(service: &PinbookService, json_out: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn note(service: &PinbookService, action: &NoteAction, json_out: bool) -> Result<()> {
+pub fn note(service: &NotebookService, action: &NoteAction, json_out: bool) -> Result<()> {
     match action {
         NoteAction::List {
             notebook,
@@ -201,7 +201,7 @@ pub fn note(service: &PinbookService, action: &NoteAction, json_out: bool) -> Re
 }
 
 pub fn notebook(
-    service: &PinbookService,
+    service: &NotebookService,
     action: &NotebookAction,
     json_out: bool,
 ) -> Result<()> {
@@ -236,7 +236,7 @@ pub fn notebook(
     Ok(())
 }
 
-pub fn tag(service: &PinbookService, action: &TagAction, json_out: bool) -> Result<()> {
+pub fn tag(service: &NotebookService, action: &TagAction, json_out: bool) -> Result<()> {
     match action {
         TagAction::List => {
             let tags = service.list_tags()?;
@@ -264,7 +264,7 @@ pub fn tag(service: &PinbookService, action: &TagAction, json_out: bool) -> Resu
     Ok(())
 }
 
-pub fn stack(service: &PinbookService, action: &StackAction, json_out: bool) -> Result<()> {
+pub fn stack(service: &NotebookService, action: &StackAction, json_out: bool) -> Result<()> {
     match action {
         StackAction::List => {
             let stacks = service.list_stacks()?;
@@ -292,7 +292,7 @@ pub fn stack(service: &PinbookService, action: &StackAction, json_out: bool) -> 
     Ok(())
 }
 
-pub fn search(service: &PinbookService, query: SearchQuery, json_out: bool) -> Result<()> {
+pub fn search(service: &NotebookService, query: SearchQuery, json_out: bool) -> Result<()> {
     let result = service.search(query)?;
     if json_out {
         println!("{}", serde_json::to_string_pretty(&result)?);
@@ -303,7 +303,7 @@ pub fn search(service: &PinbookService, query: SearchQuery, json_out: bool) -> R
     Ok(())
 }
 
-pub fn trash(service: &PinbookService, action: &TrashAction, json_out: bool) -> Result<()> {
+pub fn trash(service: &NotebookService, action: &TrashAction, json_out: bool) -> Result<()> {
     match action {
         TrashAction::List => {
             let notes = service.list_notes(None, None, true, None)?;
@@ -318,7 +318,7 @@ pub fn trash(service: &PinbookService, action: &TrashAction, json_out: bool) -> 
 }
 
 pub fn shortcut(
-    service: &PinbookService,
+    service: &NotebookService,
     action: &ShortcutAction,
     json_out: bool,
 ) -> Result<()> {
@@ -345,7 +345,7 @@ pub fn shortcut(
 }
 
 fn parse_local_tags(
-    service: &PinbookService,
+    service: &NotebookService,
     tags: Option<&str>,
 ) -> Result<Option<Vec<Uuid>>> {
     let Some(names) = tags else {
@@ -359,7 +359,7 @@ fn parse_local_tags(
     Ok(Some(ids))
 }
 
-fn print_notes(notes: &[pinbook_core::NoteSummary], json_out: bool) {
+fn print_notes(notes: &[notebook_core::NoteSummary], json_out: bool) {
     if json_out {
         println!("{}", serde_json::to_string_pretty(notes).unwrap_or_default());
         return;

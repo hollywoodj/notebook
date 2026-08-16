@@ -1,5 +1,5 @@
 [package]
-name = "pinbook-core"
+name = "notebook-core"
 version.workspace = true
 edition.workspace = true
 

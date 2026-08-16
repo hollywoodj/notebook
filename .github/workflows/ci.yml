@@ -1,4 +1,4 @@
-name: Pinbook CI
+name: Notebook CI
 
 on:
   push:
@@ -15,11 +15,11 @@ jobs:
         run: cargo build --workspace --release
       - name: Smoke test API + CLI
         run: |
-          ./target/release/pinbook-api &
+          ./target/release/notebook-api &
           API_PID=$!
           sleep 2
-          ./target/release/pinbook --api http://127.0.0.1:8787 info
-          ./target/release/pinbook --api http://127.0.0.1:8787 notebook list
+          ./target/release/notebook --api http://127.0.0.1:8787 info
+          ./target/release/notebook --api http://127.0.0.1:8787 notebook list
           kill $API_PID
 
   build-desktop-macos:

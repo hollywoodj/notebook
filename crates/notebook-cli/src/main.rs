@@ -5,23 +5,23 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use pinbook_core::{
+use notebook_core::{
     CreateNotebookRequest, CreateNoteRequest, CreateStackRequest, CreateTagRequest, Database,
-    EnexImportRequest, PinbookService, SearchQuery, UpdateNoteRequest,
+    EnexImportRequest, NotebookService, SearchQuery, UpdateNoteRequest,
 };
 use uuid::Uuid;
 
 use crate::api_client::ApiClient;
 
 #[derive(Parser)]
-#[command(name = "pinbook", about = "Pinbook CLI — Evernote-compatible notes for your stack", version)]
+#[command(name = "notebook", about = "Notebook CLI — Evernote-compatible notes for your stack", version)]
 struct Cli {
     /// Path to local SQLite database (local mode)
-    #[arg(long, env = "PINBOOK_DB", global = true)]
+    #[arg(long, env = "NOTEBOOK_DB", global = true)]
     db: Option<PathBuf>,
 
     /// Remote API base URL (e.g. http://127.0.0.1:8787). When set, all commands use the API.
-    #[arg(long, env = "PINBOOK_API", default_value = "", global = true)]
+    #[arg(long, env = "NOTEBOOK_API", default_value = "", global = true)]
     api: String,
 
     /// Output format: text or json
@@ -195,12 +195,12 @@ fn main() -> Result<()> {
             Some(path) => Database::open(path)?,
             None => Database::open_default()?,
         };
-        let service = PinbookService::new(db);
+        let service = NotebookService::new(db);
         run_local(&cli, &service, json_out)
     }
 }
 
-fn run_local(cli: &Cli, service: &PinbookService, json_out: bool) -> Result<()> {
+fn run_local(cli: &Cli, service: &NotebookService, json_out: bool) -> Result<()> {
     match &cli.command {
         Commands::Info => local::print_info(service, json_out),
         Commands::Note { action } => local::note(service, action, json_out),

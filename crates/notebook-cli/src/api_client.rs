@@ -2,7 +2,7 @@ use std::io::Read;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
-use pinbook_core::{
+use notebook_core::{
     Attachment, CreateNotebookRequest, CreateNoteRequest, CreateStackRequest, CreateTagRequest,
     EnexImportRequest, EnexImportResult, HealthResponse, Note, NoteRevision, NoteSummary,
     Notebook, SearchQuery, SearchResult, Stack, Tag, UpdateNoteRequest,
@@ -214,7 +214,7 @@ impl ApiClient {
             .unwrap_or("attachment");
         let data = std::fs::read(file)?;
 
-        let boundary = "pinbookboundary";
+        let boundary = "notebookboundary";
         let mut body = Vec::new();
         body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
         body.extend_from_slice(
@@ -287,7 +287,7 @@ impl ApiClient {
     }
 
     pub fn add_shortcut(&self, note_id: Uuid, json_out: bool) -> Result<()> {
-        let shortcut: pinbook_core::Shortcut =
+        let shortcut: notebook_core::Shortcut =
             self.post_json(&format!("/api/v1/shortcuts/{note_id}"), &serde_json::json!({}))?;
         print_json_or(shortcut, json_out, |_| {
             println!("Shortcut added for {note_id}");
@@ -307,7 +307,7 @@ impl ApiClient {
         json_out: bool,
     ) -> Result<()> {
         let data = std::fs::read(path)?;
-        let boundary = "pinbookboundary";
+        let boundary = "notebookboundary";
         let filename = path
             .file_name()
             .and_then(|s| s.to_str())

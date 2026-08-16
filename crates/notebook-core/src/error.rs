@@ -1,9 +1,9 @@
 use thiserror::Error;
 
-pub type Result<T> = std::result::Result<T, PinbookError>;
+pub type Result<T> = std::result::Result<T, NotebookError>;
 
 #[derive(Debug, Error)]
-pub enum PinbookError {
+pub enum NotebookError {
     #[error("database error: {0}")]
     Database(#[from] rusqlite::Error),
     #[error("not found: {0}")]

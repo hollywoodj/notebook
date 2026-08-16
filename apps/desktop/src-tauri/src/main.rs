@@ -1,3 +1,3 @@
 fn main() {
-    pinbook_desktop_lib::run();
+    notebook_desktop_lib::run();
 }

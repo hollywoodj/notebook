@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
-use crate::error::{PinbookError, Result};
+use crate::error::{NotebookError, Result};
 
 const SCHEMA: &str = include_str!("../migrations/001_initial.sql");
 
@@ -34,9 +34,9 @@ impl Database {
     pub fn open_default() -> Result<Self> {
         let dir = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("pinbook");
+            .join("notebook");
         std::fs::create_dir_all(&dir)?;
-        Self::open(dir.join("pinbook.db"))
+        Self::open(dir.join("notebook.db"))
     }
 
     pub fn connection(&self) -> &Connection {
@@ -66,7 +66,7 @@ impl Database {
             let notebook_id = Uuid::new_v4();
             self.conn.execute(
                 "INSERT INTO users (id, email, display_name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![user_id.to_string(), "local@pinbook.app", "Local User", now, now],
+                params![user_id.to_string(), "local@notebook.app", "Local User", now, now],
             )?;
             self.conn.execute(
                 "INSERT INTO notebooks (id, user_id, name, is_default, sort_order, created_at, updated_at) VALUES (?1, ?2, ?3, 1, 0, ?4, ?5)",
@@ -82,6 +82,6 @@ impl Database {
             [],
             |row| row.get(0),
         )?;
-        Uuid::parse_str(&id).map_err(|e| PinbookError::Other(e.to_string()))
+        Uuid::parse_str(&id).map_err(|e| NotebookError::Other(e.to_string()))
     }
 }

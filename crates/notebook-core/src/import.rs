@@ -5,13 +5,13 @@ use std::path::Path;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::error::{PinbookError, Result};
+use crate::error::{NotebookError, Result};
 use crate::models::{CreateNoteRequest, EnexImportRequest, EnexImportResult, ImportError};
-use crate::service::PinbookService;
+use crate::service::NotebookService;
 
 use self::enex::{parse_enex, EnexNote};
 
-impl PinbookService {
+impl NotebookService {
     pub fn import_enex(&self, data: &[u8], options: EnexImportRequest) -> Result<EnexImportResult> {
         let parsed = parse_enex(data)?;
         let notebook_id = self.resolve_import_notebook(&options)?;
@@ -43,7 +43,7 @@ impl PinbookService {
     }
 
     pub fn import_enex_file(&self, path: &Path, options: EnexImportRequest) -> Result<EnexImportResult> {
-        let data = std::fs::read(path).map_err(PinbookError::from)?;
+        let data = std::fs::read(path).map_err(NotebookError::from)?;
         let mut options = options;
         if options.notebook_name.is_none() {
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {

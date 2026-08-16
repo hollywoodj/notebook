@@ -1,10 +1,10 @@
 [package]
-name = "pinbook-desktop"
+name = "notebook-desktop"
 version.workspace = true
 edition.workspace = true
 
 [lib]
-name = "pinbook_desktop_lib"
+name = "notebook_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -13,7 +13,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 anyhow.workspace = true
 dirs.workspace = true
-pinbook-api = { path = "../../../crates/pinbook-api" }
+notebook-api = { path = "../../../crates/notebook-api" }
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }

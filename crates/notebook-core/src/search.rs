@@ -3,9 +3,9 @@ use uuid::Uuid;
 
 use crate::error::Result;
 use crate::models::{SearchQuery, SearchResult};
-use crate::service::PinbookService;
+use crate::service::NotebookService;
 
-pub fn search_notes(service: &PinbookService, query: SearchQuery) -> Result<SearchResult> {
+pub fn search_notes(service: &NotebookService, query: SearchQuery) -> Result<SearchResult> {
     let user_id = service.db().default_user_id()?;
     let limit = query.limit.unwrap_or(50).min(200);
     let offset = query.offset.unwrap_or(0);

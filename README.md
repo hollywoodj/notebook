@@ -1,6 +1,6 @@
-# Pinbook
+# Notebook
 
-Pinbook is a faithful Evernote-style notes app **without AI features**. It includes notebooks, stacks, tags, rich-text notes, attachments, reminders metadata, shortcuts, trash, note history, and full-text search.
+Notebook is a faithful Evernote-style notes app **without AI features**. It includes notebooks, stacks, tags, rich-text notes, attachments, reminders metadata, shortcuts, trash, note history, and full-text search.
 
 Built for **macOS and Windows** (Tauri desktop), with a **REST API** and **CLI** for integrating with the rest of your stack. The architecture is API-first so an **iOS app** can be added later against the same endpoints.
 
@@ -33,21 +33,21 @@ Built for **macOS and Windows** (Tauri desktop), with a **REST API** and **CLI**
           └───────────┬───────────────┘
                       │ HTTP (REST)
               ┌───────▼────────┐
-              │  pinbook-api   │
+              │  notebook-api   │
               │  (Axum)        │
               └───────┬────────┘
                       │
               ┌───────▼────────┐
-              │  pinbook-core  │
+              │  notebook-core  │
               │  SQLite + FTS5 │
               └────────────────┘
 ```
 
 Data is stored locally in SQLite:
 
-- **macOS:** `~/Library/Application Support/pinbook/pinbook.db`
-- **Windows:** `%APPDATA%/pinbook/pinbook.db`
-- **Linux:** `~/.local/share/pinbook/pinbook.db`
+- **macOS:** `~/Library/Application Support/notebook/notebook.db`
+- **Windows:** `%APPDATA%/notebook/notebook.db`
+- **Linux:** `~/.local/share/notebook/notebook.db`
 
 Attachments live alongside the database in an `attachments/` directory.
 
@@ -61,7 +61,7 @@ Attachments live alongside the database in an `attachments/` directory.
 ### Run the API server
 
 ```bash
-cargo run -p pinbook-api
+cargo run -p notebook-api
 ```
 
 The API listens on `http://127.0.0.1:8787` by default.
@@ -70,39 +70,39 @@ Environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PINBOOK_HOST` | `127.0.0.1` | Bind address |
-| `PINBOOK_PORT` | `8787` | Port |
-| `PINBOOK_DB` | OS app data dir | SQLite database path |
+| `NOTEBOOK_HOST` | `127.0.0.1` | Bind address |
+| `NOTEBOOK_PORT` | `8787` | Port |
+| `NOTEBOOK_DB` | OS app data dir | SQLite database path |
 
 ### Use the CLI
 
 Local mode (talks directly to SQLite):
 
 ```bash
-cargo run -p pinbook-cli -- notebook list
-cargo run -p pinbook-cli -- note create --notebook <UUID> --title "Meeting notes"
-cargo run -p pinbook-cli -- search "meeting"
+cargo run -p notebook-cli -- notebook list
+cargo run -p notebook-cli -- note create --notebook <UUID> --title "Meeting notes"
+cargo run -p notebook-cli -- search "meeting"
 ```
 
 Remote mode (talks to the REST API):
 
 ```bash
-export PINBOOK_API=http://127.0.0.1:8787
-cargo run -p pinbook-cli -- note list
-cargo run -p pinbook-cli -- note create --notebook <UUID> --title "From CI" --tags "work,urgent"
+export NOTEBOOK_API=http://127.0.0.1:8787
+cargo run -p notebook-cli -- note list
+cargo run -p notebook-cli -- note create --notebook <UUID> --title "From CI" --tags "work,urgent"
 ```
 
 JSON output for automation:
 
 ```bash
-pinbook --api http://127.0.0.1:8787 note list --output json
-pinbook --api http://127.0.0.1:8787 search "invoice" --output json
+notebook --api http://127.0.0.1:8787 note list --output json
+notebook --api http://127.0.0.1:8787 search "invoice" --output json
 ```
 
 Install the CLI binary:
 
 ```bash
-cargo install --path crates/pinbook-cli
+cargo install --path crates/notebook-cli
 ```
 
 ### Run the desktop app (dev)
@@ -110,7 +110,7 @@ cargo install --path crates/pinbook-cli
 Terminal 1 — API (embedded automatically in production builds; for pure web dev):
 
 ```bash
-cargo run -p pinbook-api
+cargo run -p notebook-api
 ```
 
 Terminal 2 — UI:
@@ -199,7 +199,7 @@ Base URL: `http://127.0.0.1:8787`
 
 ## Database schema
 
-See `crates/pinbook-core/migrations/001_initial.sql` for the full schema. Core tables:
+See `crates/notebook-core/migrations/001_initial.sql` for the full schema. Core tables:
 
 - `users`, `notebooks`, `stacks`, `tags`, `note_tags`
 - `notes` (HTML content + plain-text index)
@@ -208,7 +208,7 @@ See `crates/pinbook-core/migrations/001_initial.sql` for the full schema. Core t
 
 ## Import from Evernote
 
-Evernote exports notes as **ENEX** files (XML). Pinbook imports these directly.
+Evernote exports notes as **ENEX** files (XML). Notebook imports these directly.
 
 ### Export from Evernote
 
@@ -217,10 +217,10 @@ In Evernote desktop: select notes or a notebook → **File → Export Notes** �
 ### CLI
 
 ```bash
-pinbook import enex ~/Downloads/MyNotebook.enex
-pinbook import enex export.enex --notebook-name "Work Archive"
-pinbook import enex ~/EvernoteExports/          # directory of .enex files
-pinbook --api http://127.0.0.1:8787 import enex export.enex
+notebook import enex ~/Downloads/MyNotebook.enex
+notebook import enex export.enex --notebook-name "Work Archive"
+notebook import enex ~/EvernoteExports/          # directory of .enex files
+notebook --api http://127.0.0.1:8787 import enex export.enex
 ```
 
 ### API
@@ -236,14 +236,14 @@ Use **Import Evernote (.enex)** in the sidebar.
 
 ### Import mapping
 
-| Evernote | Pinbook |
+| Evernote | Notebook |
 |----------|---------|
 | Title, ENML body | Note title + HTML content |
 | Tags | Tags (flat) |
 | Created / updated | Preserved |
 | Images & files | Inline images + attachments |
 | Source URL, reminders | Preserved when present |
-| Notebook structure | One Pinbook notebook per ENEX file |
+| Notebook structure | One Notebook notebook per ENEX file |
 | Encrypted notes | Placeholder (cannot decrypt) |
 | Note links | Not preserved |
 
@@ -251,8 +251,8 @@ Use **Import Evernote (.enex)** in the sidebar.
 
 The desktop app embeds the same API used by external clients. A future iOS app can:
 
-1. Run against a self-hosted `pinbook-api` instance, or
-2. Embed `pinbook-core` via FFI / a Rust mobile target, reusing the schema and search logic.
+1. Run against a self-hosted `notebook-api` instance, or
+2. Embed `notebook-core` via FFI / a Rust mobile target, reusing the schema and search logic.
 
 No AI dependencies are included anywhere in the stack.
 
@@ -263,9 +263,9 @@ No AI dependencies are included anywhere in the stack.
 cargo build --workspace
 
 # Run tests / smoke
-cargo build --release -p pinbook-api -p pinbook-cli
-PINBOOK_DB=/tmp/test.db ./target/release/pinbook-api &
-./target/release/pinbook notebook list --api http://127.0.0.1:8787
+cargo build --release -p notebook-api -p notebook-cli
+NOTEBOOK_DB=/tmp/test.db ./target/release/notebook-api &
+./target/release/notebook notebook list --api http://127.0.0.1:8787
 ```
 
 ## License

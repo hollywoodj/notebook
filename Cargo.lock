@@ -2574,7 +2574,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
-name = "pinbook-api"
+name = "notebook-api"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2582,7 +2582,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dirs 5.0.1",
- "pinbook-core",
+ "notebook-core",
  "serde",
  "serde_json",
  "tokio",
@@ -2593,13 +2593,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "pinbook-cli"
+name = "notebook-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "clap",
- "pinbook-core",
+ "notebook-core",
  "serde",
  "serde_json",
  "ureq",
@@ -2607,7 +2607,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pinbook-core"
+name = "notebook-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2624,12 +2624,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "pinbook-desktop"
+name = "notebook-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
- "pinbook-api",
+ "notebook-api",
  "serde",
  "serde_json",
  "tauri",
