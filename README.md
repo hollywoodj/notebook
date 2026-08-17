@@ -123,17 +123,32 @@ npm run dev
 
 Open `http://localhost:1420`.
 
-### Build desktop installers (Mac / Windows)
+### Build desktop installers locally (Mac / Windows)
 
 ```bash
+cargo build --release -p notebook-api
 cd apps/desktop
 npm install
-npm run tauri build
+npm run electron:build:win   # Windows
+npm run electron:build:mac   # macOS
 ```
 
-Installers are written to `apps/desktop/src-tauri/target/release/bundle/`.
+Installers are written to `apps/desktop/release/`.
 
-CI also builds Mac and Windows artifacts on every push (see `.github/workflows/ci.yml`).
+### Download a release
+
+Pre-built installers are published on [GitHub Releases](https://github.com/hollywoodj/notebook/releases) when a version tag is pushed.
+
+To cut a new release:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+GitHub Actions builds Windows (`.exe` installer) and macOS (`.dmg`) artifacts and attaches them to the release. You can also trigger a release manually from the **Actions → Release** workflow.
+
+CI on every push only runs Rust tests — desktop installers are built for releases, not on every commit.
 
 ## REST API reference
 

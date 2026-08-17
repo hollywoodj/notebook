@@ -13,6 +13,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build API and CLI
         run: cargo build --release -p notebook-core -p notebook-api -p notebook-cli
+      - name: Run tests
+        run: cargo test -p notebook-core
       - name: Smoke test API + CLI
         run: |
           ./target/release/notebook-api &
@@ -21,44 +23,3 @@ jobs:
           ./target/release/notebook --api http://127.0.0.1:8787 info
           ./target/release/notebook --api http://127.0.0.1:8787 notebook list
           kill $API_PID
-
-  build-electron-windows:
-    runs-on: windows-latest
-    needs: test-rust
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Build API
-        run: cargo build --release -p notebook-api
-      - name: Install desktop deps
-        working-directory: apps/desktop
-        run: npm install
-      - name: Build Electron installer (Windows)
-        working-directory: apps/desktop
-        run: npm run electron:build:win
-      - name: Upload Windows installer
-        uses: actions/upload-artifact@v4
-        with:
-          name: notebook-windows-installer
-          path: apps/desktop/release/
-
-  build-electron-macos:
-    runs-on: macos-latest
-    needs: test-rust
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Build API
-        run: cargo build --release -p notebook-api
-      - name: Install desktop deps
-        working-directory: apps/desktop
-        run: npm install
-      - name: Build Electron app (macOS)
-        working-directory: apps/desktop
-        run: npm run electron:build:mac
