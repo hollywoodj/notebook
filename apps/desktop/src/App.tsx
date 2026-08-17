@@ -176,7 +176,8 @@ export default function App() {
   const [account, setAccount] = useState<Account | null>(null);
   const [storage, setStorage] = useState({ database: "", attachments: "" });
   const [shortcutIds, setShortcutIds] = useState<Set<string>>(new Set());
-  const [notebooksOpen, setNotebooksOpen] = useState(true);
+  const [shortcutNotes, setShortcutNotes] = useState<NoteSummary[]>([]);
+  const [sidebarFlyout, setSidebarFlyout] = useState<"shortcuts" | "notebooks" | null>(null);
   const [tagsOpen, setTagsOpen] = useState(true);
   const [showInfo, setShowInfo] = useState(false);
   const [findTick, setFindTick] = useState(0);
@@ -238,6 +239,7 @@ export default function App() {
     setStacks(st);
     setTags(tg);
     setShortcutIds(new Set(sc.map((n) => n.id)));
+    setShortcutNotes(sc);
     setTemplates(tm);
     setCounts(sidebarCounts);
   }, []);
@@ -261,7 +263,7 @@ export default function App() {
 
   const openSidebarFilter = () => {
     setSidebarFilterOpen(true);
-    setNotebooksOpen(true);
+    setSidebarFlyout("notebooks");
     setTagsOpen(true);
     window.setTimeout(() => sidebarFilterRef.current?.focus(), 0);
   };
@@ -273,10 +275,10 @@ export default function App() {
         list = await api.listNotes({ templates: false });
         break;
       case "notebook":
-        list = await api.listNotes({ notebookId: filter.id });
+        list = await api.listNotes({ notebookId: filter.id, templates: false });
         break;
       case "tag":
-        list = await api.listNotes({ tagId: filter.id });
+        list = await api.listNotes({ tagId: filter.id, templates: false });
         break;
       case "shortcuts":
         list = await api.listShortcuts();
@@ -943,6 +945,9 @@ export default function App() {
       } else if (e.key === "Escape" && focusMode) {
         e.preventDefault();
         setFocusMode(false);
+      } else if (e.key === "Escape" && sidebarFlyout) {
+        e.preventDefault();
+        setSidebarFlyout(null);
       } else if (e.key === "Escape" && searchOpen) {
         e.preventDefault();
         setSearchOpen(false);
@@ -1490,8 +1495,8 @@ export default function App() {
     {
       label: "View",
       items: [
-        { label: "All Notes", onSelect: () => setFilter({ type: "all" }) },
-        { label: "Shortcuts", onSelect: () => setFilter({ type: "shortcuts" }) },
+        { label: "All Notes", onSelect: () => { setSidebarFlyout(null); setFilter({ type: "all" }); } },
+        { label: "Shortcuts", onSelect: () => { setSidebarFlyout("shortcuts"); setFilter({ type: "shortcuts" }); } },
         { label: "Reminders", onSelect: () => setFilter({ type: "reminders" }) },
         { label: "Templates", onSelect: () => setFilter({ type: "templates" }) },
         { type: "separator" },
@@ -1888,11 +1893,14 @@ export default function App() {
           "--list-width": `${paneLayout.listWidth}px`,
         } as CSSProperties
       }
-      onMouseDown={() => {
+      onMouseDown={(event) => {
         setShowNewMenu(false);
         setShowNoteMenu(false);
         setShowReminderMenu(false);
         setContextMenu(null);
+        if (!(event.target as HTMLElement).closest(".sidebar")) {
+          setSidebarFlyout(null);
+        }
       }}
     >
       <MenuBar groups={menuGroups} />
@@ -1983,53 +1991,18 @@ export default function App() {
                 >
                   Filter notebooks & tags
                 </button>
-                <button
-                  onClick={() => {
-                    setShowNewMenu(false);
-                    importRef.current?.click();
-                  }}
-                >
-                  Import from Evernote…
-                </button>
               </div>
             )}
           </div>
         </div>
 
-        {(sidebarFilterOpen || Boolean(sidebarFilter.trim())) && (
-          <div className="sidebar-search sidebar-filter">
-            <Icon.Notebooks size={15} />
-            <input
-              ref={sidebarFilterRef}
-              value={sidebarFilter}
-              onChange={(e) => setSidebarFilter(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  setSidebarFilter("");
-                  setSidebarFilterOpen(false);
-                }
-              }}
-              placeholder="Filter notebooks & tags"
-              aria-label="Filter notebooks and tags"
-            />
-            <button
-              type="button"
-              className="icon-btn"
-              title="Close filter"
-              onClick={() => {
-                setSidebarFilter("");
-                setSidebarFilterOpen(false);
-              }}
-            >
-              <Icon.Close size={14} />
-            </button>
-          </div>
-        )}
-
         <nav className="sidebar-nav scroll-pane">
           <button
             className={filter.type === "all" ? "nav-item active" : "nav-item"}
-            onClick={() => setFilter({ type: "all" })}
+            onClick={() => {
+              setSidebarFlyout(null);
+              setFilter({ type: "all" });
+            }}
           >
             <Icon.Notes size={16} />
             Notes
@@ -2037,18 +2010,30 @@ export default function App() {
           </button>
           {prefs.show_shortcuts && (
             <button
-              className={filter.type === "shortcuts" ? "nav-item active" : "nav-item"}
-              onClick={() => setFilter({ type: "shortcuts" })}
+              className={
+                (filter.type === "shortcuts" || sidebarFlyout === "shortcuts"
+                  ? "nav-item active"
+                  : "nav-item")
+              }
+              onClick={() => {
+                setSidebarFlyout((current) =>
+                  current === "shortcuts" ? null : "shortcuts"
+                );
+                setFilter({ type: "shortcuts" });
+              }}
             >
               <Icon.Shortcuts size={16} />
               Shortcuts
-              <span className="nav-count">{counts.shortcuts}</span>
+              <span className="nav-count">{shortcutNotes.length}</span>
             </button>
           )}
           {prefs.show_reminders && (
             <button
               className={filter.type === "reminders" ? "nav-item active" : "nav-item"}
-              onClick={() => setFilter({ type: "reminders" })}
+              onClick={() => {
+                setSidebarFlyout(null);
+                setFilter({ type: "reminders" });
+              }}
             >
               <Icon.Reminder size={16} />
               Reminders
@@ -2057,140 +2042,22 @@ export default function App() {
           )}
 
           {prefs.show_notebooks && (
-            <div className="nav-section">
-              <button
-                className="nav-section-title"
-                onClick={() => setNotebooksOpen((v) => !v)}
-              >
-                <span>
-                  <Icon.Notebooks size={14} />
-                  Notebooks
-                </span>
-                <span className="section-actions">
-                  <span
-                    className="plus"
-                    title="Filter notebooks & tags"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (sidebarFilterOpen || sidebarFilter.trim()) {
-                        setSidebarFilter("");
-                        setSidebarFilterOpen(false);
-                      } else {
-                        openSidebarFilter();
-                      }
-                    }}
-                  >
-                    <Icon.Search size={12} />
-                  </span>
-                  <span
-                    className="plus"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setNewNotebookStackId(null);
-                      setShowNewNotebook(true);
-                    }}
-                  >
-                    +
-                  </span>
-                  <Icon.Chevron
-                    size={14}
-                    style={{
-                      transform:
-                        notebooksOpen || sidebarFilter.trim()
-                          ? "rotate(0deg)"
-                          : "rotate(-90deg)",
-                    }}
-                  />
-                </span>
-              </button>
-              { (notebooksOpen || Boolean(sidebarFilter.trim())) && (
-                <>
-                  {stacks.map((stack) => {
-                    const stacked = notebooksMatchingFilter(
-                      notebooksByStack[stack.id] || [],
-                      stack.name,
-                      sidebarFilter
-                    );
-                    if (!stacked.length) return null;
-                    return (
-                    <div key={stack.id} className="stack-group">
-                      <button
-                        className="stack-name"
-                        onContextMenu={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setContextMenu({
-                            kind: "stack",
-                            x: event.clientX,
-                            y: event.clientY,
-                            stack,
-                          });
-                        }}
-                      >
-                        {stack.name}
-                      </button>
-                      {stacked.map((nb) => (
-                        <NotebookNavItem
-                          key={nb.id}
-                          notebook={nb}
-                          active={filter.type === "notebook" && filter.id === nb.id}
-                          isDropTarget={dropTarget === `notebook:${nb.id}`}
-                          onSelect={() =>
-                            setFilter({ type: "notebook", id: nb.id, name: nb.name })
-                          }
-                          onDragOver={(event) => allowNoteDrop(event, `notebook:${nb.id}`)}
-                          onDragLeave={() => setDropTarget(null)}
-                          onDrop={(event) => void moveDroppedNotes(nb.id, event)}
-                          onContextMenu={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            setContextMenu({
-                              kind: "notebook",
-                              x: event.clientX,
-                              y: event.clientY,
-                              notebook: nb,
-                            });
-                          }}
-                        />
-                      ))}
-                    </div>
-                    );
-                  })}
-                  {notebooksMatchingFilter(
-                    notebooksByStack.uncategorized,
-                    null,
-                    sidebarFilter
-                  ).map((nb) => (
-                    <NotebookNavItem
-                      key={nb.id}
-                      notebook={nb}
-                      active={filter.type === "notebook" && filter.id === nb.id}
-                      isDropTarget={dropTarget === `notebook:${nb.id}`}
-                      onSelect={() =>
-                        setFilter({ type: "notebook", id: nb.id, name: nb.name })
-                      }
-                      onDragOver={(event) => allowNoteDrop(event, `notebook:${nb.id}`)}
-                      onDragLeave={() => setDropTarget(null)}
-                      onDrop={(event) => void moveDroppedNotes(nb.id, event)}
-                      onContextMenu={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setContextMenu({
-                          kind: "notebook",
-                          x: event.clientX,
-                          y: event.clientY,
-                          notebook: nb,
-                        });
-                      }}
-                    />
-                  ))}
-                  {sidebarFilter.trim() &&
-                    !hasVisibleSidebarNotebooks(notebooks, stacks, sidebarFilter) && (
-                      <div className="empty-state compact">No matching notebooks</div>
-                    )}
-                </>
-              )}
-            </div>
+            <button
+              className={
+                (filter.type === "notebook" || sidebarFlyout === "notebooks"
+                  ? "nav-item active"
+                  : "nav-item")
+              }
+              onClick={() =>
+                setSidebarFlyout((current) =>
+                  current === "notebooks" ? null : "notebooks"
+                )
+              }
+            >
+              <Icon.Notebooks size={16} />
+              Notebooks
+              <span className="nav-count">{notebooks.length}</span>
+            </button>
           )}
 
           {prefs.show_tags && (
@@ -2234,9 +2101,10 @@ export default function App() {
                         : "nav-item indent") +
                       (dropTarget === `tag:${tag.id}` ? " drop-target" : "")
                     }
-                    onClick={() =>
-                      setFilter({ type: "tag", id: tag.id, name: tag.name })
-                    }
+                    onClick={() => {
+                      setSidebarFlyout(null);
+                      setFilter({ type: "tag", id: tag.id, name: tag.name });
+                    }}
                     onDragOver={(event) => allowNoteDrop(event, `tag:${tag.id}`)}
                     onDragLeave={() => setDropTarget(null)}
                     onDrop={(event) => void tagDroppedNotes(tag.id, event)}
@@ -2264,7 +2132,10 @@ export default function App() {
           {prefs.show_templates && (
             <button
               className={filter.type === "templates" ? "nav-item active" : "nav-item"}
-              onClick={() => setFilter({ type: "templates" })}
+              onClick={() => {
+                setSidebarFlyout(null);
+                setFilter({ type: "templates" });
+              }}
             >
               <Icon.Templates size={16} />
               Templates
@@ -2275,32 +2146,218 @@ export default function App() {
           {prefs.show_trash && (
             <button
               className={filter.type === "trash" ? "nav-item active" : "nav-item"}
-              onClick={() => setFilter({ type: "trash" })}
+              onClick={() => {
+                setSidebarFlyout(null);
+                setFilter({ type: "trash" });
+              }}
             >
               <Icon.Trash size={16} />
               Trash
               <span className="nav-count">{counts.trash}</span>
             </button>
           )}
-
-          {prefs.show_import && (
-            <div className="nav-section">
-              <div className="nav-section-title static">
-                <span>
-                  <Icon.Import size={14} />
-                  Import
-                </span>
-              </div>
-              <button
-                className="nav-item indent"
-                onClick={() => importRef.current?.click()}
-              >
-                Evernote (.enex)
-              </button>
-              {importStatus && <div className="import-status">{importStatus}</div>}
-            </div>
-          )}
         </nav>
+        {sidebarFlyout && (
+          <div className="sidebar-flyout" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="sidebar-flyout-header">
+              <h3>{sidebarFlyout === "shortcuts" ? "Shortcuts" : "Notebooks"}</h3>
+              {sidebarFlyout === "notebooks" && (
+                <div className="sidebar-flyout-actions">
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="Filter notebooks & tags"
+                    onClick={() => {
+                      if (sidebarFilterOpen || sidebarFilter.trim()) {
+                        setSidebarFilter("");
+                        setSidebarFilterOpen(false);
+                      } else {
+                        setSidebarFilterOpen(true);
+                        window.setTimeout(() => sidebarFilterRef.current?.focus(), 0);
+                      }
+                    }}
+                  >
+                    <Icon.Search size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="New notebook"
+                    onClick={() => {
+                      setNewNotebookStackId(null);
+                      setShowNewNotebook(true);
+                    }}
+                  >
+                    <Icon.Plus size={14} />
+                  </button>
+                </div>
+              )}
+              <button
+                type="button"
+                className="icon-btn"
+                title="Close"
+                onClick={() => setSidebarFlyout(null)}
+              >
+                <Icon.Close size={14} />
+              </button>
+            </div>
+            {sidebarFlyout === "notebooks" && (sidebarFilterOpen || Boolean(sidebarFilter.trim())) && (
+              <div className="sidebar-search sidebar-filter">
+                <Icon.Notebooks size={15} />
+                <input
+                  ref={sidebarFilterRef}
+                  value={sidebarFilter}
+                  onChange={(e) => setSidebarFilter(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setSidebarFilter("");
+                      setSidebarFilterOpen(false);
+                    }
+                  }}
+                  placeholder="Filter notebooks & tags"
+                  aria-label="Filter notebooks and tags"
+                />
+                <button
+                  type="button"
+                  className="icon-btn"
+                  title="Close filter"
+                  onClick={() => {
+                    setSidebarFilter("");
+                    setSidebarFilterOpen(false);
+                  }}
+                >
+                  <Icon.Close size={14} />
+                </button>
+              </div>
+            )}
+            <div className="sidebar-flyout-body scroll-pane">
+              {sidebarFlyout === "shortcuts" &&
+                (shortcutNotes.length === 0 ? (
+                  <div className="empty-state compact">
+                    Star a note to add it to Shortcuts.
+                  </div>
+                ) : (
+                  shortcutNotes.map((note) => (
+                    <button
+                      key={note.id}
+                      type="button"
+                      className={
+                        activeNote?.id === note.id
+                          ? "flyout-item active"
+                          : "flyout-item"
+                      }
+                      onClick={() => {
+                        setFilter({ type: "shortcuts" });
+                        void loadNote(note.id);
+                      }}
+                    >
+                      <span className="flyout-item-title">
+                        {note.title || "Untitled"}
+                      </span>
+                      <span className="flyout-item-meta">
+                        {note.notebook_name}
+                      </span>
+                    </button>
+                  ))
+                ))}
+              {sidebarFlyout === "notebooks" && (
+                <>
+                  {stacks.map((stack) => {
+                    const stacked = notebooksMatchingFilter(
+                      notebooksByStack[stack.id] || [],
+                      stack.name,
+                      sidebarFilter
+                    );
+                    if (!stacked.length) return null;
+                    return (
+                      <div key={stack.id} className="stack-group">
+                        <button
+                          className="stack-name"
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setContextMenu({
+                              kind: "stack",
+                              x: event.clientX,
+                              y: event.clientY,
+                              stack,
+                            });
+                          }}
+                        >
+                          {stack.name}
+                        </button>
+                        {stacked.map((nb) => (
+                          <NotebookNavItem
+                            key={nb.id}
+                            notebook={nb}
+                            active={filter.type === "notebook" && filter.id === nb.id}
+                            isDropTarget={dropTarget === `notebook:${nb.id}`}
+                            onSelect={() =>
+                              setFilter({
+                                type: "notebook",
+                                id: nb.id,
+                                name: nb.name,
+                              })
+                            }
+                            onDragOver={(event) =>
+                              allowNoteDrop(event, `notebook:${nb.id}`)
+                            }
+                            onDragLeave={() => setDropTarget(null)}
+                            onDrop={(event) => void moveDroppedNotes(nb.id, event)}
+                            onContextMenu={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setContextMenu({
+                                kind: "notebook",
+                                x: event.clientX,
+                                y: event.clientY,
+                                notebook: nb,
+                              });
+                            }}
+                          />
+                        ))}
+                      </div>
+                    );
+                  })}
+                  {notebooksMatchingFilter(
+                    notebooksByStack.uncategorized,
+                    null,
+                    sidebarFilter
+                  ).map((nb) => (
+                    <NotebookNavItem
+                      key={nb.id}
+                      notebook={nb}
+                      active={filter.type === "notebook" && filter.id === nb.id}
+                      isDropTarget={dropTarget === `notebook:${nb.id}`}
+                      onSelect={() =>
+                        setFilter({ type: "notebook", id: nb.id, name: nb.name })
+                      }
+                      onDragOver={(event) =>
+                        allowNoteDrop(event, `notebook:${nb.id}`)
+                      }
+                      onDragLeave={() => setDropTarget(null)}
+                      onDrop={(event) => void moveDroppedNotes(nb.id, event)}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setContextMenu({
+                          kind: "notebook",
+                          x: event.clientX,
+                          y: event.clientY,
+                          notebook: nb,
+                        });
+                      }}
+                    />
+                  ))}
+                  {sidebarFilter.trim() &&
+                    !hasVisibleSidebarNotebooks(notebooks, stacks, sidebarFilter) && (
+                      <div className="empty-state compact">No matching notebooks</div>
+                    )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
         <div className="sidebar-account">
           <button
             type="button"
@@ -2435,7 +2492,9 @@ export default function App() {
         <div className="panel-header">
           <div>
             <h2>{viewTitle}</h2>
-            <span className="count">{notes.length}</span>
+            <span className="count" title="Notes in this view">
+              {notes.length}
+            </span>
           </div>
           <div className="panel-tools">
             {filter.type === "templates" && (
@@ -2503,6 +2562,7 @@ export default function App() {
             </div>
           </div>
         </div>
+        {importStatus && <div className="import-status">{importStatus}</div>}
         {selectedNoteIds.size > 1 && (
           <div className="bulk-bar">
             <span className="selection-count">{selectedNoteIds.size} selected</span>

@@ -389,7 +389,6 @@ export function SettingsModal({
                     ["show_tags", "Tags"],
                     ["show_templates", "Templates"],
                     ["show_trash", "Trash"],
-                    ["show_import", "Import"],
                   ] as const
                 ).map(([key, label]) => (
                   <SettingsRow

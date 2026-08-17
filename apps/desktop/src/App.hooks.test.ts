@@ -46,4 +46,27 @@ describe("Evernote sidebar chrome", () => {
     assert.match(appSource, /toggleNoteExpanded/);
     assert.match(appSource, /className="note-chrome"/);
   });
+
+  it("keeps import in the menu bar instead of the sidebar", () => {
+    assert.match(appSource, /label: "Import Notes…"/);
+    assert.match(appSource, /label: "Import from Evernote…"/);
+    assert.equal(appSource.includes("Evernote (.enex)"), false);
+    assert.equal(appSource.includes("prefs.show_import"), false);
+  });
+
+  it("pops out shortcuts and notebooks with their contents", () => {
+    assert.match(appSource, /sidebarFlyout === "shortcuts"/);
+    assert.match(appSource, /sidebarFlyout === "notebooks"/);
+    assert.match(appSource, /className="sidebar-flyout"/);
+    assert.match(appSource, /shortcutNotes\.map/);
+    assert.match(appSource, /Star a note to add it to Shortcuts/);
+  });
+
+  it("counts the current view rather than repeating the all-notes total", () => {
+    assert.match(appSource, /title="Notes in this view"/);
+    assert.match(appSource, /\{notes\.length\}/);
+    assert.match(appSource, /\{shortcutNotes\.length\}/);
+    assert.match(appSource, /\{notebooks\.length\}/);
+    assert.match(appSource, /notebook\.note_count \?\? 0/);
+  });
 });
