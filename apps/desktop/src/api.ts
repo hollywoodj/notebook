@@ -76,7 +76,7 @@ export type ViewFilter =
   | { type: "trash" }
   | { type: "search"; query: string };
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8787";
+const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8799";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {

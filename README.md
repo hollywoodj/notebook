@@ -64,14 +64,14 @@ Attachments live alongside the database in an `attachments/` directory.
 cargo run -p notebook-api
 ```
 
-The API listens on `http://127.0.0.1:8787` by default.
+The API listens on `http://127.0.0.1:8799` by default.
 
 Environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NOTEBOOK_HOST` | `127.0.0.1` | Bind address |
-| `NOTEBOOK_PORT` | `8787` | Port |
+| `NOTEBOOK_PORT` | `8799` | Port |
 | `NOTEBOOK_DB` | OS app data dir | SQLite database path |
 
 ### Use the CLI
@@ -87,7 +87,7 @@ cargo run -p notebook-cli -- search "meeting"
 Remote mode (talks to the REST API):
 
 ```bash
-export NOTEBOOK_API=http://127.0.0.1:8787
+export NOTEBOOK_API=http://127.0.0.1:8799
 cargo run -p notebook-cli -- note list
 cargo run -p notebook-cli -- note create --notebook <UUID> --title "From CI" --tags "work,urgent"
 ```
@@ -95,8 +95,8 @@ cargo run -p notebook-cli -- note create --notebook <UUID> --title "From CI" --t
 JSON output for automation:
 
 ```bash
-notebook --api http://127.0.0.1:8787 note list --output json
-notebook --api http://127.0.0.1:8787 search "invoice" --output json
+notebook --api http://127.0.0.1:8799 note list --output json
+notebook --api http://127.0.0.1:8799 search "invoice" --output json
 ```
 
 Install the CLI binary:
@@ -152,7 +152,7 @@ CI on every push only runs Rust tests — desktop installers are built for relea
 
 ## REST API reference
 
-Base URL: `http://127.0.0.1:8787`
+Base URL: `http://127.0.0.1:8799`
 
 ### Health
 
@@ -235,13 +235,13 @@ In Evernote desktop: select notes or a notebook → **File → Export Notes** �
 notebook import enex ~/Downloads/MyNotebook.enex
 notebook import enex export.enex --notebook-name "Work Archive"
 notebook import enex ~/EvernoteExports/          # directory of .enex files
-notebook --api http://127.0.0.1:8787 import enex export.enex
+notebook --api http://127.0.0.1:8799 import enex export.enex
 ```
 
 ### API
 
 ```bash
-curl -X POST "http://127.0.0.1:8787/api/v1/import/enex?notebook_name=Imported" \
+curl -X POST "http://127.0.0.1:8799/api/v1/import/enex?notebook_name=Imported" \
   -F "file=@MyNotebook.enex"
 ```
 
@@ -280,7 +280,7 @@ cargo build --workspace
 # Run tests / smoke
 cargo build --release -p notebook-api -p notebook-cli
 NOTEBOOK_DB=/tmp/test.db ./target/release/notebook-api &
-./target/release/notebook notebook list --api http://127.0.0.1:8787
+./target/release/notebook notebook list --api http://127.0.0.1:8799
 ```
 
 ## License

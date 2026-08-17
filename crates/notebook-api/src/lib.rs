@@ -34,7 +34,7 @@ impl Default for ServerConfig {
             port: std::env::var("NOTEBOOK_PORT")
                 .ok()
                 .and_then(|p| p.parse().ok())
-                .unwrap_or(8787),
+                .unwrap_or(8799),
             db_path: std::env::var("NOTEBOOK_DB").ok(),
         }
     }
