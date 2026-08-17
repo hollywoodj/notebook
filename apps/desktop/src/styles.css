@@ -200,7 +200,9 @@ button {
   grid-template-columns: 0 0 0 0 minmax(0, 1fr);
 }
 
-.app-shell.focus-mode {
+.app-shell.focus-mode,
+.app-shell.focus-mode.sidebar-rail,
+.app-shell.focus-mode.sidebar-rail.list-collapsed {
   grid-template-columns: minmax(0, 1fr);
 }
 

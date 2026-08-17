@@ -107,6 +107,13 @@ describe("sidebar icon rail", () => {
     assert.equal(resizeSidebar(pinned, -140).sidebarRail, true);
     assert.equal(resizeSidebar(pinned, 400).sidebarWidth, 420);
   });
+
+  it("snaps to the rail when a drag keeps pushing past the minimum width", () => {
+    const narrow = { ...toggleSidebarRail(defaultPaneLayout()), sidebarWidth: 180 };
+    assert.equal(resizeSidebar(narrow, -6).sidebarRail, true);
+    assert.equal(resizeSidebar(narrow, -1).sidebarRail, false);
+    assert.equal(resizeSidebar(narrow, 20).sidebarWidth, 200);
+  });
 });
 
 describe("note chrome layout", () => {

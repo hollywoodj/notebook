@@ -143,8 +143,10 @@ export function resizeSidebar(layout: PaneLayout, delta: number): PaneLayout {
     if (delta < SIDEBAR_RAIL_RELEASE) return layout;
     return { ...layout, sidebarRail: false };
   }
-  const width = (layout.sidebarCollapsed ? SIDEBAR_MIN : layout.sidebarWidth) + delta;
-  if (width < SIDEBAR_RAIL_SNAP) {
+  const current = layout.sidebarCollapsed ? SIDEBAR_MIN : layout.sidebarWidth;
+  const width = current + delta;
+  // Dragging left past the narrowest pinned width drops the sidebar back to the rail.
+  if (width < SIDEBAR_RAIL_SNAP || (current <= SIDEBAR_MIN && delta < -2)) {
     return { ...layout, sidebarCollapsed: false, sidebarRail: true };
   }
   return {
