@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
-    extract::{Multipart, Path, Query, State},
-    http::{header, StatusCode},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
+    http::{header, HeaderValue, StatusCode},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
@@ -16,10 +17,15 @@ use notebook_core::{
 };
 use serde::Deserialize;
 use tokio::sync::Mutex;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
+
+/// Evernote notebook exports with images routinely exceed Axum's 2 MiB default.
+/// Going over that limit closes the connection mid-upload, which Chromium reports
+/// as `TypeError: Failed to fetch`.
+const MAX_UPLOAD_BYTES: usize = 2 * 1024 * 1024 * 1024;
 
 pub struct ServerConfig {
     pub host: String,
@@ -121,9 +127,26 @@ fn build_router(state: AppState) -> Router {
         .route("/api/v1/search", get(search))
         .route("/api/v1/trash/empty", post(empty_trash))
         .route("/api/v1/import/enex", post(import_enex))
-        .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
+        .route("/api/v1/import/enex/path", post(import_enex_path))
+        .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(AllowOrigin::mirror_request())
+                .allow_methods(AllowMethods::any())
+                .allow_headers(AllowHeaders::any()),
+        )
+        .layer(middleware::from_fn(allow_private_network))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+async fn allow_private_network(req: axum::extract::Request, next: Next) -> Response {
+    let mut response = next.run(req).await;
+    response.headers_mut().insert(
+        header::HeaderName::from_static("access-control-allow-private-network"),
+        HeaderValue::from_static("true"),
+    );
+    response
 }
 
 #[derive(Clone)]
@@ -494,6 +517,7 @@ async fn import_enex(
     if data.is_empty() {
         return Err(AppError::bad_request("missing file field".into()));
     }
+    tracing::info!("Importing ENEX upload ({} bytes)", data.len());
     let svc = state.service.lock().await;
     Ok(Json(svc.import_enex(
         &data,
@@ -501,6 +525,37 @@ async fn import_enex(
             notebook_id: q.notebook_id,
             notebook_name: q.notebook_name,
             stack_id: q.stack_id,
+        },
+    )?))
+}
+
+#[derive(Debug, Deserialize)]
+struct ImportEnexPathRequest {
+    path: String,
+    notebook_id: Option<Uuid>,
+    notebook_name: Option<String>,
+    stack_id: Option<Uuid>,
+}
+
+async fn import_enex_path(
+    State(state): State<AppState>,
+    Json(req): Json<ImportEnexPathRequest>,
+) -> Result<Json<notebook_core::EnexImportResult>, AppError> {
+    let path = PathBuf::from(&req.path);
+    if !path.is_file() {
+        return Err(AppError::bad_request(format!(
+            "ENEX file not found: {}",
+            req.path
+        )));
+    }
+    tracing::info!("Importing ENEX from {}", path.display());
+    let svc = state.service.lock().await;
+    Ok(Json(svc.import_enex_file(
+        &path,
+        EnexImportRequest {
+            notebook_id: req.notebook_id,
+            notebook_name: req.notebook_name,
+            stack_id: req.stack_id,
         },
     )?))
 }
@@ -532,5 +587,123 @@ impl IntoResponse for AppError {
             ),
         };
         (status, Json(serde_json::json!({ "error": message }))).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    fn sample_enex(title: &str, body: &str) -> String {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE en-export SYSTEM "http://xml.evernote.com/pub/evernote-export3.dtd">
+<en-export>
+  <note>
+    <title>{title}</title>
+    <content><![CDATA[<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd">
+<en-note><div>{body}</div></en-note>]]></content>
+  </note>
+</en-export>"#
+        )
+    }
+
+    fn test_app(unique: &str) -> Router {
+        let dir = std::env::temp_dir().join(format!("notebook-api-{unique}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Database::open(dir.join("test.db")).unwrap();
+        build_router(AppState {
+            service: Arc::new(Mutex::new(NotebookService::new(db))),
+        })
+    }
+
+    fn multipart_body(filename: &str, data: &[u8], boundary: &str) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+        body.extend_from_slice(
+            format!(
+                "Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(b"Content-Type: application/xml\r\n\r\n");
+        body.extend_from_slice(data);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        body
+    }
+
+    #[tokio::test]
+    async fn imports_enex_larger_than_axum_default_limit() {
+        let app = test_app("large-upload");
+        let padding = "x".repeat(2 * 1024 * 1024 + 50 * 1024);
+        let enex = sample_enex("Large notebook export", &padding);
+        assert!(
+            enex.len() > 2 * 1024 * 1024,
+            "fixture must exceed Axum's 2MiB default"
+        );
+
+        let boundary = "notebookboundary";
+        let body = multipart_body("notebook.enex", enex.as_bytes(), boundary);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/import/enex?notebook_name=Imported")
+                    .header(
+                        "content-type",
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(result["imported"], 1, "body: {result}");
+    }
+
+    #[tokio::test]
+    async fn imports_enex_from_local_path() {
+        let app = test_app("path-import");
+        let dir = std::env::temp_dir().join("notebook-api-path-import-file");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("grouped.enex");
+        std::fs::write(&file_path, sample_enex("Path note", "Hello from disk")).unwrap();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/import/enex/path")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "path": file_path.to_string_lossy(),
+                            "notebook_name": "From Path"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(result["imported"], 1, "body: {result}");
+        assert_eq!(result["notebook_name"], "From Path");
     }
 }

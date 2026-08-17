@@ -242,7 +242,9 @@ curl -X POST "http://127.0.0.1:8799/api/v1/import/enex?notebook_name=Imported" \
 
 ### Desktop
 
-Use **Import Evernote (.enex)** in the sidebar.
+Use **Import Evernote (.enex)** in the sidebar. Notebook exports with images can be large; the desktop app imports those files directly from disk instead of uploading them through the browser.
+
+The API accepts Evernote files up to **2 GB**. Grouped / notebook `.enex` exports that previously failed with **Failed to fetch** were hitting the old 2 MB HTTP body limit.
 
 ### Import mapping
 

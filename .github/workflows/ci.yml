@@ -14,7 +14,7 @@ jobs:
       - name: Build API and CLI
         run: cargo build --release -p notebook-core -p notebook-api -p notebook-cli
       - name: Run tests
-        run: cargo test -p notebook-core
+        run: cargo test -p notebook-core -p notebook-api
       - name: Smoke test API + CLI
         run: |
           ./target/release/notebook-api &

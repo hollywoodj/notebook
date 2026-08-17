@@ -10,6 +10,7 @@ interface ImportMeta {
 
 interface NotebookDesktopBridge {
   isElectron: boolean;
+  getPathForFile?: (file: File) => string | null;
 }
 
 interface Window {
