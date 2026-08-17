@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   Account,
   api,
@@ -27,6 +27,7 @@ import {
   pruneNoteIds,
   toggleNoteId,
 } from "./noteSelection";
+import { isPdfFile, titleFromFilename } from "./components/fileAttachment";
 
 type ContextTarget =
   | { kind: "note"; x: number; y: number; note: NoteSummary }
@@ -108,6 +109,12 @@ export default function App() {
   const searchRef = useRef<HTMLInputElement>(null);
   const skipNextSave = useRef(false);
   const lastClickedNoteId = useRef<string | null>(null);
+  const noteListRef = useRef<HTMLDivElement>(null);
+  const dragSelectRef = useRef<{
+    anchorId: string | null;
+    dragging: boolean;
+  }>({ anchorId: null, dragging: false });
+  const skipNoteClickRef = useRef(false);
 
   const openSettings = (section: SettingsSection = "application") => {
     setSettingsSection(section);
@@ -184,6 +191,11 @@ export default function App() {
 
   const handleNoteClick = useCallback(
     (noteId: string, event: MouseEvent) => {
+      if (skipNoteClickRef.current) {
+        skipNoteClickRef.current = false;
+        event.preventDefault();
+        return;
+      }
       const meta = event.metaKey || event.ctrlKey;
 
       if (event.shiftKey) {
@@ -203,6 +215,53 @@ export default function App() {
     },
     [notes, loadNote]
   );
+
+  const endNoteDragSelect = useCallback(() => {
+    if (dragSelectRef.current.dragging) skipNoteClickRef.current = true;
+    dragSelectRef.current = { anchorId: null, dragging: false };
+    noteListRef.current?.classList.remove("is-drag-selecting");
+  }, []);
+
+  const handleNotePointerDown = useCallback(
+    (noteId: string, event: ReactPointerEvent) => {
+      if (event.button !== 0 || event.shiftKey || event.metaKey || event.ctrlKey) return;
+      dragSelectRef.current = { anchorId: noteId, dragging: false };
+    },
+    []
+  );
+
+  const handleNotePointerEnter = useCallback(
+    (noteId: string, event: ReactPointerEvent) => {
+      const drag = dragSelectRef.current;
+      if (!drag.anchorId || (event.buttons & 1) === 0) return;
+      if (noteId === drag.anchorId && !drag.dragging) return;
+      drag.dragging = true;
+      noteListRef.current?.classList.add("is-drag-selecting");
+      lastClickedNoteId.current = drag.anchorId;
+      setSelectedNoteIds(new Set(noteIdsInRange(notes, drag.anchorId, noteId)));
+    },
+    [notes]
+  );
+
+  useEffect(() => {
+    const onUp = () => endNoteDragSelect();
+    const onMove = (event: PointerEvent) => {
+      const drag = dragSelectRef.current;
+      const list = noteListRef.current;
+      if (!drag.anchorId || (event.buttons & 1) === 0 || !list) return;
+      const rect = list.getBoundingClientRect();
+      if (event.clientY < rect.top + 36) list.scrollTop -= 18;
+      else if (event.clientY > rect.bottom - 36) list.scrollTop += 18;
+    };
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    window.addEventListener("pointermove", onMove);
+    return () => {
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      window.removeEventListener("pointermove", onMove);
+    };
+  }, [endNoteDragSelect]);
 
   useEffect(() => {
     (async () => {
@@ -1536,7 +1595,7 @@ export default function App() {
             </div>
           </div>
         )}
-        <div className="note-list scroll-pane">
+        <div className="note-list scroll-pane" ref={noteListRef}>
           {notes.map((note) => (
             <button
               key={note.id}
@@ -1546,6 +1605,8 @@ export default function App() {
               }
               aria-pressed={selectedNoteIds.has(note.id)}
               onClick={(event) => handleNoteClick(note.id, event)}
+              onPointerDown={(event) => handleNotePointerDown(note.id, event)}
+              onPointerEnter={(event) => handleNotePointerEnter(note.id, event)}
               onContextMenu={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -1749,12 +1810,26 @@ export default function App() {
               fontFamily={prefs.font_family}
               fontSize={prefs.font_size}
               noteWidth={prefs.note_width}
+              pdfView={prefs.pdf_view || "expanded"}
               onChange={(html) =>
                 setActiveNote({ ...activeNote, content: html })
+              }
+              onUseAsTitle={(title) =>
+                setActiveNote({ ...activeNote, title })
               }
               onAttach={async (file) => {
                 const attachment = await api.uploadAttachment(activeNote.id, file);
                 await refreshNotes();
+                if (
+                  isPdfFile(attachment.mime_type, attachment.filename) &&
+                  (!activeNote.title || activeNote.title === "Untitled")
+                ) {
+                  setActiveNote((current) =>
+                    current && current.id === activeNote.id
+                      ? { ...current, title: titleFromFilename(attachment.filename) }
+                      : current
+                  );
+                }
                 return attachment;
               }}
             />

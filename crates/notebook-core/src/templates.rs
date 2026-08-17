@@ -208,6 +208,7 @@ pub fn default_preferences() -> serde_json::Value {
         "show_templates": true,
         "show_trash": true,
         "show_import": true,
-        "default_notebook_id": null
+        "default_notebook_id": null,
+        "pdf_view": "expanded"
     })
 }

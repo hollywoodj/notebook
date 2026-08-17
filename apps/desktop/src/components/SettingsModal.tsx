@@ -34,6 +34,7 @@ const SHORTCUTS = [
   ["Pin or unpin selected notes", "Ctrl/⌘ P"],
   ["Select all notes", "Ctrl/⌘ A"],
   ["Range select notes", "Shift+click"],
+  ["Drag-select notes", "Click and drag"],
   ["Toggle note selection", "Ctrl/⌘+click"],
   ["Move selected notes to trash", "Delete"],
   ["Bold", "Ctrl/⌘ B"],
@@ -250,6 +251,22 @@ export function SettingsModal({
                     <option value="16">16</option>
                     <option value="18">18</option>
                     <option value="20">20</option>
+                  </select>
+                </SettingsRow>
+                <SettingsRow
+                  title="PDF attachments"
+                  hint="Evernote can show a PDF as a filename title or as an expanded preview. You can also right-click a PDF in a note to switch."
+                >
+                  <select
+                    value={prefs.pdf_view || "expanded"}
+                    onChange={(e) =>
+                      onSavePrefs({
+                        pdf_view: e.target.value as Preferences["pdf_view"],
+                      })
+                    }
+                  >
+                    <option value="expanded">Expanded preview</option>
+                    <option value="title">Title only</option>
                   </select>
                 </SettingsRow>
                 <SettingsRow

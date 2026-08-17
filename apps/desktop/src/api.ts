@@ -127,6 +127,7 @@ export interface Preferences {
   show_trash: boolean;
   show_import: boolean;
   default_notebook_id: string | null;
+  pdf_view: "expanded" | "title";
 }
 
 export const defaultPreferences: Preferences = {
@@ -151,6 +152,7 @@ export const defaultPreferences: Preferences = {
   show_trash: true,
   show_import: true,
   default_notebook_id: null,
+  pdf_view: "expanded",
 };
 
 export interface TemplateCatalogItem {

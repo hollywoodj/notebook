@@ -309,11 +309,19 @@ pub fn is_inline_image(resource: &EnexResource) -> bool {
 }
 
 pub fn file_attachment_html(href: &str, filename: &str, mime: &str) -> String {
+    let pdf = looks_like_pdf(mime, Some(filename), &[]);
+    let class_name = if pdf {
+        "notebook-file is-pdf is-expanded"
+    } else {
+        "notebook-file is-title"
+    };
     format!(
-        "<div data-notebook-file=\"true\" data-href=\"{href}\" data-filename=\"{filename}\" data-mime=\"{mime}\"><a href=\"{href}\">{visible}</a></div>",
+        "<div data-notebook-file=\"true\" data-href=\"{href}\" data-filename=\"{filename}\" data-mime=\"{mime}\" data-expanded=\"{expanded}\" class=\"{class_name}\"><a href=\"{href}\">{visible}</a></div>",
         href = escape_attr(href),
         filename = escape_attr(filename),
         mime = escape_attr(mime),
+        expanded = if pdf { "true" } else { "false" },
+        class_name = class_name,
         visible = escape_html(filename),
     )
 }
@@ -634,6 +642,7 @@ mod tests {
         );
         let html = enml_to_html(&enml, &[resource]).unwrap();
         assert!(html.contains("data-notebook-file=\"true\""), "got: {html}");
+        assert!(html.contains("data-expanded=\"true\""), "got: {html}");
         assert!(html.contains("notebook-resource://"));
         assert!(html.contains("deck.pdf"));
     }
