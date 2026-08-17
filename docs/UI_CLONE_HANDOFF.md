@@ -52,6 +52,11 @@ This log is for future sessions continuing the exact-clone work. Passes 1–4 ea
 9. Account **footer** chip (avatar, name, email) + settings gear
 10. **Find** (Ctrl/⌘ F) vs **Find and Replace** (Ctrl/⌘ H) as separate Edit items
 
+### Pass 5 (this session)
+1. **Sidebar icon rail**: the sidebar rests at 56px of icons and floats open over the note list on hover or keyboard focus, so the list and editor never reflow
+2. Rail can be pinned open from the sidebar toggle, the View menu, or Ctrl/⌘ Alt S; the choice persists with the pane layout
+3. Sidebar splitter tracks the pointer, so one drag crosses between the rail and a pinned width in either direction
+
 ## Where to look
 
 - Chrome helpers and tests: `apps/desktop/src/uiChrome.ts`, `apps/desktop/src/uiChrome.test.ts`
@@ -123,8 +128,9 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 - Start in last notebook / last note (startup view is only Notes / Shortcuts / Notebook)
 
 ### Quality / parity bugs to re-check
-- Sidebar ↔ note-list splitter sometimes feels like it does not move until a larger drag
+- Note-list splitter sometimes feels like it does not move until a larger drag (the sidebar splitter now tracks the pointer instead)
 - Hide Sidebar should be verified with a click, not only the menu label
+- A drag that collapses the sidebar to the rail leaves the remembered pinned width at the 180px minimum
 - Drag-and-drop notes onto notebooks/tags was implemented but QA skipped it
 - ArrowUp/ArrowDown with a single note cannot prove non-wrapping selection
 - “Add tag” vs Evernote’s “Add a tag”
