@@ -54,19 +54,16 @@ pub fn search_notes(service: &NotebookService, query: SearchQuery) -> Result<Sea
         "SELECT n.id FROM notes n WHERE {where_clause} ORDER BY n.updated_at DESC LIMIT ?3 OFFSET ?4"
     );
 
-    let total: u32 = conn.query_row(&count_sql, params![user_id.to_string(), fts_query.clone()], |row| {
-        row.get(0)
-    })?;
+    let total: u32 = conn.query_row(
+        &count_sql,
+        params![user_id.to_string(), fts_query.clone()],
+        |row| row.get(0),
+    )?;
 
     let ids: Vec<Uuid> = {
         let mut stmt = conn.prepare(&list_sql)?;
         let rows = stmt.query_map(
-            params![
-                user_id.to_string(),
-                fts_query,
-                limit as i64,
-                offset as i64
-            ],
+            params![user_id.to_string(), fts_query, limit as i64, offset as i64],
             |row| row.get::<_, String>(0),
         )?;
         rows.collect::<rusqlite::Result<Vec<String>>>()?

@@ -974,9 +974,7 @@ impl NotebookService {
     pub fn use_template(&self, template_id: Uuid, notebook_id: Option<Uuid>) -> Result<Note> {
         let template = self.get_note(template_id)?;
         if !template.is_template {
-            return Err(NotebookError::InvalidInput(
-                "note is not a template".into(),
-            ));
+            return Err(NotebookError::InvalidInput("note is not a template".into()));
         }
         let target_notebook = notebook_id.unwrap_or(template.notebook_id);
         self.create_note(CreateNoteRequest {
@@ -1057,7 +1055,7 @@ impl Default for UpdateNoteRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{CreateNotebookRequest, CreateNoteRequest, UpdateNoteRequest};
+    use crate::models::{CreateNoteRequest, CreateNotebookRequest, UpdateNoteRequest};
 
     fn temp_service(name: &str) -> NotebookService {
         let dir = std::env::temp_dir().join(format!("notebook-ui-gap-{name}"));
@@ -1089,7 +1087,9 @@ mod tests {
         assert_eq!(counts.reminders, 1);
         assert_eq!(counts.trash, 0);
         let listed = service.list_notebooks(false).unwrap();
-        assert!(listed.iter().any(|nb| nb.id == notebook_id && nb.note_count >= 1));
+        assert!(listed
+            .iter()
+            .any(|nb| nb.id == notebook_id && nb.note_count >= 1));
     }
 
     fn sample_note(notebook_id: Uuid, title: &str) -> CreateNoteRequest {
@@ -1201,12 +1201,13 @@ mod tests {
             .create_note(sample_note(notebook_id, "Untagged"))
             .unwrap();
 
-        let listed = service
-            .list_notes(None, None, false, None, None)
-            .unwrap();
+        let listed = service.list_notes(None, None, false, None, None).unwrap();
         let tagged = listed.iter().find(|n| n.title == "Tagged").unwrap();
         let untagged = listed.iter().find(|n| n.title == "Untagged").unwrap();
-        assert_eq!(tagged.tag_names, vec!["home".to_string(), "work".to_string()]);
+        assert_eq!(
+            tagged.tag_names,
+            vec!["home".to_string(), "work".to_string()]
+        );
         assert!(untagged.tag_names.is_empty());
     }
 

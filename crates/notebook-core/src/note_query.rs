@@ -115,7 +115,10 @@ pub fn summaries_by_ids(
     let sql = format!("{SUMMARY_SELECT} WHERE n.id IN ({placeholders}){deleted_clause}");
     let params: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), SummaryRow::from_sql)?;
+    let rows = stmt.query_map(
+        rusqlite::params_from_iter(params.iter()),
+        SummaryRow::from_sql,
+    )?;
     let collected = rows.collect::<std::result::Result<Vec<_>, _>>()?;
     let mut by_id = hydrate_summaries(conn, collected)?
         .into_iter()
