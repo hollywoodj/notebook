@@ -423,3 +423,141 @@ export function safeFilename(title: string): string {
   const cleaned = (title || "Untitled").replace(/[\\/:*?"<>|]+/g, " ").trim();
   return cleaned || "Untitled";
 }
+
+export const EDITOR_CHROME_KEY = "notebook.editorChrome";
+export const ZOOM_MIN = 50;
+export const ZOOM_MAX = 200;
+export const ZOOM_STEP = 10;
+export const DEFAULT_ZOOM = 100;
+
+export interface EditorChrome {
+  toolbarHidden: boolean;
+  zoom: number;
+}
+
+export function defaultEditorChrome(): EditorChrome {
+  return { toolbarHidden: false, zoom: DEFAULT_ZOOM };
+}
+
+export function clampZoom(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_ZOOM;
+  const stepped = Math.round(value / ZOOM_STEP) * ZOOM_STEP;
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, stepped));
+}
+
+export function parseEditorChrome(raw: string | null): EditorChrome {
+  const fallback = defaultEditorChrome();
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw) as Partial<EditorChrome>;
+    return {
+      toolbarHidden: Boolean(parsed.toolbarHidden),
+      zoom: clampZoom(Number(parsed.zoom ?? DEFAULT_ZOOM)),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+export function nextZoom(current: number, direction: 1 | -1 | 0): number {
+  if (direction === 0) return DEFAULT_ZOOM;
+  return clampZoom(current + direction * ZOOM_STEP);
+}
+
+export function windowTitleForNote(noteTitle: string | null): string {
+  if (noteTitle === null) return "Notebook";
+  const cleaned = noteTitle.trim() || "Untitled";
+  return `${cleaned} – Notebook`;
+}
+
+export type EmptyView =
+  | "all"
+  | "notebook"
+  | "tag"
+  | "shortcuts"
+  | "reminders"
+  | "templates"
+  | "trash"
+  | "search";
+
+export function emptyStateCopy(
+  view: EmptyView,
+  name = ""
+): { title: string; body: string } {
+  switch (view) {
+    case "notebook":
+      return {
+        title: "This notebook is empty",
+        body: name
+          ? `Create a note in “${name}” to get started.`
+          : "Create a note in this notebook to get started.",
+      };
+    case "tag":
+      return {
+        title: "No notes with this tag",
+        body: name
+          ? `Tag notes with “${name}” to see them here.`
+          : "Tag notes to see them here.",
+      };
+    case "shortcuts":
+      return {
+        title: "No shortcuts yet",
+        body: "Star a note to pin it here for quick access.",
+      };
+    case "reminders":
+      return {
+        title: "No reminders",
+        body: "Set a reminder on a note and it will appear in this list.",
+      };
+    case "templates":
+      return {
+        title: "No templates yet",
+        body: "Open the gallery to add a template, or save a note as a template.",
+      };
+    case "trash":
+      return {
+        title: "Trash is empty",
+        body: "Notes you delete will stay here until you empty Trash.",
+      };
+    case "search":
+      return {
+        title: "No matching notes",
+        body: name
+          ? `No notes matched “${name}”. Try another search.`
+          : "Try another search.",
+      };
+    default:
+      return {
+        title: "Create your first note",
+        body: "Click New note to capture an idea, meeting, or anything else.",
+      };
+  }
+}
+
+export function matchesSidebarFilter(name: string, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return name.toLowerCase().includes(needle);
+}
+
+export function notebooksMatchingFilter<T extends { name: string }>(
+  notebooks: T[],
+  stackName: string | null,
+  query: string
+): T[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return notebooks;
+  if (stackName && stackName.toLowerCase().includes(needle)) return notebooks;
+  return notebooks.filter((notebook) => notebook.name.toLowerCase().includes(needle));
+}
+
+export function hasVisibleSidebarNotebooks(
+  notebooks: { name: string }[],
+  stacks: { name: string }[],
+  query: string
+): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return notebooks.length > 0;
+  if (stacks.some((stack) => stack.name.toLowerCase().includes(needle))) return true;
+  return notebooks.some((notebook) => notebook.name.toLowerCase().includes(needle));
+}

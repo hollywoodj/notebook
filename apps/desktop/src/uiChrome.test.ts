@@ -3,18 +3,25 @@ import { describe, it } from "node:test";
 import {
   adjacentNoteId,
   clampPaneWidth,
+  clampZoom,
   countWords,
   decodeNoteDrag,
+  emptyStateCopy,
   encodeNoteDrag,
   findMatchOffsets,
   fromDatetimeLocalValue,
   groupNotesForList,
   isReminderOverdue,
   jumpToMatches,
+  hasVisibleSidebarNotebooks,
+  matchesSidebarFilter,
   mergeNoteBodies,
   nextMatchIndex,
+  nextZoom,
   noteAppLink,
+  notebooksMatchingFilter,
   notesToEnex,
+  parseEditorChrome,
   parsePaneLayout,
   reminderFromPreset,
   resolveListView,
@@ -22,6 +29,7 @@ import {
   suggestedTags,
   toDatetimeLocalValue,
   toEnexTimestamp,
+  windowTitleForNote,
 } from "./uiChrome.ts";
 
 describe("clampPaneWidth", () => {
@@ -220,6 +228,67 @@ describe("jumpToMatches", () => {
         ["tag", "#workflow"],
         ["note", "Standup"],
       ]
+    );
+  });
+});
+
+describe("editor chrome", () => {
+  it("clamps zoom to Evernote-like 50–200% steps", () => {
+    assert.equal(clampZoom(47), 50);
+    assert.equal(clampZoom(204), 200);
+    assert.equal(clampZoom(116), 120);
+    assert.equal(nextZoom(100, 1), 110);
+    assert.equal(nextZoom(100, -1), 90);
+    assert.equal(nextZoom(50, -1), 50);
+    assert.equal(nextZoom(175, 0), 100);
+  });
+
+  it("parses saved toolbar and zoom chrome", () => {
+    const chrome = parseEditorChrome(JSON.stringify({ toolbarHidden: true, zoom: 125 }));
+    assert.equal(chrome.toolbarHidden, true);
+    assert.equal(chrome.zoom, 130);
+    assert.equal(parseEditorChrome("{").zoom, 100);
+  });
+});
+
+describe("windowTitleForNote", () => {
+  it("uses the note title like Evernote's window chrome", () => {
+    assert.equal(windowTitleForNote(null), "Notebook");
+    assert.equal(windowTitleForNote(""), "Untitled – Notebook");
+    assert.equal(windowTitleForNote(" Meeting notes "), "Meeting notes – Notebook");
+  });
+});
+
+describe("emptyStateCopy", () => {
+  it("returns Evernote-style copy per view", () => {
+    assert.equal(emptyStateCopy("all").title, "Create your first note");
+    assert.match(emptyStateCopy("notebook", "Work").body, /Work/);
+    assert.equal(emptyStateCopy("trash").title, "Trash is empty");
+    assert.match(emptyStateCopy("search", "invoice").body, /invoice/);
+    assert.equal(emptyStateCopy("shortcuts").title, "No shortcuts yet");
+  });
+});
+
+describe("sidebar filter", () => {
+  it("narrows notebooks unless the stack name matches", () => {
+    const notebooks = [{ name: "Work" }, { name: "Recipes" }];
+    assert.deepEqual(
+      notebooksMatchingFilter(notebooks, "Personal", "rec").map((item) => item.name),
+      ["Recipes"]
+    );
+    assert.deepEqual(
+      notebooksMatchingFilter(notebooks, "Personal", "per").map((item) => item.name),
+      ["Work", "Recipes"]
+    );
+    assert.equal(matchesSidebarFilter("travel", "TRA"), true);
+    assert.equal(matchesSidebarFilter("travel", "home"), false);
+    assert.equal(
+      hasVisibleSidebarNotebooks([{ name: "Work" }], [{ name: "Personal" }], "per"),
+      true
+    );
+    assert.equal(
+      hasVisibleSidebarNotebooks([{ name: "Work" }], [{ name: "Personal" }], "zzz"),
+      false
     );
   });
 });

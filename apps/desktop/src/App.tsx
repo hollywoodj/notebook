@@ -36,6 +36,7 @@ import {
 } from "./noteSelection";
 import { isPdfFile, titleFromFilename } from "./components/fileAttachment";
 import {
+  EDITOR_CHROME_KEY,
   LIST_MAX,
   LIST_MIN,
   NOTE_DRAG_TYPE,
@@ -48,16 +49,22 @@ import {
   decodeNoteDrag,
   dispatchEditorCommand,
   downloadTextFile,
+  emptyStateCopy,
   encodeNoteDrag,
   formatReminderLabel,
   fromDatetimeLocalValue,
   groupNotesForList,
   HIGHLIGHT_COLORS,
   isReminderOverdue,
+  hasVisibleSidebarNotebooks,
+  matchesSidebarFilter,
   mergeNoteBodies,
+  nextZoom,
   noteAppLink,
+  notebooksMatchingFilter,
   notesToEnex,
   notesToHtmlDocument,
+  parseEditorChrome,
   parsePaneLayout,
   reminderFromPreset,
   resolveListView,
@@ -65,6 +72,7 @@ import {
   snippetParts,
   TEXT_COLORS,
   toDatetimeLocalValue,
+  windowTitleForNote,
   type ListView,
   type ReminderPreset,
 } from "./uiChrome";
@@ -139,8 +147,14 @@ export default function App() {
   const [focusMode, setFocusMode] = useState(false);
   const [showJump, setShowJump] = useState(false);
   const [jumpNotes, setJumpNotes] = useState<NoteSummary[]>([]);
-  const [copyPickerOpen, setCopyPickerOpen] = useState(false);
+  const [notebookPicker, setNotebookPicker] = useState<"move" | "copy" | null>(null);
   const [showReminderMenu, setShowReminderMenu] = useState(false);
+  const [sidebarFilter, setSidebarFilter] = useState("");
+  const [editorChrome, setEditorChrome] = useState(() =>
+    parseEditorChrome(
+      typeof localStorage === "undefined" ? null : localStorage.getItem(EDITOR_CHROME_KEY)
+    )
+  );
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
   const [newName, setNewName] = useState("");
   const [importStatus, setImportStatus] = useState<string | null>(null);
@@ -161,6 +175,7 @@ export default function App() {
   const [tagsOpen, setTagsOpen] = useState(true);
   const [showInfo, setShowInfo] = useState(false);
   const [findTick, setFindTick] = useState(0);
+  const [replaceTick, setReplaceTick] = useState(0);
   const [paneLayout, setPaneLayout] = useState(() =>
     parsePaneLayout(
       typeof localStorage === "undefined" ? null : localStorage.getItem(PANE_LAYOUT_KEY)
@@ -224,6 +239,11 @@ export default function App() {
   const persistPaneLayout = (next: typeof paneLayout) => {
     setPaneLayout(next);
     localStorage.setItem(PANE_LAYOUT_KEY, JSON.stringify(next));
+  };
+
+  const persistEditorChrome = (next: typeof editorChrome) => {
+    setEditorChrome(next);
+    localStorage.setItem(EDITOR_CHROME_KEY, JSON.stringify(next));
   };
 
   const refreshNotes = useCallback(async () => {
@@ -612,6 +632,7 @@ export default function App() {
       const updated = await api.updateNote(id, { notebook_id: notebookId });
       if (activeNote?.id === id) setActiveNote(updated);
     });
+    setNotebookPicker(null);
   };
 
   const pinSelectedNotes = async (pinned: boolean) => {
@@ -676,7 +697,7 @@ export default function App() {
       });
       lastId = copy.id;
     }
-    setCopyPickerOpen(false);
+    setNotebookPicker(null);
     await refreshNotes();
     await refreshMeta();
     if (lastId) await loadNote(lastId);
@@ -837,6 +858,15 @@ export default function App() {
     [notes, prefs.sort_by]
   );
 
+  const visibleTags = useMemo(
+    () => tags.filter((tag) => matchesSidebarFilter(tag.name, sidebarFilter)),
+    [tags, sidebarFilter]
+  );
+
+  useEffect(() => {
+    document.title = windowTitleForNote(activeNote ? activeNote.title : null);
+  }, [activeNote]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
@@ -853,6 +883,27 @@ export default function App() {
         e.preventDefault();
         if (activeNote) setFindTick((tick) => tick + 1);
         else searchRef.current?.focus();
+      } else if (meta && e.key === "h") {
+        e.preventDefault();
+        if (activeNote) setReplaceTick((tick) => tick + 1);
+      } else if (meta && (e.key === "=" || e.key === "+")) {
+        e.preventDefault();
+        persistEditorChrome({
+          ...editorChrome,
+          zoom: nextZoom(editorChrome.zoom, 1),
+        });
+      } else if (meta && e.key === "-") {
+        e.preventDefault();
+        persistEditorChrome({
+          ...editorChrome,
+          zoom: nextZoom(editorChrome.zoom, -1),
+        });
+      } else if (meta && e.key === "0") {
+        e.preventDefault();
+        persistEditorChrome({
+          ...editorChrome,
+          zoom: nextZoom(editorChrome.zoom, 0),
+        });
       } else if (e.key === "F11") {
         e.preventDefault();
         setFocusMode((open) => !open);
@@ -1028,10 +1079,6 @@ export default function App() {
       const allPinned = targets.every((note) => note.is_pinned);
       const allArchived = targets.every((note) => note.is_archived);
       const allTemplates = targets.every((note) => note.is_template);
-      const sameNotebookId =
-        targets.every((note) => note.notebook_id === targets[0]?.notebook_id)
-          ? targets[0]?.notebook_id
-          : null;
 
       if (inTrash) {
         return [
@@ -1074,25 +1121,16 @@ export default function App() {
           onSelect: () => void pinSelectedNotes(!allPinned),
         },
         {
-          label: "Move to notebook",
-          children: notebooks.map((notebook) => ({
-            label: notebook.name,
-            checked: sameNotebookId === notebook.id,
-            disabled: sameNotebookId === notebook.id,
-            onSelect: () => void moveSelectedNotes(notebook.id),
-          })),
+          label: "Move to notebook…",
+          onSelect: () => setNotebookPicker("move"),
         },
         {
           label: count > 1 ? `Duplicate ${count} notes` : "Duplicate note",
           onSelect: () => void duplicateSelectedNotes(),
         },
         {
-          label: "Copy to notebook",
-          children: notebooks.map((notebook) => ({
-            label: notebook.name,
-            disabled: sameNotebookId === notebook.id,
-            onSelect: () => void copySelectedNotes(notebook.id),
-          })),
+          label: "Copy to notebook…",
+          onSelect: () => setNotebookPicker("copy"),
         },
         ...(count > 1
           ? [
@@ -1399,10 +1437,16 @@ export default function App() {
           },
         },
         {
-          label: "Find and Replace…",
+          label: "Find…",
           shortcut: "Ctrl/⌘ F",
           disabled: !activeNote,
           onSelect: () => setFindTick((tick) => tick + 1),
+        },
+        {
+          label: "Find and Replace…",
+          shortcut: "Ctrl/⌘ H",
+          disabled: !activeNote,
+          onSelect: () => setReplaceTick((tick) => tick + 1),
         },
       ],
     },
@@ -1428,6 +1472,17 @@ export default function App() {
             persistPaneLayout({
               ...paneLayout,
               listCollapsed: !paneLayout.listCollapsed,
+            }),
+        },
+        {
+          label: editorChrome.toolbarHidden
+            ? "Show Formatting Toolbar"
+            : "Hide Formatting Toolbar",
+          disabled: !activeNote,
+          onSelect: () =>
+            persistEditorChrome({
+              ...editorChrome,
+              toolbarHidden: !editorChrome.toolbarHidden,
             }),
         },
         {
@@ -1458,6 +1513,37 @@ export default function App() {
         {
           label: "Cards View",
           onSelect: () => setListView("cards"),
+        },
+        { type: "separator" },
+        {
+          label: "Zoom In",
+          shortcut: "Ctrl/⌘ +",
+          disabled: !activeNote,
+          onSelect: () =>
+            persistEditorChrome({
+              ...editorChrome,
+              zoom: nextZoom(editorChrome.zoom, 1),
+            }),
+        },
+        {
+          label: "Zoom Out",
+          shortcut: "Ctrl/⌘ -",
+          disabled: !activeNote,
+          onSelect: () =>
+            persistEditorChrome({
+              ...editorChrome,
+              zoom: nextZoom(editorChrome.zoom, -1),
+            }),
+        },
+        {
+          label: "Actual Size",
+          shortcut: "Ctrl/⌘ 0",
+          disabled: !activeNote || editorChrome.zoom === 100,
+          onSelect: () =>
+            persistEditorChrome({
+              ...editorChrome,
+              zoom: nextZoom(editorChrome.zoom, 0),
+            }),
         },
         { type: "separator" },
         {
@@ -1516,9 +1602,14 @@ export default function App() {
           onSelect: () => setFindTick((tick) => tick + 1),
         },
         {
+          label: "Move to Notebook…",
+          disabled: targetNoteIds().length === 0 || filter.type === "trash",
+          onSelect: () => setNotebookPicker("move"),
+        },
+        {
           label: "Copy to Notebook…",
           disabled: targetNoteIds().length === 0 || filter.type === "trash",
-          onSelect: () => setCopyPickerOpen(true),
+          onSelect: () => setNotebookPicker("copy"),
         },
         {
           label: "Set Reminder",
@@ -1777,13 +1868,6 @@ export default function App() {
           });
         }}
       >
-        <div className="sidebar-account">
-          <div className="account-chip">
-            <span className="avatar">{account.display_name.slice(0, 1).toUpperCase()}</span>
-            <span className="account-name">{account.display_name}</span>
-          </div>
-        </div>
-
         <div className="new-note-wrap" onMouseDown={(e) => e.stopPropagation()}>
           <button className="new-note-btn" onClick={createNote}>
             <Icon.Plus size={16} />
@@ -1841,6 +1925,25 @@ export default function App() {
             placeholder="Search"
           />
         </div>
+        <div className="sidebar-search sidebar-filter">
+          <Icon.Notebooks size={15} />
+          <input
+            value={sidebarFilter}
+            onChange={(e) => setSidebarFilter(e.target.value)}
+            placeholder="Filter notebooks & tags"
+            aria-label="Filter notebooks and tags"
+          />
+          {sidebarFilter && (
+            <button
+              type="button"
+              className="icon-btn"
+              title="Clear filter"
+              onClick={() => setSidebarFilter("")}
+            >
+              <Icon.Close size={14} />
+            </button>
+          )}
+        </div>
 
         <nav className="sidebar-nav scroll-pane">
           <button
@@ -1896,14 +1999,24 @@ export default function App() {
                   <Icon.Chevron
                     size={14}
                     style={{
-                      transform: notebooksOpen ? "rotate(0deg)" : "rotate(-90deg)",
+                      transform:
+                        notebooksOpen || sidebarFilter.trim()
+                          ? "rotate(0deg)"
+                          : "rotate(-90deg)",
                     }}
                   />
                 </span>
               </button>
-              {notebooksOpen && (
+              { (notebooksOpen || Boolean(sidebarFilter.trim())) && (
                 <>
-                  {stacks.map((stack) => (
+                  {stacks.map((stack) => {
+                    const stacked = notebooksMatchingFilter(
+                      notebooksByStack[stack.id] || [],
+                      stack.name,
+                      sidebarFilter
+                    );
+                    if (!stacked.length) return null;
+                    return (
                     <div key={stack.id} className="stack-group">
                       <button
                         className="stack-name"
@@ -1920,16 +2033,13 @@ export default function App() {
                       >
                         {stack.name}
                       </button>
-                      {(notebooksByStack[stack.id] || []).map((nb) => (
-                        <button
+                      {stacked.map((nb) => (
+                        <NotebookNavItem
                           key={nb.id}
-                          className={
-                            (filter.type === "notebook" && filter.id === nb.id
-                              ? "nav-item active indent"
-                              : "nav-item indent") +
-                            (dropTarget === `notebook:${nb.id}` ? " drop-target" : "")
-                          }
-                          onClick={() =>
+                          notebook={nb}
+                          active={filter.type === "notebook" && filter.id === nb.id}
+                          isDropTarget={dropTarget === `notebook:${nb.id}`}
+                          onSelect={() =>
                             setFilter({ type: "notebook", id: nb.id, name: nb.name })
                           }
                           onDragOver={(event) => allowNoteDrop(event, `notebook:${nb.id}`)}
@@ -1945,43 +2055,43 @@ export default function App() {
                               notebook: nb,
                             });
                           }}
-                        >
-                          {nb.name}
-                          <span className="nav-count">{nb.note_count ?? 0}</span>
-                        </button>
+                        />
                       ))}
                     </div>
-                  ))}
-                  {notebooksByStack.uncategorized.map((nb) => (
-                    <button
+                    );
+                  })}
+                  {notebooksMatchingFilter(
+                    notebooksByStack.uncategorized,
+                    null,
+                    sidebarFilter
+                  ).map((nb) => (
+                    <NotebookNavItem
                       key={nb.id}
-                    className={
-                      (filter.type === "notebook" && filter.id === nb.id
-                        ? "nav-item active indent"
-                        : "nav-item indent") +
-                      (dropTarget === `notebook:${nb.id}` ? " drop-target" : "")
-                    }
-                    onClick={() =>
-                      setFilter({ type: "notebook", id: nb.id, name: nb.name })
-                    }
-                    onDragOver={(event) => allowNoteDrop(event, `notebook:${nb.id}`)}
-                    onDragLeave={() => setDropTarget(null)}
-                    onDrop={(event) => void moveDroppedNotes(nb.id, event)}
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setContextMenu({
-                        kind: "notebook",
-                        x: event.clientX,
-                        y: event.clientY,
-                        notebook: nb,
-                      });
-                    }}
-                  >
-                    {nb.name}
-                    <span className="nav-count">{nb.note_count ?? 0}</span>
-                  </button>
+                      notebook={nb}
+                      active={filter.type === "notebook" && filter.id === nb.id}
+                      isDropTarget={dropTarget === `notebook:${nb.id}`}
+                      onSelect={() =>
+                        setFilter({ type: "notebook", id: nb.id, name: nb.name })
+                      }
+                      onDragOver={(event) => allowNoteDrop(event, `notebook:${nb.id}`)}
+                      onDragLeave={() => setDropTarget(null)}
+                      onDrop={(event) => void moveDroppedNotes(nb.id, event)}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setContextMenu({
+                          kind: "notebook",
+                          x: event.clientX,
+                          y: event.clientY,
+                          notebook: nb,
+                        });
+                      }}
+                    />
                   ))}
+                  {sidebarFilter.trim() &&
+                    !hasVisibleSidebarNotebooks(notebooks, stacks, sidebarFilter) && (
+                      <div className="empty-state compact">No matching notebooks</div>
+                    )}
                 </>
               )}
             </div>
@@ -2010,13 +2120,16 @@ export default function App() {
                   <Icon.Chevron
                     size={14}
                     style={{
-                      transform: tagsOpen ? "rotate(0deg)" : "rotate(-90deg)",
+                      transform:
+                        tagsOpen || sidebarFilter.trim()
+                          ? "rotate(0deg)"
+                          : "rotate(-90deg)",
                     }}
                   />
                 </span>
               </button>
-              {tagsOpen &&
-                tags.map((tag) => (
+              {(tagsOpen || Boolean(sidebarFilter.trim())) &&
+                visibleTags.map((tag) => (
                   <button
                     key={tag.id}
                     className={
@@ -2046,6 +2159,9 @@ export default function App() {
                     <span className="nav-count">{tag.note_count ?? 0}</span>
                   </button>
                 ))}
+              {sidebarFilter.trim() && tagsOpen !== false && visibleTags.length === 0 && (
+                <div className="empty-state compact">No matching tags</div>
+              )}
             </div>
           )}
 
@@ -2089,6 +2205,28 @@ export default function App() {
             </div>
           )}
         </nav>
+        <div className="sidebar-account">
+          <button
+            type="button"
+            className="account-chip"
+            onClick={() => openSettings("account")}
+            title="Account"
+          >
+            <span className="avatar">{account.display_name.slice(0, 1).toUpperCase()}</span>
+            <span className="account-copy">
+              <span className="account-name">{account.display_name}</span>
+              <span className="account-email">{account.email || "Local account"}</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            title="Settings"
+            onClick={() => openSettings()}
+          >
+            <Icon.Gear size={16} />
+          </button>
+        </div>
         <input
           ref={importRef}
           type="file"
@@ -2254,23 +2392,12 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  <select
-                    aria-label="Move selected notes to notebook"
-                    value=""
-                    onChange={(e) => {
-                      const notebookId = e.target.value;
-                      if (notebookId) void moveSelectedNotes(notebookId);
-                    }}
+                  <button
+                    className="ghost-btn small"
+                    onClick={() => setNotebookPicker("move")}
                   >
-                    <option value="" disabled>
-                      Move to…
-                    </option>
-                    {notebooks.map((notebook) => (
-                      <option key={notebook.id} value={notebook.id}>
-                        {notebook.name}
-                      </option>
-                    ))}
-                  </select>
+                    Move to…
+                  </button>
                   <button
                     className="ghost-btn small"
                     onClick={() => void pinSelectedNotes(!allSelectedPinned)}
@@ -2384,11 +2511,11 @@ export default function App() {
             </div>
           ))}
           {notes.length === 0 && (
-            <div className="empty-state">
-              {filter.type === "templates"
-                ? "No templates yet. Open the gallery to get started."
-                : "No notes here yet."}
-            </div>
+            <EmptyListState
+              filter={filter}
+              onCreate={() => void createNote()}
+              onBrowseTemplates={() => setShowGallery(true)}
+            />
           )}
         </div>
       </section>
@@ -2422,188 +2549,228 @@ export default function App() {
               </div>
             )}
             <div className="editor-header">
-              <input
-                className="title-input"
-                value={activeNote.title}
-                onChange={(e) =>
-                  setActiveNote({ ...activeNote, title: e.target.value })
-                }
-                placeholder="Title"
-              />
-              <div className="editor-actions">
-                <select
-                  value={activeNote.notebook_id}
+              <div className="editor-header-row">
+                <input
+                  className="title-input"
+                  value={activeNote.title}
                   onChange={(e) =>
-                    saveNote({ ...activeNote, notebook_id: e.target.value })
+                    setActiveNote({ ...activeNote, title: e.target.value })
                   }
-                >
-                  {notebooks.map((nb) => (
-                    <option key={nb.id} value={nb.id}>
-                      {nb.name}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={() =>
-                    saveNote({ ...activeNote, is_pinned: !activeNote.is_pinned })
-                  }
-                >
-                  {activeNote.is_pinned ? "Unpin" : "Pin"}
-                </button>
-                <button
-                  className={isShortcut ? "active" : ""}
-                  onClick={async () => {
-                    if (isShortcut) await api.removeShortcut(activeNote.id);
-                    else await api.addShortcut(activeNote.id);
-                    await refreshMeta();
-                  }}
-                >
-                  {isShortcut ? "Unstar" : "Shortcut"}
-                </button>
-                <div className="menu-anchor" onMouseDown={(e) => e.stopPropagation()}>
+                  placeholder="Title"
+                />
+                <div className="editor-actions">
                   <button
-                    className={activeNote.reminder_at ? "active" : ""}
-                    onClick={() => setShowReminderMenu((open) => !open)}
-                    title="Remind me"
+                    type="button"
+                    className={activeNote.is_pinned ? "icon-btn active" : "icon-btn"}
+                    title={activeNote.is_pinned ? "Unpin" : "Pin to top"}
+                    onClick={() =>
+                      saveNote({ ...activeNote, is_pinned: !activeNote.is_pinned })
+                    }
                   >
-                    <Icon.Reminder size={16} />
+                    <Icon.Pin size={16} />
                   </button>
-                  {showReminderMenu && (
-                    <div className="menu-popover right reminder-popover">
-                      <button onClick={() => void setReminderPreset("tonight")}>Tonight</button>
-                      <button onClick={() => void setReminderPreset("tomorrow")}>Tomorrow</button>
-                      <button onClick={() => void setReminderPreset("nextWeek")}>Next week</button>
-                      <label className="reminder-custom">
-                        Pick date & time
-                        <input
-                          type="datetime-local"
-                          value={toDatetimeLocalValue(activeNote.reminder_at)}
-                          onChange={(event) => {
-                            saveNote({
-                              reminder_at: fromDatetimeLocalValue(event.target.value),
-                            });
-                            setShowReminderMenu(false);
-                          }}
-                        />
-                      </label>
-                      {activeNote.reminder_at && (
-                        <button onClick={() => void setReminderPreset("clear")}>
-                          Clear reminder
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <button
-                  className={showInfo ? "active" : ""}
-                  onClick={() => setShowInfo((open) => !open)}
-                  title="Note info"
-                >
-                  Info
-                </button>
-                <div className="menu-anchor" onMouseDown={(e) => e.stopPropagation()}>
-                  <button onClick={() => setShowNoteMenu((v) => !v)} title="More">
-                    <Icon.More size={16} />
+                  <button
+                    type="button"
+                    className={isShortcut ? "icon-btn active" : "icon-btn"}
+                    title={isShortcut ? "Remove from shortcuts" : "Add to shortcuts"}
+                    onClick={async () => {
+                      if (isShortcut) await api.removeShortcut(activeNote.id);
+                      else await api.addShortcut(activeNote.id);
+                      await refreshMeta();
+                    }}
+                  >
+                    <Icon.Shortcuts size={16} />
                   </button>
-                  {showNoteMenu && (
-                    <div className="menu-popover right">
-                      {!activeNote.is_template && (
+                  <div className="menu-anchor" onMouseDown={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      className={activeNote.reminder_at ? "icon-btn active" : "icon-btn"}
+                      onClick={() => setShowReminderMenu((open) => !open)}
+                      title="Remind me"
+                    >
+                      <Icon.Reminder size={16} />
+                    </button>
+                    {showReminderMenu && (
+                      <div className="menu-popover right reminder-popover">
+                        <button onClick={() => void setReminderPreset("tonight")}>Tonight</button>
+                        <button onClick={() => void setReminderPreset("tomorrow")}>Tomorrow</button>
+                        <button onClick={() => void setReminderPreset("nextWeek")}>Next week</button>
+                        <label className="reminder-custom">
+                          Pick date & time
+                          <input
+                            type="datetime-local"
+                            value={toDatetimeLocalValue(activeNote.reminder_at)}
+                            onChange={(event) => {
+                              saveNote({
+                                reminder_at: fromDatetimeLocalValue(event.target.value),
+                              });
+                              setShowReminderMenu(false);
+                            }}
+                          />
+                        </label>
+                        {activeNote.reminder_at && (
+                          <button onClick={() => void setReminderPreset("clear")}>
+                            Clear reminder
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className={showInfo ? "icon-btn active" : "icon-btn"}
+                    onClick={() => setShowInfo((open) => !open)}
+                    title="Note info"
+                  >
+                    <Icon.Info size={16} />
+                  </button>
+                  <div className="menu-anchor" onMouseDown={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() => setShowNoteMenu((v) => !v)}
+                      title="More"
+                    >
+                      <Icon.More size={16} />
+                    </button>
+                    {showNoteMenu && (
+                      <div className="menu-popover right">
+                        {!activeNote.is_template && (
+                          <button
+                            onClick={() => {
+                              setShowNoteMenu(false);
+                              saveNote({
+                                ...activeNote,
+                                is_template: true,
+                                template_category: "My templates",
+                              });
+                              setFilter({ type: "templates" });
+                            }}
+                          >
+                            Save as template
+                          </button>
+                        )}
+                        {activeNote.is_template && (
+                          <button
+                            onClick={() => {
+                              setShowNoteMenu(false);
+                              saveNote({ ...activeNote, is_template: false });
+                            }}
+                          >
+                            Convert to note
+                          </button>
+                        )}
                         <button
                           onClick={() => {
                             setShowNoteMenu(false);
                             saveNote({
                               ...activeNote,
-                              is_template: true,
-                              template_category: "My templates",
+                              is_archived: !activeNote.is_archived,
                             });
-                            setFilter({ type: "templates" });
                           }}
                         >
-                          Save as template
+                          {activeNote.is_archived ? "Unarchive" : "Archive"}
                         </button>
-                      )}
-                      {activeNote.is_template && (
                         <button
                           onClick={() => {
                             setShowNoteMenu(false);
-                            saveNote({ ...activeNote, is_template: false });
+                            setNotebookPicker("move");
                           }}
                         >
-                          Convert to note
+                          Move to notebook…
                         </button>
-                      )}
-                      <button
-                        onClick={() => {
-                          setShowNoteMenu(false);
-                          saveNote({
-                            ...activeNote,
-                            is_archived: !activeNote.is_archived,
-                          });
-                        }}
-                      >
-                        {activeNote.is_archived ? "Unarchive" : "Archive"}
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowNoteMenu(false);
-                          setCopyPickerOpen(true);
-                        }}
-                      >
-                        Copy to notebook…
-                      </button>
-                      {filter.type === "trash" ? (
-                        <>
-                          <button
-                            onClick={async () => {
-                              await api.restoreNote(activeNote.id);
-                              setActiveNote(null);
-                              await refreshNotes();
-                            }}
-                          >
-                            Restore
-                          </button>
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            setNotebookPicker("copy");
+                          }}
+                        >
+                          Copy to notebook…
+                        </button>
+                        {filter.type === "trash" ? (
+                          <>
+                            <button
+                              onClick={async () => {
+                                await api.restoreNote(activeNote.id);
+                                setActiveNote(null);
+                                await refreshNotes();
+                              }}
+                            >
+                              Restore
+                            </button>
+                            <button
+                              className="danger-text"
+                              onClick={async () => {
+                                if (
+                                  !(await confirm("Delete this note forever?", {
+                                    confirmLabel: "Delete",
+                                    danger: true,
+                                  }))
+                                ) {
+                                  return;
+                                }
+                                await api.permanentlyDeleteNote(activeNote.id);
+                                setActiveNote(null);
+                                await refreshNotes();
+                              }}
+                            >
+                              Delete forever
+                            </button>
+                          </>
+                        ) : (
                           <button
                             className="danger-text"
                             onClick={async () => {
                               if (
-                                !(await confirm("Delete this note forever?", {
-                                  confirmLabel: "Delete",
+                                !(await confirm("Move this note to Trash?", {
+                                  confirmLabel: "Move to Trash",
                                   danger: true,
                                 }))
                               ) {
                                 return;
                               }
-                              await api.permanentlyDeleteNote(activeNote.id);
+                              await api.deleteNote(activeNote.id);
                               setActiveNote(null);
                               await refreshNotes();
                             }}
                           >
-                            Delete forever
+                            Move to trash
                           </button>
-                        </>
-                      ) : (
-                        <button
-                          className="danger-text"
-                          onClick={async () => {
-                            if (
-                              !(await confirm("Move this note to Trash?", {
-                                confirmLabel: "Move to Trash",
-                                danger: true,
-                              }))
-                            ) {
-                              return;
-                            }
-                            await api.deleteNote(activeNote.id);
-                            setActiveNote(null);
-                            await refreshNotes();
-                          }}
-                        >
-                          Move to trash
-                        </button>
-                      )}
-                    </div>
-                  )}
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
+              </div>
+              <div className="editor-header-meta">
+                <label className="notebook-crumb">
+                  <Icon.Notebooks size={14} />
+                  <select
+                    value={activeNote.notebook_id}
+                    aria-label="Notebook"
+                    onChange={(e) =>
+                      saveNote({ ...activeNote, notebook_id: e.target.value })
+                    }
+                  >
+                    {notebooks.map((nb) => (
+                      <option key={nb.id} value={nb.id}>
+                        {nb.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {activeNote.reminder_at && (
+                  <span
+                    className={
+                      isReminderOverdue(activeNote.reminder_at)
+                        ? "reminder-chip overdue"
+                        : "reminder-chip"
+                    }
+                  >
+                    <Icon.Reminder size={12} />
+                    {formatReminderLabel(activeNote.reminder_at, prefs.date_format)}
+                  </span>
+                )}
               </div>
             </div>
             {isBlankNote(activeNote) && !activeNote.is_template && (
@@ -2625,6 +2792,9 @@ export default function App() {
               noteWidth={prefs.note_width}
               pdfView={prefs.pdf_view || "expanded"}
               findTick={findTick}
+              replaceTick={replaceTick}
+              toolbarHidden={editorChrome.toolbarHidden}
+              zoom={editorChrome.zoom}
               onOpenNoteLink={(id) => void loadNote(id)}
               onChange={(html) =>
                 setActiveNote({ ...activeNote, content: html })
@@ -2658,6 +2828,7 @@ export default function App() {
                 {countWords(activeNote.content_plain)} word
                 {countWords(activeNote.content_plain) === 1 ? "" : "s"}
               </span>
+              <span>{editorChrome.zoom}%</span>
               {activeNote.reminder_at && (
                 <span
                   className={
@@ -2864,12 +3035,16 @@ export default function App() {
         />
       )}
 
-      {copyPickerOpen && (
+      {notebookPicker && (
         <NotebookPickerDialog
           title={
-            selectedNoteIds.size > 1
-              ? `Copy ${selectedNoteIds.size} notes to notebook`
-              : "Copy note to notebook"
+            notebookPicker === "move"
+              ? selectedNoteIds.size > 1
+                ? `Move ${selectedNoteIds.size} notes to notebook`
+                : "Move note to notebook"
+              : selectedNoteIds.size > 1
+                ? `Copy ${selectedNoteIds.size} notes to notebook`
+                : "Copy note to notebook"
           }
           notebooks={notebooks}
           currentId={
@@ -2877,9 +3052,13 @@ export default function App() {
               ? selectedNotes[0].notebook_id
               : activeNote?.notebook_id
           }
-          confirmLabel="Copy"
-          onCancel={() => setCopyPickerOpen(false)}
-          onPick={(notebookId) => void copySelectedNotes(notebookId)}
+          confirmLabel={notebookPicker === "move" ? "Move" : "Copy"}
+          onCancel={() => setNotebookPicker(null)}
+          onPick={(notebookId) =>
+            notebookPicker === "move"
+              ? void moveSelectedNotes(notebookId)
+              : void copySelectedNotes(notebookId)
+          }
         />
       )}
 
@@ -2964,6 +3143,107 @@ function PromptModal({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function NotebookNavItem({
+  notebook,
+  active,
+  isDropTarget,
+  onSelect,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onContextMenu,
+}: {
+  notebook: Notebook;
+  active: boolean;
+  isDropTarget: boolean;
+  onSelect: () => void;
+  onDragOver: (event: DragEvent) => void;
+  onDragLeave: () => void;
+  onDrop: (event: DragEvent) => void;
+  onContextMenu: (event: MouseEvent) => void;
+}) {
+  return (
+    <button
+      className={
+        (active ? "nav-item active indent" : "nav-item indent") +
+        (isDropTarget ? " drop-target" : "")
+      }
+      onClick={onSelect}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onContextMenu={onContextMenu}
+    >
+      <span className="nav-item-text">
+        {notebook.name}
+        {notebook.is_default ? (
+          <span className="default-notebook-star" title="Default notebook">
+            <Icon.Shortcuts size={11} />
+          </span>
+        ) : null}
+      </span>
+      <span className="nav-count">{notebook.note_count ?? 0}</span>
+    </button>
+  );
+}
+
+function EmptyListState({
+  filter,
+  onCreate,
+  onBrowseTemplates,
+}: {
+  filter: ViewFilter;
+  onCreate: () => void;
+  onBrowseTemplates: () => void;
+}) {
+  const copy = emptyStateCopy(
+    filter.type,
+    filter.type === "notebook" || filter.type === "tag"
+      ? filter.name
+      : filter.type === "search"
+        ? filter.query
+        : ""
+  );
+  const icon =
+    filter.type === "trash" ? (
+      <Icon.Trash size={36} />
+    ) : filter.type === "shortcuts" ? (
+      <Icon.Shortcuts size={36} />
+    ) : filter.type === "reminders" ? (
+      <Icon.Reminder size={36} />
+    ) : filter.type === "templates" ? (
+      <Icon.Templates size={36} />
+    ) : filter.type === "tag" ? (
+      <Icon.Tags size={36} />
+    ) : filter.type === "search" ? (
+      <Icon.Search size={36} />
+    ) : (
+      <Icon.Notes size={36} />
+    );
+  return (
+    <div className="empty-state">
+      <div className="empty-illustration" aria-hidden>
+        {icon}
+      </div>
+      <h3>{copy.title}</h3>
+      <p>{copy.body}</p>
+      {filter.type === "templates" ? (
+        <div className="empty-actions">
+          <button type="button" className="primary-btn" onClick={onBrowseTemplates}>
+            Open gallery
+          </button>
+        </div>
+      ) : filter.type !== "trash" && filter.type !== "search" ? (
+        <div className="empty-actions">
+          <button type="button" className="primary-btn" onClick={onCreate}>
+            New note
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
