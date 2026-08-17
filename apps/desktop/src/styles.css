@@ -1366,12 +1366,49 @@ button {
 }
 
 .note-attachments {
+  border-bottom: 1px solid var(--border);
+  background: var(--list-bg);
+}
+
+.note-attachments-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 20px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.note-attachments-toggle:hover {
+  background: #ecece8;
+}
+
+[data-theme="dark"] .note-attachments-toggle:hover {
+  background: #2f2f2c;
+}
+
+.note-attachments-toggle svg:last-child {
+  margin-left: auto;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.note-attachments-toggle[aria-expanded="false"] svg:last-child {
+  transform: rotate(-90deg);
+}
+
+.note-attachments-list {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 8px 20px;
-  border-bottom: 1px solid var(--border);
-  background: var(--list-bg);
+  padding: 0 20px 10px;
 }
 
 .note-attachment-chip {

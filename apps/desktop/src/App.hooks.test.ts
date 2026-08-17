@@ -25,4 +25,12 @@ describe("App hook order", () => {
     assert.ok(groupedNotes > 0);
     assert.ok(groupedNotes < bootReturn);
   });
+
+  it("wires Evernote-style toolbar focus and attachment collapse", () => {
+    assert.match(appSource, /attachmentsExpanded=\{editorChrome\.attachmentsExpanded\}/);
+    assert.match(appSource, /Hide Attachments/);
+    const editorSource = readFileSync(new URL("./components/NoteEditor.tsx", import.meta.url), "utf8");
+    assert.match(editorSource, /formattingToolbarVisible\(toolbarHidden, editorFocused\)/);
+    assert.match(editorSource, /note-attachments-toggle/);
+  });
 });
