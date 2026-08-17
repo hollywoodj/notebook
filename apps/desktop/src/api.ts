@@ -119,6 +119,7 @@ export interface Preferences {
   font_family: "default" | "serif" | "mono";
   font_size: number;
   show_snippets: boolean;
+  list_view: "snippets" | "titles" | "cards";
   list_density: "comfortable" | "compact";
   sort_by: "updated" | "created" | "title";
   new_note_behavior: "blank" | "ask";
@@ -145,6 +146,7 @@ export const defaultPreferences: Preferences = {
   font_family: "default",
   font_size: 16,
   show_snippets: true,
+  list_view: "snippets",
   list_density: "comfortable",
   sort_by: "updated",
   new_note_behavior: "blank",

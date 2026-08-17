@@ -7,6 +7,14 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Placeholder from "@tiptap/extension-placeholder";
 import Image from "@tiptap/extension-image";
+import Table from "@tiptap/extension-table";
+import TableRow from "@tiptap/extension-table-row";
+import TableCell from "@tiptap/extension-table-cell";
+import TableHeader from "@tiptap/extension-table-header";
+import TextAlign from "@tiptap/extension-text-align";
+import { Color } from "@tiptap/extension-color";
+import { TextStyle } from "@tiptap/extension-text-style";
+import type { Editor } from "@tiptap/core";
 import type { JSONContent } from "@tiptap/core";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { api, Attachment, attachmentUrl } from "../api";
@@ -14,11 +22,14 @@ import { Icon } from "./Icons";
 import {
   EDITOR_COMMAND_EVENT,
   HIGHLIGHT_COLORS,
+  TEXT_COLORS,
+  escapeHtml,
   findMatchOffsets,
   nextMatchIndex,
   type EditorCommand,
 } from "../uiChrome";
 import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
+import { LinkDialog } from "./LinkDialog";
 import {
   FileAttachment,
   USE_FILE_AS_TITLE,
@@ -48,6 +59,35 @@ interface Props {
 
 function formatSize(bytes: number) {
   return formatFileSize(bytes);
+}
+
+function applyIndent(editor: Editor, direction: 1 | -1) {
+  if (direction === 1) {
+    if (editor.can().sinkListItem("listItem")) {
+      editor.chain().focus().sinkListItem("listItem").run();
+      return;
+    }
+    if (editor.can().sinkListItem("taskItem")) {
+      editor.chain().focus().sinkListItem("taskItem").run();
+      return;
+    }
+    editor.chain().focus().insertContent("\t").run();
+    return;
+  }
+  if (editor.can().liftListItem("listItem")) {
+    editor.chain().focus().liftListItem("listItem").run();
+    return;
+  }
+  if (editor.can().liftListItem("taskItem")) {
+    editor.chain().focus().liftListItem("taskItem").run();
+  }
+}
+
+function openLinkDialog(editor: Editor) {
+  const href = String(editor.getAttributes("link").href || "");
+  const { from, to } = editor.state.selection;
+  const text = editor.state.doc.textBetween(from, to, "");
+  return { href, text };
 }
 
 function textOffsetToPos(
@@ -99,7 +139,10 @@ export function NoteEditor({
   const [replaceQuery, setReplaceQuery] = useState("");
   const [showReplace, setShowReplace] = useState(false);
   const [showColors, setShowColors] = useState(false);
+  const [showTextColors, setShowTextColors] = useState(false);
   const [editorMenu, setEditorMenu] = useState<{ x: number; y: number } | null>(null);
+  const [linkDialog, setLinkDialog] = useState<{ href: string; text: string } | null>(null);
+  const indentRef = useRef<(shift: boolean) => boolean>(() => false);
 
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const restoredFilesRef = useRef(false);
@@ -122,6 +165,13 @@ export function NoteEditor({
       Placeholder.configure({ placeholder }),
       Image.configure({ allowBase64: true }),
       FileAttachment,
+      Table.configure({ resizable: true }),
+      TableRow,
+      TableHeader,
+      TableCell,
+      TextAlign.configure({ types: ["heading", "paragraph"] }),
+      TextStyle,
+      Color,
     ],
     content,
     onUpdate: ({ editor }) => onChange(editor.getHTML()),
@@ -129,6 +179,10 @@ export function NoteEditor({
       attributes: {
         class: "note-editor-content",
         spellcheck: spellCheck ? "true" : "false",
+      },
+      handleKeyDown: (_view, event) => {
+        if (event.key !== "Tab") return false;
+        return indentRef.current(event.shiftKey);
       },
       handlePaste: (_view, event) => {
         const files = Array.from(event.clipboardData?.files ?? []);
@@ -329,11 +383,18 @@ export function NoteEditor({
           if (command.color) chain.toggleHighlight({ color: command.color }).run();
           else chain.toggleHighlight().run();
           break;
+        case "color":
+          if (command.color) chain.setColor(command.color).run();
+          else chain.unsetColor().run();
+          break;
         case "horizontalRule":
           chain.setHorizontalRule().run();
           break;
         case "insertDate":
           chain.insertContent(new Date().toLocaleString()).run();
+          break;
+        case "insertTable":
+          chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
           break;
         case "heading":
           chain.toggleHeading({ level: command.level }).run();
@@ -353,10 +414,32 @@ export function NoteEditor({
         case "codeBlock":
           chain.toggleCodeBlock().run();
           break;
+        case "align":
+          chain.setTextAlign(command.align).run();
+          break;
+        case "indent":
+          applyIndent(editor, 1);
+          break;
+        case "outdent":
+          applyIndent(editor, -1);
+          break;
+        case "openLinkDialog":
+          setLinkDialog(openLinkDialog(editor));
+          break;
         case "link": {
-          const href = command.href ?? window.prompt("URL") ?? "";
-          if (href) chain.setLink({ href }).run();
-          else chain.unsetLink().run();
+          if (!command.href) {
+            setLinkDialog(openLinkDialog(editor));
+            break;
+          }
+          if (command.text) {
+            chain
+              .insertContent(
+                `<a href="${escapeHtml(command.href)}">${escapeHtml(command.text)}</a>`
+              )
+              .run();
+          } else {
+            chain.setLink({ href: command.href }).run();
+          }
           break;
         }
         case "replace":
@@ -370,6 +453,12 @@ export function NoteEditor({
   }, [editor, findQuery, replaceQuery]);
 
   if (!editor) return null;
+
+  indentRef.current = (shift) => {
+    if (editor.isActive("table")) return false;
+    applyIndent(editor, shift ? -1 : 1);
+    return true;
+  };
 
   queueFilesRef.current = (files, position) => {
     if (!files.length) return;
@@ -452,14 +541,26 @@ export function NoteEditor({
     { label: "Italic", onSelect: () => editor.chain().focus().toggleItalic().run() },
     { label: "Highlight", onSelect: () => editor.chain().focus().toggleHighlight().run() },
     { type: "separator" },
+    { label: "Align left", onSelect: () => editor.chain().focus().setTextAlign("left").run() },
+    { label: "Align center", onSelect: () => editor.chain().focus().setTextAlign("center").run() },
+    { label: "Align right", onSelect: () => editor.chain().focus().setTextAlign("right").run() },
+    { type: "separator" },
     {
       label: "Link…",
-      onSelect: () => {
-        const url = window.prompt("URL");
-        if (url) editor.chain().focus().setLink({ href: url }).run();
-      },
+      onSelect: () => setLinkDialog(openLinkDialog(editor)),
     },
+    { label: "Insert table", onSelect: () => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
     { label: "Insert date and time", onSelect: () => editor.chain().focus().insertContent(new Date().toLocaleString()).run() },
+    ...(editor.isActive("table")
+      ? [
+          { type: "separator" as const },
+          { label: "Add row below", onSelect: () => editor.chain().focus().addRowAfter().run() },
+          { label: "Add column right", onSelect: () => editor.chain().focus().addColumnAfter().run() },
+          { label: "Delete row", onSelect: () => editor.chain().focus().deleteRow().run() },
+          { label: "Delete column", onSelect: () => editor.chain().focus().deleteColumn().run() },
+          { label: "Delete table", onSelect: () => editor.chain().focus().deleteTable().run() },
+        ]
+      : []),
   ];
 
   return (
@@ -657,6 +758,65 @@ export function NoteEditor({
             </div>
           )}
         </div>
+        <div className="highlight-picker">
+          {btn(
+            "Text color",
+            () => setShowTextColors((open) => !open),
+            Boolean(editor.getAttributes("textStyle").color),
+            <Icon.Color size={16} />
+          )}
+          {showTextColors && (
+            <div className="highlight-colors" onMouseDown={(event) => event.preventDefault()}>
+              {TEXT_COLORS.map((swatch) => (
+                <button
+                  key={swatch.id}
+                  type="button"
+                  title={swatch.label}
+                  className={swatch.color ? "highlight-swatch" : "ghost-btn small"}
+                  style={swatch.color ? { background: swatch.color } : undefined}
+                  onClick={() => {
+                    if (swatch.color) editor.chain().focus().setColor(swatch.color).run();
+                    else editor.chain().focus().unsetColor().run();
+                    setShowTextColors(false);
+                  }}
+                >
+                  {swatch.color ? "" : "Aa"}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <span className="toolbar-sep" />
+        {btn(
+          "Align left",
+          () => editor.chain().focus().setTextAlign("left").run(),
+          editor.isActive({ textAlign: "left" }) || (!editor.isActive({ textAlign: "center" }) && !editor.isActive({ textAlign: "right" }) && !editor.isActive({ textAlign: "justify" })),
+          <Icon.AlignLeft size={16} />
+        )}
+        {btn(
+          "Align center",
+          () => editor.chain().focus().setTextAlign("center").run(),
+          editor.isActive({ textAlign: "center" }),
+          <Icon.AlignCenter size={16} />
+        )}
+        {btn(
+          "Align right",
+          () => editor.chain().focus().setTextAlign("right").run(),
+          editor.isActive({ textAlign: "right" }),
+          <Icon.AlignRight size={16} />
+        )}
+        {btn(
+          "Decrease indent",
+          () => applyIndent(editor, -1),
+          false,
+          <Icon.Outdent size={16} />
+        )}
+        {btn(
+          "Increase indent",
+          () => applyIndent(editor, 1),
+          false,
+          <Icon.Indent size={16} />
+        )}
         <span className="toolbar-sep" />
         {btn(
           "Bulleted list",
@@ -702,12 +862,15 @@ export function NoteEditor({
         )}
         {btn(
           "Link",
-          () => {
-            const url = window.prompt("URL");
-            if (url) editor.chain().focus().setLink({ href: url }).run();
-          },
+          () => setLinkDialog(openLinkDialog(editor)),
           editor.isActive("link"),
           <Icon.Link size={16} />
+        )}
+        {btn(
+          "Insert table",
+          () => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+          editor.isActive("table"),
+          <Icon.Table size={16} />
         )}
         {btn("Insert media or file", () => fileRef.current?.click(), false, <Icon.Attach size={16} />)}
         {uploading > 0 && (
@@ -784,6 +947,34 @@ export function NoteEditor({
           y={editorMenu.y}
           items={editorMenuItems}
           onClose={() => setEditorMenu(null)}
+        />
+      )}
+      {linkDialog && (
+        <LinkDialog
+          href={linkDialog.href}
+          text={linkDialog.text}
+          onCancel={() => setLinkDialog(null)}
+          onRemove={() => {
+            editor.chain().focus().unsetLink().run();
+            setLinkDialog(null);
+          }}
+          onSave={(href, text) => {
+            const selected = editor.state.doc.textBetween(
+              editor.state.selection.from,
+              editor.state.selection.to,
+              ""
+            );
+            if (!selected && text.trim()) {
+              editor
+                .chain()
+                .focus()
+                .insertContent(`<a href="${escapeHtml(href)}">${escapeHtml(text)}</a>`)
+                .run();
+            } else {
+              editor.chain().focus().setLink({ href }).run();
+            }
+            setLinkDialog(null);
+          }}
         />
       )}
     </div>

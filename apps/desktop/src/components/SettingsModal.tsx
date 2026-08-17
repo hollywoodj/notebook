@@ -30,9 +30,11 @@ const SHORTCUTS = [
   ["New note from template", "Ctrl/⌘ Shift N"],
   ["Find in note", "Ctrl/⌘ F"],
   ["Search all notes", "Ctrl/⌘ Shift F"],
+  ["Jump to note, notebook, or tag", "Ctrl/⌘ J"],
   ["Print note", "Ctrl/⌘ P"],
   ["Note info", "Ctrl/⌘ Shift I"],
   ["Settings", "Ctrl/⌘ ,"],
+  ["Keyboard shortcuts", "Ctrl/⌘ /"],
   ["Templates", "Ctrl/⌘ Shift T"],
   ["Select all notes", "Ctrl/⌘ A"],
   ["Range select notes", "Shift+click"],
@@ -42,6 +44,9 @@ const SHORTCUTS = [
   ["Bold", "Ctrl/⌘ B"],
   ["Italic", "Ctrl/⌘ I"],
   ["Underline", "Ctrl/⌘ U"],
+  ["Increase indent", "Tab"],
+  ["Decrease indent", "Shift+Tab"],
+  ["Focus mode", "F11"],
 ];
 
 export function SettingsModal({
@@ -272,12 +277,36 @@ export function SettingsModal({
                   </select>
                 </SettingsRow>
                 <SettingsRow
+                  title="Note list view"
+                  hint="Evernote can show snippets, titles only, or a card grid."
+                >
+                  <select
+                    value={prefs.list_view || (prefs.show_snippets ? "snippets" : "titles")}
+                    onChange={(e) => {
+                      const list_view = e.target.value as Preferences["list_view"];
+                      onSavePrefs({
+                        list_view,
+                        show_snippets: list_view !== "titles",
+                      });
+                    }}
+                  >
+                    <option value="snippets">Snippets</option>
+                    <option value="titles">Titles</option>
+                    <option value="cards">Cards</option>
+                  </select>
+                </SettingsRow>
+                <SettingsRow
                   title="Show snippets"
                   hint="Show a preview of each note in the list."
                 >
                   <Toggle
                     on={prefs.show_snippets}
-                    onChange={(v) => onSavePrefs({ show_snippets: v })}
+                    onChange={(v) =>
+                      onSavePrefs({
+                        show_snippets: v,
+                        list_view: v ? "snippets" : "titles",
+                      })
+                    }
                   />
                 </SettingsRow>
                 <SettingsRow title="Note list density" hint="Spacing between notes.">

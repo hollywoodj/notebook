@@ -10,11 +10,14 @@ import {
   fromDatetimeLocalValue,
   groupNotesForList,
   isReminderOverdue,
+  jumpToMatches,
   mergeNoteBodies,
   nextMatchIndex,
   noteAppLink,
   notesToEnex,
   parsePaneLayout,
+  reminderFromPreset,
+  resolveListView,
   snippetParts,
   suggestedTags,
   toDatetimeLocalValue,
@@ -37,11 +40,12 @@ describe("parsePaneLayout", () => {
 
   it("reads a saved layout", () => {
     const layout = parsePaneLayout(
-      JSON.stringify({ sidebarWidth: 200, listWidth: 400, sidebarCollapsed: true })
+      JSON.stringify({ sidebarWidth: 200, listWidth: 400, sidebarCollapsed: true, listCollapsed: true })
     );
     assert.equal(layout.sidebarWidth, 200);
     assert.equal(layout.listWidth, 400);
     assert.equal(layout.sidebarCollapsed, true);
+    assert.equal(layout.listCollapsed, true);
   });
 });
 
@@ -176,5 +180,46 @@ describe("notesToEnex", () => {
     assert.match(enex, /<title>Hello<\/title>/);
     assert.match(enex, /<tag>work<\/tag>/);
     assert.equal(toEnexTimestamp("2026-08-17T12:00:00.000Z"), "20260817T120000Z");
+  });
+});
+
+describe("resolveListView", () => {
+  it("prefers an explicit list view and falls back to snippets", () => {
+    assert.equal(resolveListView({ list_view: "cards", show_snippets: false }), "cards");
+    assert.equal(resolveListView({ show_snippets: false }), "titles");
+    assert.equal(resolveListView({}), "snippets");
+  });
+});
+
+describe("reminderFromPreset", () => {
+  it("sets tonight, tomorrow morning, and next week", () => {
+    const now = new Date("2026-08-17T10:00:00");
+    const tonight = new Date(reminderFromPreset("tonight", now));
+    const tomorrow = new Date(reminderFromPreset("tomorrow", now));
+    const nextWeek = new Date(reminderFromPreset("nextWeek", now));
+    assert.equal(tonight.getHours(), 18);
+    assert.equal(tonight.getDate(), 17);
+    assert.equal(tomorrow.getHours(), 9);
+    assert.equal(tomorrow.getDate(), 18);
+    assert.equal(nextWeek.getDate(), 24);
+  });
+});
+
+describe("jumpToMatches", () => {
+  it("finds notebooks, tags, and notes by query", () => {
+    const results = jumpToMatches(
+      "work",
+      [{ id: "n1", title: "Standup", notebook_name: "Work" }],
+      [{ id: "nb1", name: "Work" }],
+      [{ id: "t1", name: "workflow" }]
+    );
+    assert.deepEqual(
+      results.map((item) => [item.kind, item.title]),
+      [
+        ["notebook", "Work"],
+        ["tag", "#workflow"],
+        ["note", "Standup"],
+      ]
+    );
   });
 });
