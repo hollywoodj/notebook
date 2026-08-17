@@ -26,3 +26,24 @@ describe("App hook order", () => {
     assert.ok(groupedNotes < bootReturn);
   });
 });
+
+describe("Evernote sidebar chrome", () => {
+  it("uses icon actions for search, new note, and more, without a standing search bar", () => {
+    assert.match(appSource, /className="sidebar-toolbar"/);
+    assert.match(appSource, /title="Search"/);
+    assert.match(appSource, /title="New note"/);
+    assert.match(appSource, /title="More actions"/);
+    assert.match(appSource, /searchOpen \|\| filter\.type === "search"/);
+    assert.match(appSource, /sidebarFilterOpen \|\| Boolean\(sidebarFilter\.trim\(\)\)/);
+    assert.equal(appSource.includes('placeholder="Search"'), false);
+    assert.match(appSource, /placeholder="Search notes"/);
+  });
+
+  it("exposes hide note list and expand note as a pair", () => {
+    assert.match(appSource, /title=\{paneLayout\.listCollapsed \? "Show note list" : "Hide note list"\}/);
+    assert.match(appSource, /title=\{isNoteExpanded\(paneLayout\) \? "Restore panes" : "Expand note"\}/);
+    assert.match(appSource, /toggleNoteListHidden/);
+    assert.match(appSource, /toggleNoteExpanded/);
+    assert.match(appSource, /className="note-chrome"/);
+  });
+});

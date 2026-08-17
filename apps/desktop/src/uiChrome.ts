@@ -48,6 +48,24 @@ export function parsePaneLayout(raw: string | null): PaneLayout {
   }
 }
 
+export function isNoteExpanded(layout: PaneLayout): boolean {
+  return layout.sidebarCollapsed && layout.listCollapsed;
+}
+
+export function toggleNoteListHidden(layout: PaneLayout): PaneLayout {
+  if (isNoteExpanded(layout)) {
+    return { ...layout, sidebarCollapsed: false, listCollapsed: false };
+  }
+  return { ...layout, listCollapsed: !layout.listCollapsed };
+}
+
+export function toggleNoteExpanded(layout: PaneLayout): PaneLayout {
+  if (isNoteExpanded(layout)) {
+    return { ...layout, sidebarCollapsed: false, listCollapsed: false };
+  }
+  return { ...layout, sidebarCollapsed: true, listCollapsed: true };
+}
+
 export function countWords(text: string): number {
   const trimmed = text.trim();
   if (!trimmed) return 0;

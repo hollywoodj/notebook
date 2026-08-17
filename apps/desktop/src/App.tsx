@@ -56,6 +56,7 @@ import {
   groupNotesForList,
   HIGHLIGHT_COLORS,
   isReminderOverdue,
+  isNoteExpanded,
   hasVisibleSidebarNotebooks,
   matchesSidebarFilter,
   mergeNoteBodies,
@@ -72,6 +73,8 @@ import {
   snippetParts,
   TEXT_COLORS,
   toDatetimeLocalValue,
+  toggleNoteExpanded,
+  toggleNoteListHidden,
   windowTitleForNote,
   type ListView,
   type ReminderPreset,
@@ -140,6 +143,7 @@ export default function App() {
   const [activeNote, setActiveNote] = useState<Note | null>(null);
   const [filter, setFilter] = useState<ViewFilter>({ type: "all" });
   const [searchInput, setSearchInput] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [showNewNotebook, setShowNewNotebook] = useState(false);
   const [showNewStack, setShowNewStack] = useState(false);
@@ -150,6 +154,7 @@ export default function App() {
   const [notebookPicker, setNotebookPicker] = useState<"move" | "copy" | null>(null);
   const [showReminderMenu, setShowReminderMenu] = useState(false);
   const [sidebarFilter, setSidebarFilter] = useState("");
+  const [sidebarFilterOpen, setSidebarFilterOpen] = useState(false);
   const [editorChrome, setEditorChrome] = useState(() =>
     parseEditorChrome(
       typeof localStorage === "undefined" ? null : localStorage.getItem(EDITOR_CHROME_KEY)
@@ -191,6 +196,7 @@ export default function App() {
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const sidebarFilterRef = useRef<HTMLInputElement>(null);
   const skipNextSave = useRef(false);
   const lastClickedNoteId = useRef<string | null>(null);
   const noteListRef = useRef<HTMLDivElement>(null);
@@ -244,6 +250,20 @@ export default function App() {
   const persistEditorChrome = (next: typeof editorChrome) => {
     setEditorChrome(next);
     localStorage.setItem(EDITOR_CHROME_KEY, JSON.stringify(next));
+  };
+
+  const openGlobalSearch = () => {
+    setSearchOpen(true);
+    if (paneLayout.listCollapsed) {
+      persistPaneLayout({ ...paneLayout, listCollapsed: false });
+    }
+  };
+
+  const openSidebarFilter = () => {
+    setSidebarFilterOpen(true);
+    setNotebooksOpen(true);
+    setTagsOpen(true);
+    window.setTimeout(() => sidebarFilterRef.current?.focus(), 0);
   };
 
   const refreshNotes = useCallback(async () => {
@@ -868,6 +888,12 @@ export default function App() {
   }, [activeNote]);
 
   useEffect(() => {
+    if (searchOpen || filter.type === "search") {
+      searchRef.current?.focus();
+    }
+  }, [searchOpen, filter]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
       if (meta && e.key === "n" && e.shiftKey) {
@@ -878,11 +904,11 @@ export default function App() {
         createNote();
       } else if (meta && e.key === "f" && e.shiftKey) {
         e.preventDefault();
-        searchRef.current?.focus();
+        openGlobalSearch();
       } else if (meta && e.key === "f") {
         e.preventDefault();
         if (activeNote) setFindTick((tick) => tick + 1);
-        else searchRef.current?.focus();
+        else openGlobalSearch();
       } else if (meta && e.key === "h") {
         e.preventDefault();
         if (activeNote) setReplaceTick((tick) => tick + 1);
@@ -907,9 +933,20 @@ export default function App() {
       } else if (e.key === "F11") {
         e.preventDefault();
         setFocusMode((open) => !open);
+      } else if (e.altKey && meta && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        persistPaneLayout(
+          e.key === "ArrowLeft"
+            ? toggleNoteListHidden(paneLayout)
+            : toggleNoteExpanded(paneLayout)
+        );
       } else if (e.key === "Escape" && focusMode) {
         e.preventDefault();
         setFocusMode(false);
+      } else if (e.key === "Escape" && searchOpen) {
+        e.preventDefault();
+        setSearchOpen(false);
+        if (filter.type === "search") setFilter({ type: "all" });
       } else if (meta && e.key === "j") {
         e.preventDefault();
         setShowJump(true);
@@ -1468,11 +1505,13 @@ export default function App() {
         },
         {
           label: paneLayout.listCollapsed ? "Show Note List" : "Hide Note List",
-          onSelect: () =>
-            persistPaneLayout({
-              ...paneLayout,
-              listCollapsed: !paneLayout.listCollapsed,
-            }),
+          shortcut: "Ctrl/⌘ Alt ←",
+          onSelect: () => persistPaneLayout(toggleNoteListHidden(paneLayout)),
+        },
+        {
+          label: isNoteExpanded(paneLayout) ? "Restore Panes" : "Expand Note",
+          shortcut: "Ctrl/⌘ Alt →",
+          onSelect: () => persistPaneLayout(toggleNoteExpanded(paneLayout)),
         },
         {
           label: editorChrome.toolbarHidden
@@ -1868,82 +1907,124 @@ export default function App() {
           });
         }}
       >
-        <div className="new-note-wrap" onMouseDown={(e) => e.stopPropagation()}>
-          <button className="new-note-btn" onClick={createNote}>
-            <Icon.Plus size={16} />
-            New note
+        <div className="sidebar-toolbar" onMouseDown={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            className={searchOpen || filter.type === "search" ? "icon-btn active" : "icon-btn"}
+            title="Search"
+            onClick={() => {
+              if (searchOpen || filter.type === "search") {
+                setSearchOpen(false);
+                if (filter.type === "search") setFilter({ type: "all" });
+                return;
+              }
+              openGlobalSearch();
+            }}
+          >
+            <Icon.Search size={18} />
           </button>
           <button
-            className="new-note-more"
-            title="More"
-            onClick={() => setShowNewMenu((v) => !v)}
+            type="button"
+            className="sidebar-new-note"
+            title="New note"
+            onClick={() => void createNote()}
           >
-            <Icon.Chevron size={16} />
+            <Icon.Plus size={18} />
           </button>
-          {showNewMenu && (
-            <div className="menu-popover">
-              <button
-                onClick={() => {
-                  setShowNewMenu(false);
-                  createBlankNote();
-                }}
-              >
-                Blank note
-              </button>
-              <button
-                onClick={() => {
-                  setShowNewMenu(false);
-                  setShowGallery(true);
-                }}
-              >
-                From template
-              </button>
-              <button
-                onClick={() => {
-                  setShowNewMenu(false);
-                  setNewNotebookStackId(null);
-                  setShowNewNotebook(true);
-                }}
-              >
-                New notebook
-              </button>
-            </div>
-          )}
+          <div className="menu-anchor">
+            <button
+              type="button"
+              className={showNewMenu ? "icon-btn active" : "icon-btn"}
+              title="More actions"
+              onClick={() => setShowNewMenu((v) => !v)}
+            >
+              <Icon.More size={18} />
+            </button>
+            {showNewMenu && (
+              <div className="menu-popover right">
+                <button
+                  onClick={() => {
+                    setShowNewMenu(false);
+                    void createBlankNote();
+                  }}
+                >
+                  Blank note
+                </button>
+                <button
+                  onClick={() => {
+                    setShowNewMenu(false);
+                    setShowGallery(true);
+                  }}
+                >
+                  From template
+                </button>
+                <button
+                  onClick={() => {
+                    setShowNewMenu(false);
+                    setNewNotebookStackId(null);
+                    setShowNewNotebook(true);
+                  }}
+                >
+                  New notebook
+                </button>
+                <button
+                  onClick={() => {
+                    setShowNewMenu(false);
+                    setShowNewTag(true);
+                  }}
+                >
+                  New tag
+                </button>
+                <button
+                  onClick={() => {
+                    setShowNewMenu(false);
+                    openSidebarFilter();
+                  }}
+                >
+                  Filter notebooks & tags
+                </button>
+                <button
+                  onClick={() => {
+                    setShowNewMenu(false);
+                    importRef.current?.click();
+                  }}
+                >
+                  Import from Evernote…
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="sidebar-search">
-          <Icon.Search size={15} />
-          <input
-            ref={searchRef}
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && searchInput.trim()) {
-                setFilter({ type: "search", query: searchInput.trim() });
-              }
-            }}
-            placeholder="Search"
-          />
-        </div>
-        <div className="sidebar-search sidebar-filter">
-          <Icon.Notebooks size={15} />
-          <input
-            value={sidebarFilter}
-            onChange={(e) => setSidebarFilter(e.target.value)}
-            placeholder="Filter notebooks & tags"
-            aria-label="Filter notebooks and tags"
-          />
-          {sidebarFilter && (
+        {(sidebarFilterOpen || Boolean(sidebarFilter.trim())) && (
+          <div className="sidebar-search sidebar-filter">
+            <Icon.Notebooks size={15} />
+            <input
+              ref={sidebarFilterRef}
+              value={sidebarFilter}
+              onChange={(e) => setSidebarFilter(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  setSidebarFilter("");
+                  setSidebarFilterOpen(false);
+                }
+              }}
+              placeholder="Filter notebooks & tags"
+              aria-label="Filter notebooks and tags"
+            />
             <button
               type="button"
               className="icon-btn"
-              title="Clear filter"
-              onClick={() => setSidebarFilter("")}
+              title="Close filter"
+              onClick={() => {
+                setSidebarFilter("");
+                setSidebarFilterOpen(false);
+              }}
             >
               <Icon.Close size={14} />
             </button>
-          )}
-        </div>
+          </div>
+        )}
 
         <nav className="sidebar-nav scroll-pane">
           <button
@@ -1986,6 +2067,21 @@ export default function App() {
                   Notebooks
                 </span>
                 <span className="section-actions">
+                  <span
+                    className="plus"
+                    title="Filter notebooks & tags"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (sidebarFilterOpen || sidebarFilter.trim()) {
+                        setSidebarFilter("");
+                        setSidebarFilterOpen(false);
+                      } else {
+                        openSidebarFilter();
+                      }
+                    }}
+                  >
+                    <Icon.Search size={12} />
+                  </span>
                   <span
                     className="plus"
                     onClick={(e) => {
@@ -2303,6 +2399,39 @@ export default function App() {
       />
 
       <section className="note-list-panel">
+        {(searchOpen || filter.type === "search") && (
+          <div className="list-search">
+            <Icon.Search size={15} />
+            <input
+              ref={searchRef}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && searchInput.trim()) {
+                  setFilter({ type: "search", query: searchInput.trim() });
+                }
+                if (e.key === "Escape") {
+                  setSearchOpen(false);
+                  if (filter.type === "search") setFilter({ type: "all" });
+                }
+              }}
+              placeholder="Search notes"
+              aria-label="Search notes"
+            />
+            <button
+              type="button"
+              className="icon-btn"
+              title="Close search"
+              onClick={() => {
+                setSearchOpen(false);
+                setSearchInput("");
+                if (filter.type === "search") setFilter({ type: "all" });
+              }}
+            >
+              <Icon.Close size={14} />
+            </button>
+          </div>
+        )}
         <div className="panel-header">
           <div>
             <h2>{viewTitle}</h2>
@@ -2530,6 +2659,24 @@ export default function App() {
       />
 
       <main className="editor-panel">
+        <div className="note-chrome">
+          <button
+            type="button"
+            className={paneLayout.listCollapsed ? "icon-btn active" : "icon-btn"}
+            title={paneLayout.listCollapsed ? "Show note list" : "Hide note list"}
+            onClick={() => persistPaneLayout(toggleNoteListHidden(paneLayout))}
+          >
+            <Icon.HideList size={16} />
+          </button>
+          <button
+            type="button"
+            className={isNoteExpanded(paneLayout) ? "icon-btn active" : "icon-btn"}
+            title={isNoteExpanded(paneLayout) ? "Restore panes" : "Expand note"}
+            onClick={() => persistPaneLayout(toggleNoteExpanded(paneLayout))}
+          >
+            <Icon.ExpandNote size={16} />
+          </button>
+        </div>
         {activeNote ? (
           <div className="editor-body">
           <div className="editor-main">

@@ -31,6 +31,8 @@ const SHORTCUTS = [
   ["Find in note", "Ctrl/⌘ F"],
   ["Find and replace", "Ctrl/⌘ H"],
   ["Search all notes", "Ctrl/⌘ Shift F"],
+  ["Hide / show note list", "Ctrl/⌘ Alt ←"],
+  ["Expand / restore note", "Ctrl/⌘ Alt →"],
   ["Jump to note, notebook, or tag", "Ctrl/⌘ J"],
   ["Print note", "Ctrl/⌘ P"],
   ["Note info", "Ctrl/⌘ Shift I"],

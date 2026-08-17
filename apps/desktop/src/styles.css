@@ -192,7 +192,8 @@ button {
 
 .app-shell.focus-mode .sidebar,
 .app-shell.focus-mode .note-list-panel,
-.app-shell.focus-mode .pane-splitter {
+.app-shell.focus-mode .pane-splitter,
+.app-shell.focus-mode .note-chrome {
   display: none;
 }
 
@@ -398,44 +399,38 @@ button {
   color: var(--green-dark);
 }
 
-.new-note-wrap {
-  position: relative;
-  display: flex;
-  gap: 6px;
-  padding: 4px 12px 10px;
-}
-
-.new-note-btn {
-  flex: 1;
+.sidebar-toolbar {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   gap: 6px;
-  background: var(--green);
-  color: white;
-  border: none;
-  border-radius: 20px;
-  height: 36px;
-  font-weight: 600;
+  padding: 10px 12px 8px;
+  position: relative;
 }
 
-.new-note-btn:hover {
-  background: var(--green-dark);
+.sidebar-toolbar .menu-anchor {
+  position: relative;
 }
 
-.new-note-more {
+.sidebar-new-note {
   width: 36px;
   height: 36px;
   border: none;
-  border-radius: 18px;
+  border-radius: 50%;
   background: var(--green);
   color: white;
   display: grid;
   place-items: center;
+  flex-shrink: 0;
 }
 
-.new-note-more:hover {
+.sidebar-new-note:hover {
   background: var(--green-dark);
+}
+
+.sidebar-toolbar .icon-btn {
+  width: 36px;
+  height: 36px;
 }
 
 .menu-popover {
@@ -611,6 +606,35 @@ button {
   flex-shrink: 0;
 }
 
+.list-search {
+  margin: 10px 12px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 8px 0 10px;
+  color: var(--text-muted);
+}
+
+.list-search input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  outline: none;
+  padding: 8px 0;
+  color: var(--text);
+}
+
+.note-chrome {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 16px 0;
+  flex-shrink: 0;
+}
+
 .sidebar-nav {
   padding: 4px 8px 16px;
 }
@@ -654,6 +678,11 @@ button {
   color: var(--green);
   font-size: 16px;
   padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
 }
 
 .nav-item {
@@ -1587,6 +1616,12 @@ button {
   padding: 24px;
 }
 
+.empty-editor {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
 .empty-state h3 {
   margin: 0;
   color: var(--text);
@@ -2391,7 +2426,9 @@ kbd {
   .editor-status,
   .template-banner,
   .template-hint,
-  .new-note-wrap {
+  .sidebar-toolbar,
+  .note-chrome,
+  .list-search {
     display: none !important;
   }
 
