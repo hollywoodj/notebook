@@ -1,6 +1,6 @@
 # Evernote UI clone handoff
 
-This log is for future sessions continuing the exact-clone work. Passes 1–3 each closed ten visible Evernote desktop gaps. The goal remains pixel-and-behavior parity with Evernote’s three-pane desktop app (no AI).
+This log is for future sessions continuing the exact-clone work. Passes 1–4 each closed ten visible Evernote desktop gaps. The goal remains pixel-and-behavior parity with Evernote’s three-pane desktop app (no AI).
 
 ## Closed so far
 
@@ -28,7 +28,7 @@ This log is for future sessions continuing the exact-clone work. Passes 1–3 ea
 9. Export note as HTML or Evernote `.enex`
 10. Focus mode (F11) + search-hit highlighting in list snippets
 
-### Pass 3 (this session)
+### Pass 3
 1. Insert table (toolbar, Format menu, editor context; add/delete rows and columns)
 2. Text alignment (left / center / right)
 3. Indent / outdent (toolbar, Format, Tab / Shift+Tab; lists sink/lift)
@@ -39,6 +39,18 @@ This log is for future sessions continuing the exact-clone work. Passes 1–3 ea
 8. Insert/edit link dialog (replaces `window.prompt`)
 9. Hide Note List (View menu; layout persisted with pane widths)
 10. Copy to notebook (context submenu, Note menu, searchable picker)
+
+### Pass 4 (this session)
+1. Searchable **Move to notebook** dialog (context, Note menu, overflow, bulk bar; Copy uses the same picker)
+2. **Empty states** per view (Notes, Notebook, Tag, Reminders, Trash, Shortcuts, Search, Templates)
+3. **Default notebook star** on the sidebar notebook row
+4. **Sidebar filter** that narrows notebooks and tags as you type
+5. Editor header: notebook breadcrumb + icon-only Pin / Shortcut / Reminder / Info / overflow
+6. **Hide formatting toolbar** (View menu; persisted)
+7. **Zoom in/out/reset** for the note body (View menu + Ctrl/⌘ +/- / 0; status bar %)
+8. **Window title** = current note title
+9. Account **footer** chip (avatar, name, email) + settings gear
+10. **Find** (Ctrl/⌘ F) vs **Find and Replace** (Ctrl/⌘ H) as separate Edit items
 
 ## Where to look
 
@@ -55,15 +67,9 @@ Run desktop checks from `apps/desktop`: `npm test` and `npx tsc --noEmit`.
 Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the product scope changes.
 
 ### High-visibility chrome
-- Searchable **Move to notebook** dialog (Copy already has a picker; Move is still a nested menu)
-- **Empty states** per view (Notes, Notebook, Tag, Reminders, Trash, Shortcuts) with Evernote-style copy and illustration
-- **Default notebook star** in the sidebar notebook row
-- **Sidebar filter** that narrows notebooks/tags as you type (separate from note search)
-- Editor header that looks like Evernote: notebook breadcrumb, icon-only Pin / Shortcut / Reminder / Info, overflow
-- **Hide formatting toolbar** / compact toolbar overflow (`…`) when the window is narrow
-- **Zoom in/out/reset** for the note body (View menu + Ctrl/⌘ +/- / 0)
-- **Always on top** / window title = current note title
-- Account footer already exists; match Evernote’s bottom-left user chip + settings gear more closely
+- Compact toolbar overflow (`…`) when the window is narrow
+- Always on top
+- Account chip already lives in the footer; match avatar color / popover more closely if needed
 
 ### Note list
 - **Thumbnails** in Cards view (first image attachment / inline image)
@@ -95,7 +101,6 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 ### Search
 - Operators in the search box: `notebook:`, `tag:`, `intitle:`, `reminder:`, `todo:`
 - Search results grouping and “search in this notebook”
-- Replace currently lives in Find; expose **Find and Replace** as its own Edit item with Ctrl/⌘ H
 
 ### Import / export / files
 - Export selected notes as PDF / Markdown
@@ -125,6 +130,7 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 - “Add tag” vs Evernote’s “Add a tag”
 - Table Tab vs indent: indent yields to the table extension; re-test nested lists inside table cells
 - Jump To currently lists non-template notes only; consider templates and trash as optional groups
+- Toolbar hide + attach: media button is in the toolbar; drag-and-drop still works when hidden
 
 ## Intentionally out of scope
 

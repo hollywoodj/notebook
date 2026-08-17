@@ -317,7 +317,11 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 12px 8px;
+  gap: 6px;
+  margin-top: auto;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--sidebar-bg);
 }
 
 .account-chip {
@@ -325,6 +329,17 @@ button {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 4px 6px;
+  border-radius: 8px;
+  text-align: left;
+  color: inherit;
+}
+
+.account-chip:hover {
+  background: var(--sidebar-hover);
 }
 
 .avatar {
@@ -348,6 +363,20 @@ button {
   text-overflow: ellipsis;
 }
 
+.account-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.account-email {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .icon-btn {
   border: none;
   background: transparent;
@@ -362,6 +391,11 @@ button {
 .icon-btn:hover {
   background: var(--sidebar-hover);
   color: var(--text);
+}
+
+.icon-btn.active {
+  background: var(--green-soft);
+  color: var(--green-dark);
 }
 
 .new-note-wrap {
@@ -567,6 +601,16 @@ button {
   padding: 8px 0;
 }
 
+.sidebar-filter {
+  margin-bottom: 8px;
+}
+
+.sidebar-filter .icon-btn {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
 .sidebar-nav {
   padding: 4px 8px 16px;
 }
@@ -623,6 +667,23 @@ button {
   padding: 7px 10px;
   border-radius: 6px;
   color: var(--text);
+}
+
+.nav-item-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.default-notebook-star {
+  color: var(--green);
+  display: inline-flex;
+  flex-shrink: 0;
 }
 
 .nav-count {
@@ -750,7 +811,6 @@ button {
 
 .panel-tools select,
 .editor-actions select,
-.editor-actions button,
 .settings-row-control select,
 .settings-row-control input,
 .gallery-preview select,
@@ -952,24 +1012,76 @@ button {
 }
 
 .editor-header {
-  padding: 16px 28px 8px;
+  padding: 12px 28px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.editor-header-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .title-input {
   width: 100%;
   border: none;
   background: transparent;
-  font-size: 28px;
+  font-size: 26px;
   font-weight: 700;
   outline: none;
-  margin-bottom: 10px;
+  min-width: 0;
+  flex: 1;
+  padding: 2px 0;
+}
+
+.editor-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 28px;
+}
+
+.notebook-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.notebook-crumb select {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  padding: 2px 4px;
+  max-width: 240px;
+}
+
+.reminder-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.reminder-chip.overdue {
+  color: var(--danger);
 }
 
 .editor-actions {
   display: flex;
-  gap: 8px;
+  gap: 2px;
   align-items: center;
-  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.editor-actions .icon-btn {
+  width: 32px;
+  height: 32px;
 }
 
 .editor-actions .danger,
@@ -1471,8 +1583,31 @@ button {
   height: 100%;
   color: var(--text-muted);
   text-align: center;
-  gap: 12px;
+  gap: 8px;
   padding: 24px;
+}
+
+.empty-state h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.empty-state p {
+  margin: 0;
+  max-width: 280px;
+  line-height: 1.45;
+}
+
+.empty-illustration {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 4px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  background: var(--green-soft);
+  color: var(--green-dark);
 }
 
 .empty-state.compact {
@@ -2219,6 +2354,10 @@ kbd {
 .editor-actions button.active {
   background: var(--green-soft);
   color: var(--green-dark);
+}
+
+.editor-actions .icon-btn.active {
+  border: none;
 }
 
 .muted {

@@ -54,6 +54,9 @@ interface Props {
   placeholder?: string;
   onUseAsTitle?: (filename: string) => void;
   findTick?: number;
+  replaceTick?: number;
+  toolbarHidden?: boolean;
+  zoom?: number;
   onOpenNoteLink?: (noteId: string) => void;
 }
 
@@ -124,6 +127,9 @@ export function NoteEditor({
   placeholder = "Start writing, or pick a template…",
   onUseAsTitle,
   findTick = 0,
+  replaceTick = 0,
+  toolbarHidden = false,
+  zoom = 100,
   onOpenNoteLink,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -300,6 +306,13 @@ export function NoteEditor({
     setShowFind(true);
     window.setTimeout(() => findInputRef.current?.select(), 0);
   }, [findTick]);
+
+  useEffect(() => {
+    if (!replaceTick) return;
+    setShowFind(true);
+    setShowReplace(true);
+    window.setTimeout(() => findInputRef.current?.select(), 0);
+  }, [replaceTick]);
 
   useEffect(() => {
     if (!editor || !showFind) return;
@@ -685,6 +698,7 @@ export function NoteEditor({
           </button>
         </div>
       )}
+      {!toolbarHidden && (
       <div className="editor-toolbar">
         {btn(
           "Heading 1",
@@ -879,6 +893,7 @@ export function NoteEditor({
           </span>
         )}
       </div>
+      )}
       <input
         ref={fileRef}
         type="file"
@@ -936,7 +951,7 @@ export function NoteEditor({
       >
         <div
           className={`editor-page ${fontClass} ${noteWidth === "readable" ? "readable" : "full"}`}
-          style={{ fontSize: `${fontSize}px` }}
+          style={{ fontSize: `${fontSize}px`, zoom: zoom / 100 }}
         >
           <EditorContent editor={editor} />
         </div>
