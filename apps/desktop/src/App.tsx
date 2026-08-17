@@ -1743,6 +1743,7 @@ export default function App() {
             )}
             <NoteEditor
               key={activeNote.id}
+              noteId={activeNote.id}
               content={activeNote.content}
               spellCheck={prefs.spell_check}
               fontFamily={prefs.font_family}

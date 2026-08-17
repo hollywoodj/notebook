@@ -345,6 +345,9 @@ export const api = {
       method: "POST",
     }).then(hydrateAttachmentUrls),
 
+  listAttachments: (noteId: string) =>
+    request<Attachment[]>(`/api/v1/notes/${noteId}/attachments`),
+
   uploadAttachment: async (noteId: string, file: File): Promise<Attachment> => {
     const form = new FormData();
     form.append("file", file);
