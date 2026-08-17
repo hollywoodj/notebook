@@ -125,6 +125,8 @@ async function createWindow() {
   });
 
   mainWindow.once("ready-to-show", () => {
+    mainWindow.setMenuBarVisibility(false);
+    mainWindow.removeMenu();
     mainWindow.show();
   });
 

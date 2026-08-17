@@ -1450,101 +1450,92 @@ export default function App() {
           <div>
             <h2>{viewTitle}</h2>
             <span className="count">{notes.length}</span>
-            {selectedNoteIds.size > 1 && (
-              <span className="selection-count">{selectedNoteIds.size} selected</span>
-            )}
           </div>
           <div className="panel-tools">
-            {selectedNoteIds.size > 1 ? (
-              <>
-                {filter.type === "trash" ? (
-                  <>
-                    <button className="ghost-btn small" onClick={() => void restoreSelectedNotes()}>
-                      Restore
-                    </button>
-                    <button
-                      className="ghost-btn small danger-text"
-                      onClick={() => void deleteSelectedNotes()}
-                    >
-                      Delete
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <select
-                      aria-label="Move selected notes to notebook"
-                      value=""
-                      onChange={(e) => {
-                        const notebookId = e.target.value;
-                        if (notebookId) void moveSelectedNotes(notebookId);
-                      }}
-                    >
-                      <option value="" disabled>
-                        Move to…
-                      </option>
-                      {notebooks.map((notebook) => (
-                        <option key={notebook.id} value={notebook.id}>
-                          {notebook.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="ghost-btn small"
-                      onClick={() => void pinSelectedNotes(!allSelectedPinned)}
-                    >
-                      {allSelectedPinned ? "Unpin" : "Pin"}
-                    </button>
-                    <button
-                      className="ghost-btn small"
-                      onClick={() => void archiveSelectedNotes(!allSelectedArchived)}
-                    >
-                      {allSelectedArchived ? "Unarchive" : "Archive"}
-                    </button>
-                    <button
-                      className="ghost-btn small danger-text"
-                      onClick={() => void deleteSelectedNotes()}
-                    >
-                      Trash
-                    </button>
-                  </>
-                )}
-              </>
-            ) : (
-              <>
-                {filter.type === "templates" && (
-                  <button className="ghost-btn small" onClick={() => setShowGallery(true)}>
-                    Gallery
-                  </button>
-                )}
-                {filter.type === "trash" && notes.length > 0 && (
-                  <button
-                    className="ghost-btn small"
-                    onClick={async () => {
-                      if (!confirm("Permanently delete all notes in Trash?")) return;
-                      await api.emptyTrash();
-                      setActiveNote(null);
-                      await refreshNotes();
-                    }}
-                  >
-                    Empty
-                  </button>
-                )}
-                <select
-                  value={prefs.sort_by}
-                  onChange={(e) => {
-                    const sort_by = e.target.value as Preferences["sort_by"];
-                    setPrefs((p) => ({ ...p, sort_by }));
-                    api.updateSettings({ sort_by }).catch(console.error);
-                  }}
-                >
-                  <option value="updated">Updated</option>
-                  <option value="created">Created</option>
-                  <option value="title">Title</option>
-                </select>
-              </>
+            {filter.type === "templates" && (
+              <button className="ghost-btn small" onClick={() => setShowGallery(true)}>
+                Gallery
+              </button>
             )}
+            {filter.type === "trash" && notes.length > 0 && (
+              <button
+                className="ghost-btn small"
+                onClick={async () => {
+                  if (!confirm("Permanently delete all notes in Trash?")) return;
+                  await api.emptyTrash();
+                  setActiveNote(null);
+                  await refreshNotes();
+                }}
+              >
+                Empty
+              </button>
+            )}
+            <select
+              value={prefs.sort_by}
+              onChange={(e) => {
+                const sort_by = e.target.value as Preferences["sort_by"];
+                setPrefs((p) => ({ ...p, sort_by }));
+                api.updateSettings({ sort_by }).catch(console.error);
+              }}
+            >
+              <option value="updated">Updated</option>
+              <option value="created">Created</option>
+              <option value="title">Title</option>
+            </select>
           </div>
         </div>
+        {selectedNoteIds.size > 1 && (
+          <div className="bulk-bar">
+            <span className="selection-count">{selectedNoteIds.size} selected</span>
+            <div className="bulk-actions">
+              {filter.type === "trash" ? (
+                <>
+                  <button className="ghost-btn small" onClick={() => void restoreSelectedNotes()}>
+                    Restore
+                  </button>
+                  <button
+                    className="ghost-btn small danger-text"
+                    onClick={() => void deleteSelectedNotes()}
+                  >
+                    Delete forever
+                  </button>
+                </>
+              ) : (
+                <>
+                  <select
+                    aria-label="Move selected notes to notebook"
+                    value=""
+                    onChange={(e) => {
+                      const notebookId = e.target.value;
+                      if (notebookId) void moveSelectedNotes(notebookId);
+                    }}
+                  >
+                    <option value="" disabled>
+                      Move to…
+                    </option>
+                    {notebooks.map((notebook) => (
+                      <option key={notebook.id} value={notebook.id}>
+                        {notebook.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="ghost-btn small"
+                    onClick={() => void pinSelectedNotes(!allSelectedPinned)}
+                  >
+                    {allSelectedPinned ? "Unpin" : "Pin"}
+                  </button>
+                  <button
+                    className="ghost-btn small danger-text"
+                    onClick={() => void deleteSelectedNotes()}
+                  >
+                    Move to Trash
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
         <div className="note-list scroll-pane">
           {notes.map((note) => (
             <button
