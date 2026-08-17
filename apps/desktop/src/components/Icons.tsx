@@ -158,6 +158,14 @@ export const Icon = {
       <path d="M8 12l3 3 5-6" />
     </I>
   ),
+  Checklist: (p: IconProps) => (
+    <I {...p}>
+      <rect x="3" y="4" width="6" height="6" rx="1" />
+      <path d="M4.5 7l1.2 1.2 2-2" />
+      <path d="M12 7h8M12 17h8" />
+      <rect x="3" y="14" width="6" height="6" rx="1" />
+    </I>
+  ),
   Quote: (p: IconProps) => (
     <I {...p}>
       <path d="M7 17c2-3 3-5 3-8H6c0 3 1 5 1 8h0zM16 17c2-3 3-5 3-8h-4c0 3 1 5 1 8h0z" />
@@ -234,6 +242,11 @@ export const Icon = {
   AlignRight: (p: IconProps) => (
     <I {...p}>
       <path d="M4 6h16M10 12h10M6 18h14" />
+    </I>
+  ),
+  AlignJustify: (p: IconProps) => (
+    <I {...p}>
+      <path d="M4 6h16M4 12h16M4 18h16" />
     </I>
   ),
   Indent: (p: IconProps) => (

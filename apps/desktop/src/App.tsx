@@ -950,6 +950,15 @@ export default function App() {
       } else if (meta && e.key === "t" && e.shiftKey) {
         e.preventDefault();
         setFilter({ type: "templates" });
+      } else if (meta && e.shiftKey && (e.key === "l" || e.key === "L") && activeNote) {
+        e.preventDefault();
+        dispatchEditorCommand({ type: "bulletList" });
+      } else if (meta && e.shiftKey && (e.key === "o" || e.key === "O") && activeNote) {
+        e.preventDefault();
+        dispatchEditorCommand({ type: "orderedList" });
+      } else if (meta && e.shiftKey && (e.key === "c" || e.key === "C") && activeNote) {
+        e.preventDefault();
+        dispatchEditorCommand({ type: "taskList" });
       } else if (meta && e.key === "a" && !isTextInputFocused()) {
         e.preventDefault();
         setSelectedNoteIds(new Set(notes.map((n) => n.id)));
@@ -1747,6 +1756,11 @@ export default function App() {
           onSelect: () => runEditorCommand({ type: "align", align: "right" }),
         },
         {
+          label: "Justify",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "align", align: "justify" }),
+        },
+        {
           label: "Increase Indent",
           shortcut: "Tab",
           disabled: !activeNote,
@@ -1772,18 +1786,42 @@ export default function App() {
         { type: "separator" },
         {
           label: "Bulleted List",
+          shortcut: "Ctrl/⌘ ⇧ L",
           disabled: !activeNote,
           onSelect: () => runEditorCommand({ type: "bulletList" }),
         },
         {
           label: "Numbered List",
+          shortcut: "Ctrl/⌘ ⇧ O",
           disabled: !activeNote,
           onSelect: () => runEditorCommand({ type: "orderedList" }),
         },
         {
-          label: "Checkbox List",
+          label: "Checklist",
+          shortcut: "Ctrl/⌘ ⇧ C",
           disabled: !activeNote,
           onSelect: () => runEditorCommand({ type: "taskList" }),
+        },
+        {
+          label: "Insert Checkbox",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "inlineCheckbox" }),
+        },
+        { type: "separator" },
+        {
+          label: "Quote",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "blockquote" }),
+        },
+        {
+          label: "Code Block",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "codeBlock" }),
+        },
+        {
+          label: "Inline Code",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "inlineCode" }),
         },
         {
           label: "Horizontal Rule",
