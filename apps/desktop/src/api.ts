@@ -78,11 +78,26 @@ export type ViewFilter =
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8799";
 
+function rewriteFetchError(err: unknown): Error {
+  if (err instanceof TypeError) {
+    return new Error(
+      `Could not reach the Notebook API at ${API_BASE}. Large Evernote exports should be imported from disk; if this keeps happening, restart Notebook.`
+    );
+  }
+  if (err instanceof Error) return err;
+  return new Error("Request failed");
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
-    ...init,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+      ...init,
+    });
+  } catch (err) {
+    throw rewriteFetchError(err);
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `Request failed: ${res.status}`);
@@ -195,10 +210,15 @@ export const api = {
   uploadAttachment: async (noteId: string, file: File) => {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(
-      `${API_BASE}/api/v1/notes/${noteId}/attachments/upload`,
-      { method: "POST", body: form }
-    );
+    let res: Response;
+    try {
+      res = await fetch(
+        `${API_BASE}/api/v1/notes/${noteId}/attachments/upload`,
+        { method: "POST", body: form }
+      );
+    } catch (err) {
+      throw rewriteFetchError(err);
+    }
     if (!res.ok) throw new Error("Upload failed");
     return res.json();
   },
@@ -207,27 +227,56 @@ export const api = {
     file: File,
     options?: { notebookId?: string; notebookName?: string }
   ) => {
+    const filePath = window.notebookDesktop?.getPathForFile?.(file);
+
+    const parseImportResponse = async (res: Response) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Import failed");
+      }
+      return res.json() as Promise<{
+        imported: number;
+        skipped: number;
+        notebook_id: string;
+        notebook_name: string;
+        notebook_count?: number;
+        errors: { index: number; title?: string; message: string }[];
+      }>;
+    };
+
+    if (filePath) {
+      return request<{
+        imported: number;
+        skipped: number;
+        notebook_id: string;
+        notebook_name: string;
+        notebook_count?: number;
+        errors: { index: number; title?: string; message: string }[];
+      }>("/api/v1/import/enex/path", {
+        method: "POST",
+        body: JSON.stringify({
+          path: filePath,
+          notebook_id: options?.notebookId || null,
+          notebook_name: options?.notebookName || null,
+        }),
+      });
+    }
+
     const qs = new URLSearchParams();
     if (options?.notebookId) qs.set("notebook_id", options.notebookId);
     if (options?.notebookName) qs.set("notebook_name", options.notebookName);
     const query = qs.toString();
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(
-      `${API_BASE}/api/v1/import/enex${query ? `?${query}` : ""}`,
-      { method: "POST", body: form }
-    );
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || "Import failed");
+    let res: Response;
+    try {
+      res = await fetch(
+        `${API_BASE}/api/v1/import/enex${query ? `?${query}` : ""}`,
+        { method: "POST", body: form }
+      );
+    } catch (err) {
+      throw rewriteFetchError(err);
     }
-    return res.json() as Promise<{
-      imported: number;
-      skipped: number;
-      notebook_id: string;
-      notebook_name: string;
-      notebook_count?: number;
-      errors: { index: number; title?: string; message: string }[];
-    }>;
+    return parseImportResponse(res);
   },
 };
