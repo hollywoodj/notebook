@@ -7,6 +7,7 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Placeholder from "@tiptap/extension-placeholder";
 import Image from "@tiptap/extension-image";
+import type { JSONContent } from "@tiptap/core";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { Attachment, attachmentUrl } from "../api";
 import { Icon } from "./Icons";
@@ -105,42 +106,40 @@ export function NoteEditor({
 
     void Promise.all(files.map((file) => onAttach(file)))
       .then((attachments) => {
-        const nodes = attachments.flatMap((attachment) => {
+        const nodes: JSONContent[] = [];
+        attachments.forEach((attachment) => {
           const url = attachmentUrl(attachment.id);
           if (attachment.mime_type.startsWith("image/")) {
-            return [
-              {
-                type: "image",
-                attrs: {
-                  src: url,
-                  alt: attachment.filename,
-                  title: attachment.filename,
-                },
+            nodes.push({
+              type: "image",
+              attrs: {
+                src: url,
+                alt: attachment.filename,
+                title: attachment.filename,
               },
-            ];
+            });
+            return;
           }
 
-          return [
-            {
-              type: "paragraph",
-              content: [
-                {
-                  type: "text",
-                  text: `📎 ${attachment.filename}`,
-                  marks: [
-                    {
-                      type: "link",
-                      attrs: {
-                        href: url,
-                        target: "_blank",
-                        rel: "noopener noreferrer",
-                      },
+          nodes.push({
+            type: "paragraph",
+            content: [
+              {
+                type: "text",
+                text: `📎 ${attachment.filename}`,
+                marks: [
+                  {
+                    type: "link",
+                    attrs: {
+                      href: url,
+                      target: "_blank",
+                      rel: "noopener noreferrer",
                     },
-                  ],
-                },
-              ],
-            },
-          ];
+                  },
+                ],
+              },
+            ],
+          });
         });
 
         nodes.push({ type: "paragraph" });

@@ -14,6 +14,12 @@ export interface MenuBarGroup {
   items: MenuBarItem[];
 }
 
+function isSeparator(
+  item: MenuBarItem
+): item is Extract<MenuBarItem, { type: "separator" }> {
+  return "type" in item && item.type === "separator";
+}
+
 export function MenuBar({ groups }: { groups: MenuBarGroup[] }) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
 
@@ -63,7 +69,7 @@ export function MenuBar({ groups }: { groups: MenuBarGroup[] }) {
             {open && (
               <div className="app-menu-dropdown" role="menu">
                 {group.items.map((item, index) =>
-                  item.type === "separator" ? (
+                  isSeparator(item) ? (
                     <div
                       className="app-menu-separator"
                       role="separator"
