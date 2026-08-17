@@ -5,6 +5,7 @@ use uuid::Uuid;
 use crate::db::Database;
 use crate::error::{NotebookError, Result};
 use crate::models::*;
+use crate::note_query::{self, NoteListFilter};
 
 pub struct NotebookService {
     db: Database,
@@ -24,17 +25,15 @@ impl NotebookService {
     }
 
     fn now() -> String {
-        Utc::now().to_rfc3339()
+        crate::datetime::now_rfc3339()
     }
 
     fn parse_dt(s: &str) -> Result<DateTime<Utc>> {
-        DateTime::parse_from_rfc3339(s)
-            .map(|dt| dt.with_timezone(&Utc))
-            .map_err(|e| NotebookError::Other(e.to_string()))
+        crate::datetime::parse_dt(s)
     }
 
     fn optional_dt(s: Option<String>) -> Result<Option<DateTime<Utc>>> {
-        s.map(|v| Self::parse_dt(&v)).transpose()
+        crate::datetime::optional_dt(s)
     }
 
     // --- Notebooks ---
@@ -389,123 +388,22 @@ impl NotebookService {
         templates: Option<bool>,
     ) -> Result<Vec<NoteSummary>> {
         let user_id = self.db.default_user_id()?;
-        let mut sql = String::from(
-            "SELECT n.id, n.notebook_id, n.title, n.content_plain, n.is_pinned, n.is_archived, n.reminder_at, n.created_at, n.updated_at,
-             (SELECT COUNT(*) FROM attachments a WHERE a.note_id = n.id) as attachment_count,
-             n.is_template, n.template_category, nb.name
-             FROM notes n JOIN notebooks nb ON nb.id = n.notebook_id",
-        );
-        let mut conditions = vec!["n.user_id = ?1".to_string()];
-        if trash {
-            conditions.push("n.deleted_at IS NOT NULL".to_string());
-        } else {
-            conditions.push("n.deleted_at IS NULL".to_string());
-        }
-        if let Some(nb) = notebook_id {
-            conditions.push(format!("n.notebook_id = '{nb}'"));
-        }
-        if let Some(tag) = tag_id {
-            sql.push_str(" JOIN note_tags nt ON nt.note_id = n.id");
-            conditions.push(format!("nt.tag_id = '{tag}'"));
-        }
-        if let Some(arch) = archived {
-            conditions.push(format!("n.is_archived = {}", if arch { 1 } else { 0 }));
-        }
-        match templates {
-            Some(is_template) => conditions.push(format!(
-                "COALESCE(n.is_template, 0) = {}",
-                if is_template { 1 } else { 0 }
-            )),
-            None if !trash => {
-                conditions.push("COALESCE(n.is_template, 0) = 0".to_string());
-            }
-            None => {}
-        }
-        sql.push_str(" WHERE ");
-        sql.push_str(&conditions.join(" AND "));
-        sql.push_str(" ORDER BY n.is_pinned DESC, n.updated_at DESC");
-
-        let conn = self.db.connection();
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![user_id.to_string()], |row| {
-            let content_plain: String = row.get(3)?;
-            let snippet: String = content_plain.chars().take(200).collect();
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                snippet,
-                row.get::<_, i32>(4)? != 0,
-                row.get::<_, i32>(5)? != 0,
-                row.get::<_, Option<String>>(6)?,
-                row.get::<_, String>(7)?,
-                row.get::<_, String>(8)?,
-                row.get::<_, i32>(9)?,
-                row.get::<_, i32>(10)? != 0,
-                row.get::<_, Option<String>>(11)?,
-                row.get::<_, String>(12)?,
-            ))
-        })?;
-
-        let mut notes = Vec::new();
-        for row in rows {
-            let (
-                id_s,
-                nb_s,
-                title,
-                snippet,
-                pinned,
+        note_query::list_summaries(
+            self.db.connection(),
+            NoteListFilter {
+                user_id,
+                notebook_id,
+                tag_id,
+                trash,
                 archived,
-                reminder,
-                created,
-                updated,
-                att_count,
-                is_template,
-                template_category,
-                notebook_name,
-            ) = row?;
-            let id = Uuid::parse_str(&id_s).unwrap();
-            let (tag_ids, tag_names) = self.get_note_tags(id)?;
-            notes.push(NoteSummary {
-                id,
-                notebook_id: Uuid::parse_str(&nb_s).unwrap(),
-                title,
-                snippet,
-                is_pinned: pinned,
-                is_archived: archived,
-                reminder_at: Self::optional_dt(reminder)?,
-                tag_ids,
-                tag_names,
-                attachment_count: att_count,
-                is_template,
-                template_category,
-                notebook_name,
-                created_at: Self::parse_dt(&created)?,
-                updated_at: Self::parse_dt(&updated)?,
-            });
-        }
-        Ok(notes)
+                templates,
+            },
+        )
     }
 
     fn get_note_tags(&self, note_id: Uuid) -> Result<(Vec<Uuid>, Vec<String>)> {
-        let conn = self.db.connection();
-        let mut stmt = conn.prepare(
-            "SELECT t.id, t.name FROM tags t JOIN note_tags nt ON nt.tag_id = t.id WHERE nt.note_id = ?1 ORDER BY t.name",
-        )?;
-        let rows = stmt.query_map(params![note_id.to_string()], |row| {
-            Ok((
-                Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
-                row.get::<_, String>(1)?,
-            ))
-        })?;
-        let mut ids = Vec::new();
-        let mut names = Vec::new();
-        for row in rows {
-            let (id, name) = row?;
-            ids.push(id);
-            names.push(name);
-        }
-        Ok((ids, names))
+        let tags = note_query::tags_for_notes(self.db.connection(), &[note_id])?;
+        Ok(tags.get(&note_id).cloned().unwrap_or_default())
     }
 
     fn strip_html(html: &str) -> String {
@@ -877,28 +775,32 @@ impl NotebookService {
     pub fn list_shortcuts(&self) -> Result<Vec<(Shortcut, NoteSummary)>> {
         let user_id = self.db.default_user_id()?;
         let conn = self.db.connection();
-        let mut stmt = conn.prepare(
-            "SELECT s.id, s.user_id, s.note_id, s.sort_order, s.created_at FROM shortcuts s WHERE s.user_id = ?1 ORDER BY s.sort_order",
-        )?;
-        let rows = stmt.query_map(params![user_id.to_string()], |row| {
-            Ok(Shortcut {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
-                user_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap(),
-                note_id: Uuid::parse_str(&row.get::<_, String>(2)?).unwrap(),
-                sort_order: row.get(3)?,
-                created_at: Self::parse_dt(&row.get::<_, String>(4)?).unwrap(),
-            })
-        })?;
-        let notes = self.list_notes(None, None, false, None, Some(false))?;
-        let mut by_id = std::collections::HashMap::new();
-        for note in notes {
-            by_id.insert(note.id, note);
-        }
+        let shortcuts: Vec<Shortcut> = {
+            let mut stmt = conn.prepare(
+                "SELECT s.id, s.user_id, s.note_id, s.sort_order, s.created_at FROM shortcuts s WHERE s.user_id = ?1 ORDER BY s.sort_order",
+            )?;
+            let rows = stmt.query_map(params![user_id.to_string()], |row| {
+                Ok(Shortcut {
+                    id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+                    user_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap(),
+                    note_id: Uuid::parse_str(&row.get::<_, String>(2)?).unwrap(),
+                    sort_order: row.get(3)?,
+                    created_at: Self::parse_dt(&row.get::<_, String>(4)?).unwrap(),
+                })
+            })?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(NotebookError::from)?
+        };
+        let ids: Vec<Uuid> = shortcuts.iter().map(|s| s.note_id).collect();
+        let mut by_id = note_query::summaries_by_ids(conn, &ids, true)?
+            .into_iter()
+            .filter(|note| !note.is_template)
+            .map(|note| (note.id, note))
+            .collect::<std::collections::HashMap<_, _>>();
         let mut result = Vec::new();
-        for row in rows {
-            let shortcut = row?;
-            if let Some(summary) = by_id.get(&shortcut.note_id) {
-                result.push((shortcut, summary.clone()));
+        for shortcut in shortcuts {
+            if let Some(summary) = by_id.remove(&shortcut.note_id) {
+                result.push((shortcut, summary));
             }
         }
         Ok(result)
@@ -1266,5 +1168,138 @@ mod tests {
             )
             .unwrap();
         assert!(cleared.reminder_at.is_none());
+    }
+
+    #[test]
+    fn list_notes_hydrates_tags_in_one_pass() {
+        let service = temp_service("list-tags");
+        let notebook_id = service.list_notebooks(false).unwrap()[0].id;
+        let work = service
+            .create_tag(CreateTagRequest {
+                name: "work".into(),
+            })
+            .unwrap();
+        let home = service
+            .create_tag(CreateTagRequest {
+                name: "home".into(),
+            })
+            .unwrap();
+        service
+            .create_note(CreateNoteRequest {
+                notebook_id,
+                title: Some("Tagged".into()),
+                content: Some("<p>hello</p>".into()),
+                tag_ids: Some(vec![work.id, home.id]),
+                is_pinned: None,
+                reminder_at: None,
+                source_url: None,
+                is_template: None,
+                template_category: None,
+            })
+            .unwrap();
+        service
+            .create_note(sample_note(notebook_id, "Untagged"))
+            .unwrap();
+
+        let listed = service
+            .list_notes(None, None, false, None, None)
+            .unwrap();
+        let tagged = listed.iter().find(|n| n.title == "Tagged").unwrap();
+        let untagged = listed.iter().find(|n| n.title == "Untagged").unwrap();
+        assert_eq!(tagged.tag_names, vec!["home".to_string(), "work".to_string()]);
+        assert!(untagged.tag_names.is_empty());
+    }
+
+    #[test]
+    fn search_loads_hits_by_id_instead_of_the_full_note_list() {
+        let service = temp_service("search-by-id");
+        let notebook_id = service.list_notebooks(false).unwrap()[0].id;
+        let tag = service
+            .create_tag(CreateTagRequest {
+                name: "alpha".into(),
+            })
+            .unwrap();
+        for i in 0..12 {
+            service
+                .create_note(sample_note(notebook_id, &format!("Filler {i}")))
+                .unwrap();
+        }
+        let hit = service
+            .create_note(CreateNoteRequest {
+                notebook_id,
+                title: Some("Unique walrus notes".into()),
+                content: Some("<p>walrus foraging</p>".into()),
+                tag_ids: Some(vec![tag.id]),
+                is_pinned: None,
+                reminder_at: None,
+                source_url: None,
+                is_template: None,
+                template_category: None,
+            })
+            .unwrap();
+
+        let result = service
+            .search(SearchQuery {
+                q: "walrus".into(),
+                notebook_id: None,
+                tag_id: None,
+                include_trash: None,
+                include_archived: None,
+                limit: None,
+                offset: None,
+            })
+            .unwrap();
+        assert_eq!(result.total, 1);
+        assert_eq!(result.notes.len(), 1);
+        assert_eq!(result.notes[0].id, hit.id);
+        assert_eq!(result.notes[0].tag_names, vec!["alpha".to_string()]);
+
+        let tagged = service
+            .search(SearchQuery {
+                q: "walrus".into(),
+                notebook_id: None,
+                tag_id: Some(tag.id),
+                include_trash: None,
+                include_archived: None,
+                limit: None,
+                offset: None,
+            })
+            .unwrap();
+        assert_eq!(tagged.notes.len(), 1);
+
+        let other_tag = service
+            .create_tag(CreateTagRequest {
+                name: "beta".into(),
+            })
+            .unwrap();
+        let missed = service
+            .search(SearchQuery {
+                q: "walrus".into(),
+                notebook_id: None,
+                tag_id: Some(other_tag.id),
+                include_trash: None,
+                include_archived: None,
+                limit: None,
+                offset: None,
+            })
+            .unwrap();
+        assert!(missed.notes.is_empty());
+    }
+
+    #[test]
+    fn shortcuts_resolve_only_the_starred_notes() {
+        let service = temp_service("shortcut-by-id");
+        let notebook_id = service.list_notebooks(false).unwrap()[0].id;
+        let first = service
+            .create_note(sample_note(notebook_id, "Keep"))
+            .unwrap();
+        service
+            .create_note(sample_note(notebook_id, "Skip"))
+            .unwrap();
+        service.add_shortcut(first.id).unwrap();
+        let shortcuts = service.list_shortcuts().unwrap();
+        assert_eq!(shortcuts.len(), 1);
+        assert_eq!(shortcuts[0].1.id, first.id);
+        assert_eq!(shortcuts[0].1.title, "Keep");
     }
 }

@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 use crate::error::Result;
 use crate::models::{SearchQuery, SearchResult};
+use crate::note_query;
 use crate::service::NotebookService;
 
 pub fn search_notes(service: &NotebookService, query: SearchQuery) -> Result<SearchResult> {
@@ -57,26 +58,28 @@ pub fn search_notes(service: &NotebookService, query: SearchQuery) -> Result<Sea
         row.get(0)
     })?;
 
-    let mut stmt = conn.prepare(&list_sql)?;
-    let rows = stmt.query_map(
-        params![
-            user_id.to_string(),
-            fts_query,
-            limit as i64,
-            offset as i64
-        ],
-        |row| row.get::<_, String>(0),
-    )?;
-
-    let mut notes = Vec::new();
-    for row in rows {
-        let id = Uuid::parse_str(&row?).unwrap();
-        let all = service.list_notes(None, None, include_trash, None, None)?;
-        if let Some(summary) = all.into_iter().find(|n| n.id == id) {
-            if include_archived || !summary.is_archived {
-                notes.push(summary);
-            }
-        }
+    let ids: Vec<Uuid> = {
+        let mut stmt = conn.prepare(&list_sql)?;
+        let rows = stmt.query_map(
+            params![
+                user_id.to_string(),
+                fts_query,
+                limit as i64,
+                offset as i64
+            ],
+            |row| row.get::<_, String>(0),
+        )?;
+        rows.collect::<rusqlite::Result<Vec<String>>>()?
+            .into_iter()
+            .map(|id| Uuid::parse_str(&id).unwrap())
+            .collect()
+    };
+    let mut notes = note_query::summaries_by_ids(conn, &ids, !include_trash)?;
+    if !include_trash {
+        notes.retain(|note| !note.is_template);
+    }
+    if !include_archived {
+        notes.retain(|note| !note.is_archived);
     }
 
     Ok(SearchResult { notes, total })
