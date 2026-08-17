@@ -204,6 +204,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
+  updateStack: (id: string, patch: Partial<{ name: string; sort_order: number }>) =>
+    request<Stack>(`/api/v1/stacks/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
+  deleteStack: (id: string) =>
+    request<void>(`/api/v1/stacks/${id}`, { method: "DELETE" }),
 
   listTags: () => request<Tag[]>("/api/v1/tags"),
   createTag: (name: string) =>
@@ -211,6 +218,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
+  updateTag: (id: string, patch: Partial<{ name: string }>) =>
+    request<Tag>(`/api/v1/tags/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
+  deleteTag: (id: string) =>
+    request<void>(`/api/v1/tags/${id}`, { method: "DELETE" }),
 
   listNotes: (params: {
     notebookId?: string;

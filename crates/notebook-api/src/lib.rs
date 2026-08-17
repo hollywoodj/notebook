@@ -13,7 +13,8 @@ use axum::{
 use notebook_core::{
     CreateNotebookRequest, CreateNoteRequest, CreateStackRequest, CreateTagRequest, Database,
     EnexImportRequest, HealthResponse, NotebookService, SearchQuery, UpdateNoteRequest,
-    UpdateNotebookRequest, UpdateUserRequest, UseTemplateRequest,
+    UpdateNotebookRequest, UpdateStackRequest, UpdateTagRequest, UpdateUserRequest,
+    UseTemplateRequest,
 };
 use serde::Deserialize;
 use tokio::sync::Mutex;
@@ -95,9 +96,15 @@ fn build_router(state: AppState) -> Router {
         )
         .route("/api/v1/notebooks/:id/restore", post(restore_notebook))
         .route("/api/v1/stacks", get(list_stacks).post(create_stack))
-        .route("/api/v1/stacks/:id", get(get_stack).delete(delete_stack))
+        .route(
+            "/api/v1/stacks/:id",
+            get(get_stack).put(update_stack).delete(delete_stack),
+        )
         .route("/api/v1/tags", get(list_tags).post(create_tag))
-        .route("/api/v1/tags/:id", get(get_tag).delete(delete_tag))
+        .route(
+            "/api/v1/tags/:id",
+            get(get_tag).put(update_tag).delete(delete_tag),
+        )
         .route("/api/v1/notes", get(list_notes).post(create_note))
         .route(
             "/api/v1/notes/:id",
@@ -259,6 +266,15 @@ async fn get_stack(
     Ok(Json(svc.get_stack(id)?))
 }
 
+async fn update_stack(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<UpdateStackRequest>,
+) -> Result<Json<notebook_core::Stack>, AppError> {
+    let svc = state.service.lock().await;
+    Ok(Json(svc.update_stack(id, req)?))
+}
+
 async fn delete_stack(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -289,6 +305,15 @@ async fn get_tag(
 ) -> Result<Json<notebook_core::Tag>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.get_tag(id)?))
+}
+
+async fn update_tag(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<UpdateTagRequest>,
+) -> Result<Json<notebook_core::Tag>, AppError> {
+    let svc = state.service.lock().await;
+    Ok(Json(svc.update_tag(id, req)?))
 }
 
 async fn delete_tag(

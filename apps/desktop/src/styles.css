@@ -294,6 +294,117 @@ button {
   background: var(--sidebar-hover);
 }
 
+.context-menu,
+.context-submenu {
+  position: fixed;
+  width: 236px;
+  padding: 6px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: var(--shadow);
+  z-index: 100;
+}
+
+.context-menu {
+  animation: context-menu-in 80ms ease-out;
+}
+
+.context-menu-item-wrap {
+  position: relative;
+}
+
+.context-menu-item {
+  width: 100%;
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+}
+
+.context-menu-item:hover:not(:disabled),
+.context-menu-item:focus-visible {
+  background: var(--green);
+  color: white;
+  outline: none;
+}
+
+.context-menu-item:disabled {
+  color: var(--text-muted);
+  cursor: default;
+  opacity: 0.55;
+}
+
+.context-menu-item.danger-text:hover:not(:disabled),
+.context-menu-item.danger-text:focus-visible {
+  background: var(--danger);
+  color: white;
+}
+
+.context-menu-icon {
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  font-size: 12px;
+}
+
+.context-menu-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-menu-shortcut,
+.context-menu-arrow {
+  margin-left: 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.context-menu-item:hover .context-menu-shortcut,
+.context-menu-item:hover .context-menu-arrow,
+.context-menu-item:focus-visible .context-menu-shortcut,
+.context-menu-item:focus-visible .context-menu-arrow {
+  color: currentColor;
+}
+
+.context-menu-arrow {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.context-menu-separator {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--border);
+}
+
+.context-submenu {
+  display: none;
+  position: absolute;
+  top: -6px;
+  left: calc(100% - 2px);
+}
+
+.context-menu-item-wrap:hover > .context-submenu,
+.context-menu-item-wrap:focus-within > .context-submenu {
+  display: block;
+}
+
+@keyframes context-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
 .sidebar-search {
   margin: 0 12px 10px;
   display: flex;
@@ -387,11 +498,19 @@ button {
 }
 
 .stack-name {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
   padding: 4px 12px 2px 18px;
   font-size: 11px;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.stack-name:hover {
+  color: var(--text);
 }
 
 .note-list-panel {
