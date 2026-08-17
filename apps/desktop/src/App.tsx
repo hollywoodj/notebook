@@ -881,6 +881,12 @@ export default function App() {
           label: "Import Notes…",
           onSelect: () => importRef.current?.click(),
         },
+        { type: "separator" },
+        {
+          label: "Settings…",
+          shortcut: "Ctrl/⌘ ,",
+          onSelect: () => openSettings(),
+        },
       ],
     },
     {
@@ -1049,11 +1055,6 @@ export default function App() {
     {
       label: "Tools",
       items: [
-        {
-          label: "Settings…",
-          shortcut: "Ctrl/⌘ ,",
-          onSelect: () => openSettings(),
-        },
         {
           label: "Import from Evernote…",
           onSelect: () => importRef.current?.click(),
