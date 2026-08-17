@@ -106,6 +106,17 @@ export const Icon = {
       <path d="M9 4v16" />
     </I>
   ),
+  HideList: (p: IconProps) => (
+    <I {...p}>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M10 5v14" />
+    </I>
+  ),
+  ExpandNote: (p: IconProps) => (
+    <I {...p}>
+      <path d="M9 4H4v5M15 4h5v5M4 15v5h5M20 15v5h-5" />
+    </I>
+  ),
   Print: (p: IconProps) => (
     <I {...p}>
       <path d="M7 8V4h10v4M7 16H5a2 2 0 0 1-2-2v-4h18v4a2 2 0 0 1-2 2h-2" />

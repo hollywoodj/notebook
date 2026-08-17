@@ -31,6 +31,8 @@ const SHORTCUTS = [
   ["Find in note", "Ctrl/⌘ F"],
   ["Find and replace", "Ctrl/⌘ H"],
   ["Search all notes", "Ctrl/⌘ Shift F"],
+  ["Hide / show note list", "Ctrl/⌘ Alt ←"],
+  ["Expand / restore note", "Ctrl/⌘ Alt →"],
   ["Jump to note, notebook, or tag", "Ctrl/⌘ J"],
   ["Print note", "Ctrl/⌘ P"],
   ["Note info", "Ctrl/⌘ Shift I"],
@@ -390,7 +392,6 @@ export function SettingsModal({
                     ["show_tags", "Tags"],
                     ["show_templates", "Templates"],
                     ["show_trash", "Trash"],
-                    ["show_import", "Import"],
                   ] as const
                 ).map(([key, label]) => (
                   <SettingsRow
