@@ -264,6 +264,8 @@ fn run_api(cli: &Cli, client: &ApiClient, json_out: bool) -> Result<()> {
                         is_pinned: Some(*pinned),
                         reminder_at: None,
                         source_url: None,
+                        is_template: None,
+                        template_category: None,
                     },
                     json_out,
                 )
@@ -286,6 +288,8 @@ fn run_api(cli: &Cli, client: &ApiClient, json_out: bool) -> Result<()> {
                     is_archived: *archived,
                     reminder_at: None,
                     source_url: None,
+                    is_template: None,
+                    template_category: None,
                 },
                 json_out,
             ),

@@ -13,7 +13,7 @@ use axum::{
 use notebook_core::{
     CreateNotebookRequest, CreateNoteRequest, CreateStackRequest, CreateTagRequest, Database,
     EnexImportRequest, HealthResponse, NotebookService, SearchQuery, UpdateNoteRequest,
-    UpdateNotebookRequest,
+    UpdateNotebookRequest, UpdateUserRequest, UseTemplateRequest,
 };
 use serde::Deserialize;
 use tokio::sync::Mutex;
@@ -128,6 +128,15 @@ fn build_router(state: AppState) -> Router {
         .route("/api/v1/trash/empty", post(empty_trash))
         .route("/api/v1/import/enex", post(import_enex))
         .route("/api/v1/import/enex/path", post(import_enex_path))
+        .route("/api/v1/account", get(get_account).put(update_account))
+        .route(
+            "/api/v1/settings",
+            get(get_settings).put(update_settings).delete(reset_settings),
+        )
+        .route("/api/v1/templates/catalog", get(template_catalog))
+        .route("/api/v1/templates/restore", post(restore_templates))
+        .route("/api/v1/templates/:id/use", post(use_template))
+        .route("/api/v1/storage", get(storage_info))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .layer(
             CorsLayer::new()
@@ -160,6 +169,7 @@ struct ListNotesQuery {
     tag_id: Option<Uuid>,
     trash: Option<bool>,
     archived: Option<bool>,
+    templates: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -300,6 +310,7 @@ async fn list_notes(
         q.tag_id,
         q.trash.unwrap_or(false),
         q.archived,
+        q.templates,
     )?))
 }
 
@@ -560,6 +571,74 @@ async fn import_enex_path(
     )?))
 }
 
+async fn get_account(
+    State(state): State<AppState>,
+) -> Result<Json<notebook_core::User>, AppError> {
+    let svc = state.service.lock().await;
+    Ok(Json(svc.get_account()?))
+}
+
+async fn update_account(
+    State(state): State<AppState>,
+    Json(req): Json<UpdateUserRequest>,
+) -> Result<Json<notebook_core::User>, AppError> {
+    let svc = state.service.lock().await;
+    Ok(Json(svc.update_account(req)?))
+}
+
+async fn get_settings(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let svc = state.service.lock().await;
+    Ok(Json(svc.get_preferences()?))
+}
+
+async fn update_settings(
+    State(state): State<AppState>,
+    Json(req): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let svc = state.service.lock().await;
+    Ok(Json(svc.update_preferences(req)?))
+}
+
+async fn reset_settings(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let svc = state.service.lock().await;
+    Ok(Json(svc.reset_preferences()?))
+}
+
+async fn template_catalog(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<serde_json::Value>>, AppError> {
+    let svc = state.service.lock().await;
+    Ok(Json(svc.template_catalog()))
+}
+
+async fn restore_templates(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let svc = state.service.lock().await;
+    let inserted = svc.restore_builtin_templates()?;
+    Ok(Json(serde_json::json!({ "restored": inserted })))
+}
+
+async fn use_template(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<UseTemplateRequest>,
+) -> Result<Json<notebook_core::Note>, AppError> {
+    let svc = state.service.lock().await;
+    Ok(Json(svc.use_template(id, req.notebook_id)?))
+}
+
+async fn storage_info(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let svc = state.service.lock().await;
+    Ok(Json(svc.storage_info()))
+}
+
 struct AppError(notebook_core::NotebookError);
 
 impl From<notebook_core::NotebookError> for AppError {
@@ -705,5 +784,141 @@ mod tests {
         let result: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(result["imported"], 1, "body: {result}");
         assert_eq!(result["notebook_name"], "From Path");
+    }
+
+    #[tokio::test]
+    async fn seeds_templates_and_uses_them() {
+        let app = test_app("templates");
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/notes?templates=true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let templates: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            templates.len() >= 10,
+            "expected built-in templates, got {}",
+            templates.len()
+        );
+        assert_eq!(templates[0]["is_template"], true);
+
+        let template_id = templates
+            .iter()
+            .find(|t| t["title"] == "Meeting notes")
+            .and_then(|t| t["id"].as_str())
+            .unwrap();
+        let notebooks: Vec<serde_json::Value> = {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/v1/notebooks")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            serde_json::from_slice(&bytes).unwrap()
+        };
+        let notebook_id = notebooks[0]["id"].as_str().unwrap();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&format!("/api/v1/templates/{template_id}/use"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "notebook_id": notebook_id }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let note: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(note["title"], "Meeting notes");
+        assert_eq!(note["is_template"], false);
+        assert!(note["content"].as_str().unwrap().contains("Agenda"));
+    }
+
+    #[tokio::test]
+    async fn reads_and_updates_settings() {
+        let app = test_app("settings");
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/settings")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let settings: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(settings["theme"], "light");
+        assert_eq!(settings["confirm_delete"], true);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/v1/settings")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "theme": "dark", "note_width": "full" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let settings: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(settings["theme"], "dark");
+        assert_eq!(settings["note_width"], "full");
+        assert_eq!(settings["confirm_delete"], true);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/v1/account")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "display_name": "Jordan" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let account: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(account["display_name"], "Jordan");
     }
 }

@@ -57,6 +57,14 @@ pub struct Note {
     pub source_url: Option<String>,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
+    #[serde(default)]
+    pub is_template: bool,
+    pub template_category: Option<String>,
+    pub template_key: Option<String>,
+    #[serde(default)]
+    pub tag_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub tag_names: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,
@@ -74,6 +82,10 @@ pub struct NoteSummary {
     pub tag_ids: Vec<Uuid>,
     pub tag_names: Vec<String>,
     pub attachment_count: i32,
+    #[serde(default)]
+    pub is_template: bool,
+    pub template_category: Option<String>,
+    pub notebook_name: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -118,6 +130,10 @@ pub struct CreateNoteRequest {
     pub is_pinned: Option<bool>,
     pub reminder_at: Option<DateTime<Utc>>,
     pub source_url: Option<String>,
+    #[serde(default)]
+    pub is_template: Option<bool>,
+    #[serde(default)]
+    pub template_category: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,6 +146,10 @@ pub struct UpdateNoteRequest {
     pub is_archived: Option<bool>,
     pub reminder_at: Option<Option<DateTime<Utc>>>,
     pub source_url: Option<String>,
+    #[serde(default)]
+    pub is_template: Option<bool>,
+    #[serde(default)]
+    pub template_category: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,6 +164,8 @@ pub struct UpdateNotebookRequest {
     pub name: Option<String>,
     pub stack_id: Option<Option<Uuid>>,
     pub sort_order: Option<i32>,
+    #[serde(default)]
+    pub is_default: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,4 +232,15 @@ pub struct ImportError {
     pub index: usize,
     pub title: Option<String>,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateUserRequest {
+    pub email: Option<String>,
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UseTemplateRequest {
+    pub notebook_id: Option<Uuid>,
 }

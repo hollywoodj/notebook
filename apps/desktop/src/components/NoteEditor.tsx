@@ -7,15 +7,30 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Placeholder from "@tiptap/extension-placeholder";
 import Image from "@tiptap/extension-image";
-import { useEffect, useRef } from "react";
+import { ReactNode, useEffect, useRef } from "react";
+import { Icon } from "./Icons";
 
 interface Props {
   content: string;
   onChange: (html: string) => void;
   onAttach: (file: File) => void;
+  spellCheck: boolean;
+  fontFamily: "default" | "serif" | "mono";
+  fontSize: number;
+  noteWidth: "readable" | "full";
+  placeholder?: string;
 }
 
-export function NoteEditor({ content, onChange, onAttach }: Props) {
+export function NoteEditor({
+  content,
+  onChange,
+  onAttach,
+  spellCheck,
+  fontFamily,
+  fontSize,
+  noteWidth,
+  placeholder = "Start writing, or pick a template…",
+}: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const editor = useEditor({
@@ -26,13 +41,16 @@ export function NoteEditor({ content, onChange, onAttach }: Props) {
       Highlight,
       TaskList,
       TaskItem.configure({ nested: true }),
-      Placeholder.configure({ placeholder: "Start writing..." }),
+      Placeholder.configure({ placeholder }),
       Image,
     ],
     content,
     onUpdate: ({ editor }) => onChange(editor.getHTML()),
     editorProps: {
-      attributes: { class: "note-editor-content" },
+      attributes: {
+        class: "note-editor-content",
+        spellcheck: spellCheck ? "true" : "false",
+      },
     },
   });
 
@@ -42,39 +60,133 @@ export function NoteEditor({ content, onChange, onAttach }: Props) {
     }
   }, [content, editor]);
 
+  useEffect(() => {
+    editor?.setOptions({
+      editorProps: {
+        attributes: {
+          class: "note-editor-content",
+          spellcheck: spellCheck ? "true" : "false",
+        },
+      },
+    });
+  }, [spellCheck, editor]);
+
   if (!editor) return null;
 
-  const btn = (label: string, action: () => void, active = false) => (
+  const btn = (
+    label: string,
+    action: () => void,
+    active = false,
+    icon?: ReactNode
+  ) => (
     <button
       key={label}
       type="button"
       className={active ? "toolbar-btn active" : "toolbar-btn"}
-      onClick={action}
+      onMouseDown={(e) => {
+        e.preventDefault();
+        action();
+      }}
       title={label}
     >
-      {label}
+      {icon ?? label}
     </button>
   );
+
+  const fontClass =
+    fontFamily === "serif"
+      ? "font-serif"
+      : fontFamily === "mono"
+        ? "font-mono"
+        : "font-sans";
 
   return (
     <div className="note-editor">
       <div className="editor-toolbar">
-        {btn("B", () => editor.chain().focus().toggleBold().run(), editor.isActive("bold"))}
-        {btn("I", () => editor.chain().focus().toggleItalic().run(), editor.isActive("italic"))}
-        {btn("U", () => editor.chain().focus().toggleUnderline().run(), editor.isActive("underline"))}
-        {btn("S", () => editor.chain().focus().toggleStrike().run(), editor.isActive("strike"))}
-        {btn("H1", () => editor.chain().focus().toggleHeading({ level: 1 }).run(), editor.isActive("heading", { level: 1 }))}
-        {btn("H2", () => editor.chain().focus().toggleHeading({ level: 2 }).run(), editor.isActive("heading", { level: 2 }))}
-        {btn("•", () => editor.chain().focus().toggleBulletList().run(), editor.isActive("bulletList"))}
-        {btn("1.", () => editor.chain().focus().toggleOrderedList().run(), editor.isActive("orderedList"))}
-        {btn("☑", () => editor.chain().focus().toggleTaskList().run(), editor.isActive("taskList"))}
-        {btn("❝", () => editor.chain().focus().toggleBlockquote().run(), editor.isActive("blockquote"))}
-        {btn("Code", () => editor.chain().focus().toggleCodeBlock().run(), editor.isActive("codeBlock"))}
-        {btn("Link", () => {
-          const url = window.prompt("URL");
-          if (url) editor.chain().focus().setLink({ href: url }).run();
-        }, editor.isActive("link"))}
-        {btn("Attach", () => fileRef.current?.click())}
+        {btn(
+          "Heading 1",
+          () => editor.chain().focus().toggleHeading({ level: 1 }).run(),
+          editor.isActive("heading", { level: 1 }),
+          <Icon.Heading size={16} />
+        )}
+        {btn(
+          "Heading 2",
+          () => editor.chain().focus().toggleHeading({ level: 2 }).run(),
+          editor.isActive("heading", { level: 2 }),
+          <span className="toolbar-text">H2</span>
+        )}
+        <span className="toolbar-sep" />
+        {btn(
+          "Bold",
+          () => editor.chain().focus().toggleBold().run(),
+          editor.isActive("bold"),
+          <Icon.Bold size={16} />
+        )}
+        {btn(
+          "Italic",
+          () => editor.chain().focus().toggleItalic().run(),
+          editor.isActive("italic"),
+          <Icon.Italic size={16} />
+        )}
+        {btn(
+          "Underline",
+          () => editor.chain().focus().toggleUnderline().run(),
+          editor.isActive("underline"),
+          <Icon.Underline size={16} />
+        )}
+        {btn(
+          "Strikethrough",
+          () => editor.chain().focus().toggleStrike().run(),
+          editor.isActive("strike"),
+          <Icon.Strike size={16} />
+        )}
+        {btn(
+          "Highlight",
+          () => editor.chain().focus().toggleHighlight().run(),
+          editor.isActive("highlight"),
+          <span className="toolbar-text hl">HL</span>
+        )}
+        <span className="toolbar-sep" />
+        {btn(
+          "Bulleted list",
+          () => editor.chain().focus().toggleBulletList().run(),
+          editor.isActive("bulletList"),
+          <Icon.List size={16} />
+        )}
+        {btn(
+          "Numbered list",
+          () => editor.chain().focus().toggleOrderedList().run(),
+          editor.isActive("orderedList"),
+          <Icon.Ordered size={16} />
+        )}
+        {btn(
+          "Checkbox",
+          () => editor.chain().focus().toggleTaskList().run(),
+          editor.isActive("taskList"),
+          <Icon.Check size={16} />
+        )}
+        {btn(
+          "Quote",
+          () => editor.chain().focus().toggleBlockquote().run(),
+          editor.isActive("blockquote"),
+          <Icon.Quote size={16} />
+        )}
+        {btn(
+          "Code block",
+          () => editor.chain().focus().toggleCodeBlock().run(),
+          editor.isActive("codeBlock"),
+          <Icon.Code size={16} />
+        )}
+        {btn(
+          "Link",
+          () => {
+            const url = window.prompt("URL");
+            if (url) editor.chain().focus().setLink({ href: url }).run();
+          },
+          editor.isActive("link"),
+          <Icon.Link size={16} />
+        )}
+        {btn("Attach", () => fileRef.current?.click(), false, <Icon.Attach size={16} />)}
       </div>
       <input
         ref={fileRef}
@@ -86,7 +198,14 @@ export function NoteEditor({ content, onChange, onAttach }: Props) {
           e.target.value = "";
         }}
       />
-      <EditorContent editor={editor} />
+      <div className="editor-scroll">
+        <div
+          className={`editor-page ${fontClass} ${noteWidth === "readable" ? "readable" : "full"}`}
+          style={{ fontSize: `${fontSize}px` }}
+        >
+          <EditorContent editor={editor} />
+        </div>
+      </div>
     </div>
   );
 }

@@ -128,14 +128,25 @@ impl NotebookService {
         if let Some(sort_order) = req.sort_order {
             notebook.sort_order = sort_order;
         }
+        if let Some(is_default) = req.is_default {
+            if is_default {
+                let user_id = self.db.default_user_id()?;
+                self.db.connection().execute(
+                    "UPDATE notebooks SET is_default = 0, updated_at = ?1 WHERE user_id = ?2",
+                    params![Self::now(), user_id.to_string()],
+                )?;
+            }
+            notebook.is_default = is_default;
+        }
         notebook.updated_at = Utc::now();
         let now = notebook.updated_at.to_rfc3339();
         self.db.connection().execute(
-            "UPDATE notebooks SET name = ?1, stack_id = ?2, sort_order = ?3, updated_at = ?4 WHERE id = ?5",
+            "UPDATE notebooks SET name = ?1, stack_id = ?2, sort_order = ?3, is_default = ?4, updated_at = ?5 WHERE id = ?6",
             params![
                 notebook.name,
                 notebook.stack_id.map(|s| s.to_string()),
                 notebook.sort_order,
+                if notebook.is_default { 1 } else { 0 },
                 now,
                 id.to_string()
             ],
@@ -323,12 +334,14 @@ impl NotebookService {
         tag_id: Option<Uuid>,
         trash: bool,
         archived: Option<bool>,
+        templates: Option<bool>,
     ) -> Result<Vec<NoteSummary>> {
         let user_id = self.db.default_user_id()?;
         let mut sql = String::from(
             "SELECT n.id, n.notebook_id, n.title, n.content_plain, n.is_pinned, n.is_archived, n.reminder_at, n.created_at, n.updated_at,
-             (SELECT COUNT(*) FROM attachments a WHERE a.note_id = n.id) as attachment_count
-             FROM notes n",
+             (SELECT COUNT(*) FROM attachments a WHERE a.note_id = n.id) as attachment_count,
+             n.is_template, n.template_category, nb.name
+             FROM notes n JOIN notebooks nb ON nb.id = n.notebook_id",
         );
         let mut conditions = vec!["n.user_id = ?1".to_string()];
         if trash {
@@ -345,6 +358,12 @@ impl NotebookService {
         }
         if let Some(arch) = archived {
             conditions.push(format!("n.is_archived = {}", if arch { 1 } else { 0 }));
+        }
+        if let Some(is_template) = templates {
+            conditions.push(format!(
+                "n.is_template = {}",
+                if is_template { 1 } else { 0 }
+            ));
         }
         sql.push_str(" WHERE ");
         sql.push_str(&conditions.join(" AND "));
@@ -366,13 +385,29 @@ impl NotebookService {
                 row.get::<_, String>(7)?,
                 row.get::<_, String>(8)?,
                 row.get::<_, i32>(9)?,
+                row.get::<_, i32>(10)? != 0,
+                row.get::<_, Option<String>>(11)?,
+                row.get::<_, String>(12)?,
             ))
         })?;
 
         let mut notes = Vec::new();
         for row in rows {
-            let (id_s, nb_s, title, snippet, pinned, archived, reminder, created, updated, att_count) =
-                row?;
+            let (
+                id_s,
+                nb_s,
+                title,
+                snippet,
+                pinned,
+                archived,
+                reminder,
+                created,
+                updated,
+                att_count,
+                is_template,
+                template_category,
+                notebook_name,
+            ) = row?;
             let id = Uuid::parse_str(&id_s).unwrap();
             let (tag_ids, tag_names) = self.get_note_tags(id)?;
             notes.push(NoteSummary {
@@ -386,6 +421,9 @@ impl NotebookService {
                 tag_ids,
                 tag_names,
                 attachment_count: att_count,
+                is_template,
+                template_category,
+                notebook_name,
                 created_at: Self::parse_dt(&created)?,
                 updated_at: Self::parse_dt(&updated)?,
             });
@@ -437,8 +475,10 @@ impl NotebookService {
         let content = req.content.unwrap_or_default();
         let content_plain = Self::strip_html(&content);
 
+        let is_template = req.is_template.unwrap_or(false);
+        let template_category = req.template_category.clone();
         self.db.connection().execute(
-            "INSERT INTO notes (id, user_id, notebook_id, title, content, content_plain, is_pinned, reminder_at, source_url, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO notes (id, user_id, notebook_id, title, content, content_plain, is_pinned, reminder_at, source_url, is_template, template_category, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 id.to_string(),
                 user_id.to_string(),
@@ -449,6 +489,8 @@ impl NotebookService {
                 if req.is_pinned.unwrap_or(false) { 1 } else { 0 },
                 req.reminder_at.map(|d| d.to_rfc3339()),
                 req.source_url,
+                if is_template { 1 } else { 0 },
+                template_category,
                 now,
                 now
             ],
@@ -463,11 +505,11 @@ impl NotebookService {
     }
 
     pub fn get_note(&self, id: Uuid) -> Result<Note> {
-        self.db
+        let mut note = self.db
             .connection()
             .query_row(
-                "SELECT id, user_id, notebook_id, title, content, content_plain, is_pinned, is_archived, reminder_at, source_url, latitude, longitude, created_at, updated_at, deleted_at FROM notes WHERE id = ?1",
-                params![id.to_string()],
+                "SELECT id, user_id, notebook_id, title, content, content_plain, is_pinned, is_archived, reminder_at, source_url, latitude, longitude, created_at, updated_at, deleted_at, is_template, template_category, template_key FROM notes WHERE id = ?1",
+            params![id.to_string()],
                 |row| {
                     Ok(Note {
                         id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
@@ -485,11 +527,20 @@ impl NotebookService {
                         created_at: Self::parse_dt(&row.get::<_, String>(12)?).unwrap(),
                         updated_at: Self::parse_dt(&row.get::<_, String>(13)?).unwrap(),
                         deleted_at: Self::optional_dt(row.get(14)?).unwrap(),
+                        is_template: row.get::<_, i32>(15)? != 0,
+                        template_category: row.get(16)?,
+                        template_key: row.get(17)?,
+                        tag_ids: Vec::new(),
+                        tag_names: Vec::new(),
                     })
                 },
             )
             .optional()?
-            .ok_or_else(|| NotebookError::NotFound(format!("note {id}")))
+            .ok_or_else(|| NotebookError::NotFound(format!("note {id}")))?;
+        let (tag_ids, tag_names) = self.get_note_tags(id)?;
+        note.tag_ids = tag_ids;
+        note.tag_names = tag_names;
+        Ok(note)
     }
 
     pub fn update_note(&self, id: Uuid, req: UpdateNoteRequest) -> Result<Note> {
@@ -518,10 +569,19 @@ impl NotebookService {
         if let Some(source_url) = req.source_url {
             note.source_url = Some(source_url);
         }
+        if let Some(is_template) = req.is_template {
+            note.is_template = is_template;
+            if is_template && note.template_category.is_none() {
+                note.template_category = Some("My templates".into());
+            }
+        }
+        if let Some(template_category) = req.template_category {
+            note.template_category = Some(template_category);
+        }
         note.updated_at = Utc::now();
 
         self.db.connection().execute(
-            "UPDATE notes SET notebook_id = ?1, title = ?2, content = ?3, content_plain = ?4, is_pinned = ?5, is_archived = ?6, reminder_at = ?7, source_url = ?8, updated_at = ?9 WHERE id = ?10",
+            "UPDATE notes SET notebook_id = ?1, title = ?2, content = ?3, content_plain = ?4, is_pinned = ?5, is_archived = ?6, reminder_at = ?7, source_url = ?8, is_template = ?9, template_category = ?10, updated_at = ?11 WHERE id = ?12",
             params![
                 note.notebook_id.to_string(),
                 note.title,
@@ -531,6 +591,8 @@ impl NotebookService {
                 if note.is_archived { 1 } else { 0 },
                 note.reminder_at.map(|d| d.to_rfc3339()),
                 note.source_url,
+                if note.is_template { 1 } else { 0 },
+                note.template_category,
                 note.updated_at.to_rfc3339(),
                 id.to_string()
             ],
@@ -540,7 +602,7 @@ impl NotebookService {
             self.set_note_tags(id, &tag_ids)?;
         }
 
-        Ok(note)
+        self.get_note(id)
     }
 
     fn set_note_tags(&self, note_id: Uuid, tag_ids: &[Uuid]) -> Result<()> {
@@ -597,7 +659,7 @@ impl NotebookService {
     }
 
     pub fn empty_trash(&self) -> Result<i32> {
-        let trash_notes = self.list_notes(None, None, true, None)?;
+        let trash_notes = self.list_notes(None, None, true, None, None)?;
         let mut count = 0;
         for note in trash_notes {
             self.permanently_delete_note(note.id)?;
@@ -770,7 +832,7 @@ impl NotebookService {
         let mut result = Vec::new();
         for row in rows {
             let shortcut = row?;
-            let notes = self.list_notes(None, None, false, None)?;
+            let notes = self.list_notes(None, None, false, None, None)?;
             if let Some(summary) = notes.into_iter().find(|n| n.id == shortcut.note_id) {
                 result.push((shortcut, summary));
             }
@@ -819,6 +881,157 @@ impl NotebookService {
     pub fn search(&self, query: SearchQuery) -> Result<SearchResult> {
         crate::search::search_notes(self, query)
     }
+
+    // --- Account ---
+
+    pub fn get_account(&self) -> Result<User> {
+        let conn = self.db.connection();
+        conn.query_row(
+            "SELECT id, email, display_name, created_at, updated_at FROM users ORDER BY created_at LIMIT 1",
+            [],
+            |row| {
+                Ok(User {
+                    id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+                    email: row.get(1)?,
+                    display_name: row.get(2)?,
+                    created_at: Self::parse_dt(&row.get::<_, String>(3)?).unwrap(),
+                    updated_at: Self::parse_dt(&row.get::<_, String>(4)?).unwrap(),
+                })
+            },
+        )
+        .map_err(NotebookError::from)
+    }
+
+    pub fn update_account(&self, req: UpdateUserRequest) -> Result<User> {
+        let mut user = self.get_account()?;
+        if let Some(email) = req.email {
+            if email.trim().is_empty() {
+                return Err(NotebookError::InvalidInput("email is required".into()));
+            }
+            user.email = email.trim().to_string();
+        }
+        if let Some(display_name) = req.display_name {
+            if display_name.trim().is_empty() {
+                return Err(NotebookError::InvalidInput(
+                    "display name is required".into(),
+                ));
+            }
+            user.display_name = display_name.trim().to_string();
+        }
+        user.updated_at = Utc::now();
+        self.db.connection().execute(
+            "UPDATE users SET email = ?1, display_name = ?2, updated_at = ?3 WHERE id = ?4",
+            params![
+                user.email,
+                user.display_name,
+                user.updated_at.to_rfc3339(),
+                user.id.to_string()
+            ],
+        )?;
+        Ok(user)
+    }
+
+    // --- Settings ---
+
+    pub fn get_preferences(&self) -> Result<serde_json::Value> {
+        let mut defaults = crate::templates::default_preferences();
+        let stored: Option<String> = self
+            .db
+            .connection()
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = 'preferences'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(raw) = stored {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let (Some(base), Some(patch)) = (defaults.as_object_mut(), value.as_object()) {
+                    for (k, v) in patch {
+                        base.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+        Ok(defaults)
+    }
+
+    pub fn update_preferences(&self, patch: serde_json::Value) -> Result<serde_json::Value> {
+        let mut current = self.get_preferences()?;
+        if let (Some(base), Some(incoming)) = (current.as_object_mut(), patch.as_object()) {
+            for (k, v) in incoming {
+                base.insert(k.clone(), v.clone());
+            }
+        }
+        let now = Self::now();
+        self.db.connection().execute(
+            "INSERT INTO app_settings (key, value, updated_at) VALUES ('preferences', ?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            params![current.to_string(), now],
+        )?;
+        Ok(current)
+    }
+
+    pub fn reset_preferences(&self) -> Result<serde_json::Value> {
+        let defaults = crate::templates::default_preferences();
+        let now = Self::now();
+        self.db.connection().execute(
+            "INSERT INTO app_settings (key, value, updated_at) VALUES ('preferences', ?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            params![defaults.to_string(), now],
+        )?;
+        Ok(defaults)
+    }
+
+    // --- Templates ---
+
+    pub fn template_catalog(&self) -> Vec<serde_json::Value> {
+        crate::templates::builtin_template_catalog()
+    }
+
+    pub fn restore_builtin_templates(&self) -> Result<u32> {
+        let user_id = self.db.default_user_id()?;
+        let notebooks = self.list_notebooks(false)?;
+        let notebook_id = if let Some(nb) = notebooks.iter().find(|n| n.name == "Templates") {
+            nb.id
+        } else {
+            self.create_notebook(CreateNotebookRequest {
+                name: "Templates".into(),
+                stack_id: None,
+                is_default: Some(false),
+            })?
+            .id
+        };
+        crate::templates::seed_builtin_templates(self.db.connection(), user_id, notebook_id)
+    }
+
+    pub fn use_template(&self, template_id: Uuid, notebook_id: Option<Uuid>) -> Result<Note> {
+        let template = self.get_note(template_id)?;
+        if !template.is_template {
+            return Err(NotebookError::InvalidInput(
+                "note is not a template".into(),
+            ));
+        }
+        let target_notebook = notebook_id.unwrap_or(template.notebook_id);
+        self.create_note(CreateNoteRequest {
+            notebook_id: target_notebook,
+            title: Some(template.title),
+            content: Some(template.content),
+            tag_ids: Some(template.tag_ids),
+            is_pinned: None,
+            reminder_at: None,
+            source_url: None,
+            is_template: Some(false),
+            template_category: None,
+        })
+    }
+
+    pub fn storage_info(&self) -> serde_json::Value {
+        serde_json::json!({
+            "database": self.db.connection().path().unwrap_or("memory"),
+            "attachments": self.db.data_dir().display().to_string(),
+        })
+    }
 }
 
 impl Default for UpdateNoteRequest {
@@ -832,6 +1045,8 @@ impl Default for UpdateNoteRequest {
             is_archived: None,
             reminder_at: None,
             source_url: None,
+            is_template: None,
+            template_category: None,
         }
     }
 }
