@@ -24,7 +24,7 @@ pub fn run() {
                     notebook_api::init_tracing();
                     let _ = notebook_api::run(ServerConfig {
                         host: "127.0.0.1".into(),
-                        port: 8787,
+                        port: 8799,
                         db_path: Some(db_path.to_string_lossy().to_string()),
                     })
                     .await;

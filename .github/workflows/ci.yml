@@ -20,6 +20,6 @@ jobs:
           ./target/release/notebook-api &
           API_PID=$!
           sleep 2
-          ./target/release/notebook --api http://127.0.0.1:8787 info
-          ./target/release/notebook --api http://127.0.0.1:8787 notebook list
+          ./target/release/notebook --api http://127.0.0.1:8799 info
+          ./target/release/notebook --api http://127.0.0.1:8799 notebook list
           kill $API_PID

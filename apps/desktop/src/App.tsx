@@ -96,7 +96,7 @@ export default function App() {
           await new Promise((r) => setTimeout(r, 200));
         }
       }
-      setError("Could not connect to Notebook API on http://127.0.0.1:8787");
+      setError("Could not connect to Notebook API on http://127.0.0.1:8799");
     })();
   }, [refreshMeta, refreshNotes]);
 

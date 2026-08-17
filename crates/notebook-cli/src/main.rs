@@ -20,7 +20,7 @@ struct Cli {
     #[arg(long, env = "NOTEBOOK_DB", global = true)]
     db: Option<PathBuf>,
 
-    /// Remote API base URL (e.g. http://127.0.0.1:8787). When set, all commands use the API.
+    /// Remote API base URL (e.g. http://127.0.0.1:8799). When set, all commands use the API.
     #[arg(long, env = "NOTEBOOK_API", default_value = "", global = true)]
     api: String,
 
