@@ -4,6 +4,11 @@ export const LIST_MIN = 220;
 export const LIST_MAX = 560;
 export const DEFAULT_SIDEBAR_WIDTH = 248;
 export const DEFAULT_LIST_WIDTH = 320;
+export const SIDEBAR_RAIL_WIDTH = 56;
+/** Dragging the splitter below this width snaps the sidebar back to the icon rail. */
+export const SIDEBAR_RAIL_SNAP = 140;
+/** Rightward drag needed on the rail before the sidebar pins itself open. */
+export const SIDEBAR_RAIL_RELEASE = 24;
 export const PANE_LAYOUT_KEY = "notebook.paneLayout";
 export const NOTE_DRAG_TYPE = "application/x-notebook-notes";
 export const NOTE_TAB_DRAG_TYPE = "application/x-notebook-tab";
@@ -67,6 +72,7 @@ export interface PaneLayout {
   listWidth: number;
   sidebarCollapsed: boolean;
   listCollapsed: boolean;
+  sidebarRail: boolean;
 }
 
 export function clampPaneWidth(value: number, min: number, max: number): number {
@@ -80,6 +86,7 @@ export function defaultPaneLayout(): PaneLayout {
     listWidth: DEFAULT_LIST_WIDTH,
     sidebarCollapsed: false,
     listCollapsed: false,
+    sidebarRail: true,
   };
 }
 
@@ -97,6 +104,7 @@ export function parsePaneLayout(raw: string | null): PaneLayout {
       listWidth: clampPaneWidth(Number(parsed.listWidth), LIST_MIN, LIST_MAX),
       sidebarCollapsed: Boolean(parsed.sidebarCollapsed),
       listCollapsed: Boolean(parsed.listCollapsed),
+      sidebarRail: parsed.sidebarRail !== false,
     };
   } catch {
     return fallback;
@@ -119,6 +127,31 @@ export function toggleNoteExpanded(layout: PaneLayout): PaneLayout {
     return { ...layout, sidebarCollapsed: false, listCollapsed: false };
   }
   return { ...layout, sidebarCollapsed: true, listCollapsed: true };
+}
+
+/** The sidebar shows the icon rail only when it is in rail mode and not fully hidden. */
+export function isSidebarRail(layout: PaneLayout): boolean {
+  return layout.sidebarRail && !layout.sidebarCollapsed;
+}
+
+export function toggleSidebarRail(layout: PaneLayout): PaneLayout {
+  return { ...layout, sidebarCollapsed: false, sidebarRail: !layout.sidebarRail };
+}
+
+export function resizeSidebar(layout: PaneLayout, delta: number): PaneLayout {
+  if (isSidebarRail(layout)) {
+    if (delta < SIDEBAR_RAIL_RELEASE) return layout;
+    return { ...layout, sidebarRail: false };
+  }
+  const width = (layout.sidebarCollapsed ? SIDEBAR_MIN : layout.sidebarWidth) + delta;
+  if (width < SIDEBAR_RAIL_SNAP) {
+    return { ...layout, sidebarCollapsed: false, sidebarRail: true };
+  }
+  return {
+    ...layout,
+    sidebarCollapsed: false,
+    sidebarWidth: clampPaneWidth(width, SIDEBAR_MIN, SIDEBAR_MAX),
+  };
 }
 
 export function countWords(text: string): number {

@@ -2,16 +2,18 @@ import { useRef } from "react";
 
 export function PaneSplitter({
   label,
+  className,
   onDrag,
 }: {
   label: string;
+  className?: string;
   onDrag: (delta: number) => void;
 }) {
   const lastX = useRef<number | null>(null);
 
   return (
     <div
-      className="pane-splitter"
+      className={className ? `pane-splitter ${className}` : "pane-splitter"}
       role="separator"
       aria-orientation="vertical"
       aria-label={label}
