@@ -824,6 +824,19 @@ export default function App() {
     return grouped;
   }, [notebooks, stacks]);
 
+  const groupedNotes = useMemo(
+    () =>
+      groupNotesForList(
+        notes,
+        prefs.sort_by === "title"
+          ? "title"
+          : prefs.sort_by === "created"
+            ? "created"
+            : "updated"
+      ),
+    [notes, prefs.sort_by]
+  );
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
@@ -954,18 +967,6 @@ export default function App() {
   const allSelectedShortcuts =
     selectedNotes.length > 0 &&
     selectedNotes.every((note) => shortcutIds.has(note.id));
-  const groupedNotes = useMemo(
-    () =>
-      groupNotesForList(
-        notes,
-        prefs.sort_by === "title"
-          ? "title"
-          : prefs.sort_by === "created"
-            ? "created"
-            : "updated"
-      ),
-    [notes, prefs.sort_by]
-  );
   const searchQuery = filter.type === "search" ? filter.query : "";
   const listView = resolveListView(prefs);
 
