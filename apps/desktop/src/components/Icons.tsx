@@ -221,4 +221,59 @@ export const Icon = {
       <path d="M12 11v5M12 8h.01" />
     </I>
   ),
+  AlignLeft: (p: IconProps) => (
+    <I {...p}>
+      <path d="M4 6h16M4 12h10M4 18h14" />
+    </I>
+  ),
+  AlignCenter: (p: IconProps) => (
+    <I {...p}>
+      <path d="M4 6h16M7 12h10M5 18h14" />
+    </I>
+  ),
+  AlignRight: (p: IconProps) => (
+    <I {...p}>
+      <path d="M4 6h16M10 12h10M6 18h14" />
+    </I>
+  ),
+  Indent: (p: IconProps) => (
+    <I {...p}>
+      <path d="M4 6h16M10 12h10M4 18h16M4 10l4 2-4 2" />
+    </I>
+  ),
+  Outdent: (p: IconProps) => (
+    <I {...p}>
+      <path d="M4 6h16M10 12h10M4 18h16M8 10l-4 2 4 2" />
+    </I>
+  ),
+  Table: (p: IconProps) => (
+    <I {...p}>
+      <rect x="4" y="5" width="16" height="14" rx="1.2" />
+      <path d="M4 10h16M4 15h16M10 5v14" />
+    </I>
+  ),
+  Color: (p: IconProps) => (
+    <I {...p}>
+      <path d="M12 4l5 8H7z" />
+      <path d="M7 18h10" />
+    </I>
+  ),
+  Snippets: (p: IconProps) => (
+    <I {...p}>
+      <path d="M6 6h12M6 12h12M6 18h8" />
+    </I>
+  ),
+  Titles: (p: IconProps) => (
+    <I {...p}>
+      <path d="M6 8h12M6 16h12" />
+    </I>
+  ),
+  Cards: (p: IconProps) => (
+    <I {...p}>
+      <rect x="4" y="5" width="7" height="6" rx="1" />
+      <rect x="13" y="5" width="7" height="6" rx="1" />
+      <rect x="4" y="13" width="7" height="6" rx="1" />
+      <rect x="13" y="13" width="7" height="6" rx="1" />
+    </I>
+  ),
 };

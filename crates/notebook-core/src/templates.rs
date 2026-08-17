@@ -198,6 +198,7 @@ pub fn default_preferences() -> serde_json::Value {
         "font_family": "default",
         "font_size": 16,
         "show_snippets": true,
+        "list_view": "snippets",
         "list_density": "comfortable",
         "sort_by": "updated",
         "new_note_behavior": "blank",

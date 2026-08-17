@@ -11,6 +11,7 @@ export interface PaneLayout {
   sidebarWidth: number;
   listWidth: number;
   sidebarCollapsed: boolean;
+  listCollapsed: boolean;
 }
 
 export function clampPaneWidth(value: number, min: number, max: number): number {
@@ -23,6 +24,7 @@ export function defaultPaneLayout(): PaneLayout {
     sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
     listWidth: DEFAULT_LIST_WIDTH,
     sidebarCollapsed: false,
+    listCollapsed: false,
   };
 }
 
@@ -39,6 +41,7 @@ export function parsePaneLayout(raw: string | null): PaneLayout {
       ),
       listWidth: clampPaneWidth(Number(parsed.listWidth), LIST_MIN, LIST_MAX),
       sidebarCollapsed: Boolean(parsed.sidebarCollapsed),
+      listCollapsed: Boolean(parsed.listCollapsed),
     };
   } catch {
     return fallback;
@@ -170,14 +173,106 @@ export const HIGHLIGHT_COLORS = [
   { id: "blue", label: "Blue", color: "#cde4ff" },
 ] as const;
 
+export const TEXT_COLORS = [
+  { id: "default", label: "Default", color: "" },
+  { id: "red", label: "Red", color: "#d64545" },
+  { id: "orange", label: "Orange", color: "#d9822b" },
+  { id: "green", label: "Green", color: "#00a82d" },
+  { id: "blue", label: "Blue", color: "#2b6cb0" },
+  { id: "purple", label: "Purple", color: "#6b46c1" },
+] as const;
+
+export type ListView = "snippets" | "titles" | "cards";
+
+export function resolveListView(prefs: {
+  list_view?: ListView | null;
+  show_snippets?: boolean;
+}): ListView {
+  if (prefs.list_view === "snippets" || prefs.list_view === "titles" || prefs.list_view === "cards") {
+    return prefs.list_view;
+  }
+  return prefs.show_snippets === false ? "titles" : "snippets";
+}
+
+export type ReminderPreset = "tonight" | "tomorrow" | "nextWeek";
+
+export function reminderFromPreset(kind: ReminderPreset, now = new Date()): string {
+  const date = new Date(now.getTime());
+  if (kind === "tonight") {
+    date.setHours(18, 0, 0, 0);
+    if (date.getTime() <= now.getTime()) date.setDate(date.getDate() + 1);
+  } else if (kind === "tomorrow") {
+    date.setDate(date.getDate() + 1);
+    date.setHours(9, 0, 0, 0);
+  } else {
+    date.setDate(date.getDate() + 7);
+    date.setHours(9, 0, 0, 0);
+  }
+  return date.toISOString();
+}
+
+export type JumpTarget = {
+  kind: "note" | "notebook" | "tag";
+  id: string;
+  title: string;
+  subtitle: string;
+};
+
+export function jumpToMatches(
+  query: string,
+  notes: { id: string; title: string; notebook_name: string }[],
+  notebooks: { id: string; name: string }[],
+  tags: { id: string; name: string }[],
+  limit = 12
+): JumpTarget[] {
+  const needle = query.trim().toLowerCase();
+  const matches = (text: string) => !needle || text.toLowerCase().includes(needle);
+  const results: JumpTarget[] = [];
+  for (const notebook of notebooks) {
+    if (matches(notebook.name)) {
+      results.push({
+        kind: "notebook",
+        id: notebook.id,
+        title: notebook.name,
+        subtitle: "Notebook",
+      });
+    }
+  }
+  for (const tag of tags) {
+    if (matches(tag.name)) {
+      results.push({
+        kind: "tag",
+        id: tag.id,
+        title: `#${tag.name}`,
+        subtitle: "Tag",
+      });
+    }
+  }
+  for (const note of notes) {
+    if (matches(note.title) || matches(note.notebook_name)) {
+      results.push({
+        kind: "note",
+        id: note.id,
+        title: note.title || "Untitled",
+        subtitle: note.notebook_name,
+      });
+    }
+  }
+  return results.slice(0, limit);
+}
+
 export type EditorCommand =
   | { type: "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll" }
   | { type: "bold" | "italic" | "underline" | "strike" | "clear" }
   | { type: "highlight"; color?: string }
-  | { type: "horizontalRule" | "insertDate" }
+  | { type: "color"; color?: string }
+  | { type: "horizontalRule" | "insertDate" | "insertTable" }
   | { type: "heading"; level: 1 | 2 | 3 }
   | { type: "bulletList" | "orderedList" | "taskList" | "blockquote" | "codeBlock" }
-  | { type: "link"; href?: string }
+  | { type: "align"; align: "left" | "center" | "right" | "justify" }
+  | { type: "indent" | "outdent" }
+  | { type: "link"; href?: string; text?: string }
+  | { type: "openLinkDialog" }
   | { type: "replace"; query: string; replacement: string; all?: boolean };
 
 export function dispatchEditorCommand(command: EditorCommand) {
