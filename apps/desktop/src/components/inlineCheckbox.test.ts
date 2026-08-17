@@ -5,6 +5,7 @@ import { checkboxShortcutKind } from "./inlineCheckbox.ts";
 
 const editorSource = readFileSync(new URL("./NoteEditor.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+const menuSource = readFileSync(new URL("../appMenus.ts", import.meta.url), "utf8");
 
 describe("checkboxShortcutKind", () => {
   it("recognizes unchecked and checked tokens", () => {
@@ -32,12 +33,12 @@ describe("note list and checkbox commands", () => {
   });
 
   it("exposes checklist, insert checkbox, quote, code, and justify in Format", () => {
-    assert.match(appSource, /label: "Checklist"/);
-    assert.match(appSource, /label: "Insert Checkbox"/);
-    assert.match(appSource, /label: "Quote"/);
-    assert.match(appSource, /label: "Code Block"/);
-    assert.match(appSource, /label: "Inline Code"/);
-    assert.match(appSource, /label: "Justify"/);
+    assert.match(menuSource, /label: "Checklist"/);
+    assert.match(menuSource, /label: "Insert Checkbox"/);
+    assert.match(menuSource, /label: "Quote"/);
+    assert.match(menuSource, /label: "Code Block"/);
+    assert.match(menuSource, /label: "Inline Code"/);
+    assert.match(menuSource, /label: "Justify"/);
     assert.equal(appSource.includes("Checkbox List"), false);
   });
 });

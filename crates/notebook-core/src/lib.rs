@@ -1,7 +1,9 @@
+pub mod datetime;
 pub mod db;
 pub mod error;
 pub mod import;
 pub mod models;
+pub mod note_query;
 pub mod search;
 pub mod service;
 pub mod templates;

@@ -20,8 +20,11 @@ import {
 } from "./components/SettingsModal";
 import { TemplateGallery } from "./components/TemplateGallery";
 import { Icon } from "./components/Icons";
-import { ContextMenu, ContextMenuEntry } from "./components/ContextMenu";
-import { MenuBar, MenuBarGroup } from "./components/MenuBar";
+import { ContextMenu } from "./components/ContextMenu";
+import { MenuBar } from "./components/MenuBar";
+import { EmptyListState } from "./components/EmptyListState";
+import { NotebookNavItem } from "./components/NotebookNavItem";
+import { PromptModal } from "./components/PromptModal";
 import { NoteInfoPanel } from "./components/NoteInfoPanel";
 import { NoteTagBar } from "./components/NoteTagBar";
 import { NoteTabBar } from "./components/NoteTabBar";
@@ -30,11 +33,23 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { JumpToDialog } from "./components/JumpToDialog";
 import { NotebookPickerDialog } from "./components/NotebookPickerDialog";
 import {
-  batchConfirmMessage,
   noteIdsInRange,
   pruneNoteIds,
   toggleNoteId,
 } from "./noteSelection";
+import {
+  applyTheme,
+  formatDate,
+  isBlankNote,
+  isTextInputFocused,
+  makeNoteTab,
+  type ContextTarget,
+  type NoteTab,
+  type PendingConfirm,
+  type RenameTarget,
+} from "./appTypes";
+import { createNoteActions } from "./noteActions";
+import { buildContextMenu, buildMenuBar, type AppMenuContext } from "./appMenus";
 import { isPdfFile, titleFromFilename } from "./components/fileAttachment";
 import {
   EDITOR_CHROME_KEY,
@@ -46,41 +61,32 @@ import {
   adjacentNoteId,
   clampPaneWidth,
   countWords,
-  createNoteTab,
   decodeNoteDrag,
   dispatchEditorCommand,
-  downloadTextFile,
-  emptyStateCopy,
   encodeNoteDrag,
   formatReminderLabel,
   fromDatetimeLocalValue,
   groupNotesForList,
-  HIGHLIGHT_COLORS,
   isReminderOverdue,
   isNoteExpanded,
   isSidebarRail,
   hasVisibleSidebarNotebooks,
   matchesSidebarFilter,
-  mergeNoteBodies,
   nextActiveTabId,
   nextSidebarFlyout,
   nextZoom,
   noteAppLink,
   noteTabLabel,
   notebooksMatchingFilter,
-  notesToEnex,
-  notesToHtmlDocument,
   parseEditorChrome,
   parsePaneLayout,
   reminderFromPreset,
   reorderById,
   resizeSidebarTo,
   resolveListView,
-  safeFilename,
   sidebarFilterLabel,
   sidebarFlyoutTitle,
   snippetParts,
-  TEXT_COLORS,
   toDatetimeLocalValue,
   toggleNoteExpanded,
   toggleNoteListHidden,
@@ -91,69 +97,6 @@ import {
   type SidebarFlyout,
   type SidebarFlyoutKind,
 } from "./uiChrome";
-
-type ContextTarget =
-  | { kind: "note"; x: number; y: number; note: NoteSummary }
-  | { kind: "notebook"; x: number; y: number; notebook: Notebook }
-  | { kind: "stack"; x: number; y: number; stack: Stack }
-  | { kind: "tag"; x: number; y: number; tag: Tag }
-  | { kind: "sidebar"; x: number; y: number };
-
-type RenameTarget =
-  | { kind: "notebook"; id: string; name: string }
-  | { kind: "stack"; id: string; name: string }
-  | { kind: "tag"; id: string; name: string };
-
-type NoteTab = {
-  id: string;
-  noteId: string | null;
-  title: string;
-  filter: ViewFilter;
-};
-
-function makeNoteTab(init?: Partial<NoteTab>): NoteTab {
-  return {
-    ...createNoteTab(init),
-    filter: init?.filter ?? { type: "all" },
-  };
-}
-
-type PendingConfirm = {
-  message: string;
-  confirmLabel?: string;
-  danger?: boolean;
-  resolve: (ok: boolean) => void;
-};
-
-function formatDate(iso: string, format: Preferences["date_format"]) {
-  const options: Intl.DateTimeFormatOptions =
-    format === "short"
-      ? { month: "numeric", day: "numeric" }
-      : format === "long"
-        ? { weekday: "short", month: "long", day: "numeric", year: "numeric" }
-        : { month: "short", day: "numeric", year: "numeric" };
-  return new Date(iso).toLocaleDateString(undefined, options);
-}
-
-function applyTheme(theme: Preferences["theme"]) {
-  const dark =
-    theme === "dark" ||
-    (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  document.documentElement.dataset.theme = dark ? "dark" : "light";
-}
-
-function isBlankNote(note: Note) {
-  const text = note.content_plain?.trim() || note.content.replace(/<[^>]+>/g, "").trim();
-  return (!note.title || note.title === "Untitled") && text.length === 0;
-}
-
-function isTextInputFocused() {
-  const el = document.activeElement;
-  if (!el) return false;
-  const tag = el.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
-  return el instanceof HTMLElement && el.isContentEditable;
-}
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -734,206 +677,47 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [activeNote?.title, activeNote?.content, prefs.auto_save_ms]);
 
-  const createBlankNote = async (notebookId?: string) => {
-    const nbId =
-      notebookId || (filter.type === "notebook" ? filter.id : defaultNotebook?.id);
-    if (!nbId) return;
-    const note = await api.createNote(nbId);
-    await refreshNotes();
-    await loadNote(note.id);
-  };
-
-  const createNote = async () => {
-    setShowNewMenu(false);
-    if (prefs.new_note_behavior === "ask") {
-      setShowGallery(true);
-      return;
-    }
-    await createBlankNote();
-  };
-
-  const useTemplate = async (templateId: string, notebookId?: string) => {
-    const nbId =
-      notebookId ||
-      (filter.type === "notebook" ? filter.id : defaultNotebook?.id);
-    const note = await api.useTemplate(templateId, nbId);
-    setShowGallery(false);
-    await refreshNotes();
-    await loadNote(note.id);
-  };
-
-  const confirm = (
-    message: string,
-    options?: { confirmLabel?: string; danger?: boolean; always?: boolean }
-  ) => {
-    if (!prefs.confirm_delete && !options?.always) return Promise.resolve(true);
-    return new Promise<boolean>((resolve) => {
-      setPendingConfirm({
-        message,
-        confirmLabel: options?.confirmLabel,
-        danger: options?.danger,
-        resolve,
-      });
-    });
-  };
-
   const selectedNotes = useMemo(
     () => notes.filter((note) => selectedNoteIds.has(note.id)),
     [notes, selectedNoteIds]
   );
 
-  const targetNoteIds = () => {
-    if (selectedNoteIds.size > 0) return [...selectedNoteIds];
-    return activeNote ? [activeNote.id] : [];
-  };
-
-  const applyToNotes = async (
-    ids: string[],
-    action: (id: string) => Promise<unknown>,
-    options?: {
-      closeActive?: boolean;
-      clearSelection?: boolean;
-      refreshMeta?: boolean;
-    }
-  ) => {
-    try {
-      for (const id of ids) {
-        await action(id);
-      }
-    } finally {
-      if (options?.closeActive && activeNote && ids.includes(activeNote.id)) {
-        setActiveNote(null);
-      }
-      if (options?.clearSelection) {
-        setSelectedNoteIds(new Set());
-        lastClickedNoteId.current = null;
-      }
-      await refreshNotes();
-      if (options?.refreshMeta) await refreshMeta();
-    }
-  };
-
-  const deleteSelectedNotes = async () => {
-    const ids = targetNoteIds();
-    if (ids.length === 0) return;
-    const inTrash = filter.type === "trash";
-    const first = notes.find((note) => note.id === ids[0]);
-    const title = first?.title || "Untitled";
-    if (inTrash) {
-      if (
-        !(await confirm(batchConfirmMessage("permanent", ids.length, title), {
-          confirmLabel: "Delete",
-          danger: true,
-        }))
-      ) {
-        return;
-      }
-      await applyToNotes(ids, (id) => api.permanentlyDeleteNote(id), {
-        closeActive: true,
-        clearSelection: true,
-      });
-      return;
-    }
-    if (
-      !(await confirm(batchConfirmMessage("trash", ids.length, title), {
-        confirmLabel: "Move to Trash",
-        danger: true,
-      }))
-    ) {
-      return;
-    }
-    await applyToNotes(ids, (id) => api.deleteNote(id), {
-      closeActive: true,
-      clearSelection: true,
-    });
-  };
-
-  const restoreSelectedNotes = async () => {
-    const ids = targetNoteIds();
-    if (ids.length === 0) return;
-    await applyToNotes(ids, (id) => api.restoreNote(id), {
-      closeActive: true,
-      clearSelection: true,
-    });
-  };
-
-  const moveSelectedNotes = async (notebookId: string) => {
-    const ids = targetNoteIds();
-    if (ids.length === 0) return;
-    await applyToNotes(ids, async (id) => {
-      const updated = await api.updateNote(id, { notebook_id: notebookId });
-      if (activeNote?.id === id) setActiveNote(updated);
-    });
-    setNotebookPicker(null);
-  };
-
-  const pinSelectedNotes = async (pinned: boolean) => {
-    const ids = targetNoteIds();
-    if (ids.length === 0) return;
-    await applyToNotes(ids, async (id) => {
-      const updated = await api.updateNote(id, { is_pinned: pinned });
-      if (activeNote?.id === id) setActiveNote(updated);
-    });
-  };
-
-  const archiveSelectedNotes = async (archived: boolean) => {
-    const ids = targetNoteIds();
-    if (ids.length === 0) return;
-    await applyToNotes(ids, async (id) => {
-      const updated = await api.updateNote(id, { is_archived: archived });
-      if (activeNote?.id === id) setActiveNote(updated);
-    });
-  };
-
-  const shortcutSelectedNotes = async (add: boolean) => {
-    const ids = targetNoteIds();
-    if (ids.length === 0) return;
-    await applyToNotes(
-      ids,
-      (id) => (add ? api.addShortcut(id) : api.removeShortcut(id)),
-      { refreshMeta: true }
-    );
-  };
-
-  const duplicateSelectedNotes = async () => {
-    const ids = targetNoteIds();
-    if (ids.length === 0) return;
-    let lastId: string | null = null;
-    for (const id of ids) {
-      const source = await api.getNote(id);
-      const duplicate = await api.createNote(source.notebook_id, {
-        title: `${source.title || "Untitled"} copy`,
-        content: source.content,
-        tag_ids: source.tag_ids,
-        is_template: source.is_template,
-        template_category: source.template_category || undefined,
-      });
-      lastId = duplicate.id;
-    }
-    await refreshNotes();
-    if (lastId) await loadNote(lastId);
-  };
-
-  const copySelectedNotes = async (notebookId: string) => {
-    const ids = targetNoteIds();
-    if (ids.length === 0) return;
-    let lastId: string | null = null;
-    for (const id of ids) {
-      const source = await api.getNote(id);
-      const copy = await api.createNote(notebookId, {
-        title: source.title,
-        content: source.content,
-        tag_ids: source.tag_ids,
-        is_template: source.is_template,
-        template_category: source.template_category || undefined,
-      });
-      lastId = copy.id;
-    }
-    setNotebookPicker(null);
-    await refreshNotes();
-    await refreshMeta();
-    if (lastId) await loadNote(lastId);
-  };
+  const {
+    confirm,
+    targetNoteIds,
+    applyToNotes,
+    createBlankNote,
+    createNote,
+    useTemplate,
+    deleteSelectedNotes,
+    restoreSelectedNotes,
+    moveSelectedNotes,
+    pinSelectedNotes,
+    archiveSelectedNotes,
+    shortcutSelectedNotes,
+    duplicateSelectedNotes,
+    copySelectedNotes,
+    mergeSelectedNotes,
+    exportSelectedNotes,
+  } = createNoteActions({
+    api,
+    notes,
+    selectedNoteIds,
+    activeNote,
+    filter,
+    prefs,
+    defaultNotebookId: defaultNotebook?.id,
+    lastClickedNoteId,
+    setActiveNote,
+    setSelectedNoteIds,
+    setPendingConfirm,
+    setNotebookPicker,
+    setShowGallery,
+    setShowNewMenu,
+    refreshNotes,
+    refreshMeta,
+    loadNote,
+  });
 
   const setReminderPreset = async (kind: ReminderPreset | "clear") => {
     if (!activeNote) return;
@@ -947,76 +731,6 @@ export default function App() {
     const show_snippets = list_view !== "titles";
     setPrefs((current) => ({ ...current, list_view, show_snippets }));
     void api.updateSettings({ list_view, show_snippets });
-  };
-
-  const mergeSelectedNotes = async () => {
-    const ids = targetNoteIds();
-    if (ids.length < 2) return;
-    const first = notes.find((note) => note.id === ids[0]);
-    const title = first?.title || "Untitled";
-    if (
-      !(await confirm(
-        `Merge ${ids.length} notes into “${title}”? The other notes will move to Trash.`,
-        { confirmLabel: "Merge", danger: true, always: true }
-      ))
-    ) {
-      return;
-    }
-    const full: Note[] = [];
-    for (const id of ids) {
-      full.push(await api.getNote(id));
-    }
-    const [keep, ...rest] = full;
-    if (!keep) return;
-    const content = mergeNoteBodies(full);
-    const tagIds = [...new Set(full.flatMap((note) => note.tag_ids))];
-    await api.updateNote(keep.id, { content, tag_ids: tagIds });
-    for (const note of rest) {
-      await api.deleteNote(note.id);
-    }
-    setActiveNote(null);
-    setSelectedNoteIds(new Set([keep.id]));
-    lastClickedNoteId.current = keep.id;
-    await refreshNotes();
-    await refreshMeta();
-    await loadNote(keep.id);
-  };
-
-  const exportSelectedNotes = async (format: "html" | "enex") => {
-    const ids = targetNoteIds();
-    if (!ids.length) return;
-    const full: Note[] = [];
-    for (const id of ids) {
-      full.push(await api.getNote(id));
-    }
-    if (format === "html") {
-      if (full.length === 1) {
-        downloadTextFile(
-          `${safeFilename(full[0].title)}.html`,
-          notesToHtmlDocument(full[0].title, full[0].content),
-          "text/html"
-        );
-        return;
-      }
-      const html = full
-        .map((note) => notesToHtmlDocument(note.title, note.content))
-        .join("\n");
-      downloadTextFile("notes.html", html, "text/html");
-      return;
-    }
-    downloadTextFile(
-      full.length === 1 ? `${safeFilename(full[0].title)}.enex` : "notes.enex",
-      notesToEnex(
-        full.map((note) => ({
-          title: note.title,
-          content: note.content,
-          created_at: note.created_at,
-          updated_at: note.updated_at,
-          tag_names: note.tag_names,
-        }))
-      ),
-      "application/xml"
-    );
   };
 
   const printActiveNote = () => window.print();
@@ -1310,880 +1024,136 @@ export default function App() {
     setNewName(target.name);
   };
 
-  const contextMenuItems = (target: ContextTarget): ContextMenuEntry[] => {
-    if (target.kind === "sidebar") {
-      return [
-        {
-          label: "New note",
-          shortcut: "Ctrl/⌘ N",
-          onSelect: () => void createNote(),
-        },
-        {
-          label: "New notebook…",
-          onSelect: () => {
-            setNewNotebookStackId(null);
-            setNewName("");
-            setShowNewNotebook(true);
-          },
-        },
-        {
-          label: "New stack…",
-          onSelect: openNewStack,
-        },
-        {
-          label: "New tag…",
-          onSelect: () => {
-            setNewName("");
-            setShowNewTag(true);
-          },
-        },
-        { type: "separator" },
-        {
-          label: "Settings…",
-          shortcut: "Ctrl/⌘ ,",
-          onSelect: () => openSettings(),
-        },
-      ];
-    }
-
-    if (target.kind === "note") {
-      const targets =
-        selectedNoteIds.size > 1 && selectedNoteIds.has(target.note.id)
-          ? selectedNotes
-          : [target.note];
-      const ids = targets.map((note) => note.id);
-      const count = targets.length;
-      const inTrash = filter.type === "trash";
-      const allShortcuts = targets.every((note) => shortcutIds.has(note.id));
-      const allPinned = targets.every((note) => note.is_pinned);
-      const allArchived = targets.every((note) => note.is_archived);
-      const allTemplates = targets.every((note) => note.is_template);
-
-      if (inTrash) {
-        return [
-          {
-            label: count > 1 ? `Restore ${count} notes` : "Restore note",
-            onSelect: () => void restoreSelectedNotes(),
-          },
-          { type: "separator" },
-          {
-            label: count > 1 ? `Delete ${count} notes permanently` : "Delete permanently",
-            danger: true,
-            shortcut: "Delete",
-            onSelect: () => void deleteSelectedNotes(),
-          },
-        ];
+  const menuCtx: AppMenuContext = {
+    filter,
+    selectedNoteIds,
+    selectedNotes,
+    shortcutIds,
+    stacks,
+    notes,
+    activeNote,
+    activeTabId,
+    paneLayout,
+    editorChrome,
+    prefs,
+    showInfo,
+    focusMode,
+    isShortcut,
+    allSelectedPinned,
+    allSelectedArchived,
+    allSelectedShortcuts,
+    targetNoteIds,
+    createNote,
+    createBlankNote,
+    openNewStack,
+    openRename,
+    openSettings,
+    openNewTab,
+    openInNewTab,
+    closeTab,
+    loadNote,
+    setNewNotebookStackId,
+    setNewName,
+    setShowNewNotebook,
+    setShowNewTag,
+    setShowGallery,
+    setNotebookPicker,
+    setShowInfo,
+    setShowJump,
+    setFindTick,
+    setReplaceTick,
+    setFocusMode,
+    setFilter,
+    setSidebarFlyout,
+    setSelectedNoteIds,
+    setShowReminderMenu,
+    setPrefs,
+    setActiveNote,
+    persistPaneLayout,
+    persistEditorChrome,
+    revealSidebarFlyout,
+    restoreSelectedNotes,
+    deleteSelectedNotes,
+    shortcutSelectedNotes,
+    pinSelectedNotes,
+    duplicateSelectedNotes,
+    mergeSelectedNotes,
+    exportSelectedNotes,
+    archiveSelectedNotes,
+    updateNoteById,
+    refreshMeta,
+    refreshNotes,
+    confirm,
+    printActiveNote,
+    copyActiveNoteLink,
+    setListView,
+    importNotes: () => importRef.current?.click(),
+    setNotebookDefault: async (notebook) => {
+      await api.updateNotebook(notebook.id, { is_default: true });
+      const next = await api.updateSettings({
+        default_notebook_id: notebook.id,
+      });
+      setPrefs({ ...defaultPreferences, ...next });
+      await refreshMeta();
+    },
+    setNotebookStack: async (notebookId, stackId) => {
+      await api.updateNotebook(notebookId, { stack_id: stackId });
+      await refreshMeta();
+    },
+    deleteNotebook: async (notebook) => {
+      if (
+        !(await confirm(
+          `Delete “${notebook.name}”? Notes in this notebook will move to Trash.`,
+          { confirmLabel: "Delete", danger: true }
+        ))
+      ) {
+        return;
       }
-
-      return [
-        ...(count === 1
-          ? [
-              { label: "Open note", onSelect: () => void loadNote(targets[0].id) },
-              {
-                label: "Open in New Tab",
-                onSelect: () => void openInNewTab(targets[0].id),
-              },
-            ]
-          : []),
-        {
-          label: allShortcuts
-            ? count > 1
-              ? `Remove ${count} from shortcuts`
-              : "Remove from shortcuts"
-            : count > 1
-              ? `Add ${count} to shortcuts`
-              : "Add to shortcuts",
-          onSelect: () => void shortcutSelectedNotes(!allShortcuts),
-        },
-        {
-          label: allPinned
-            ? count > 1
-              ? `Unpin ${count} notes`
-              : "Unpin from top"
-            : count > 1
-              ? `Pin ${count} notes`
-              : "Pin to top",
-          onSelect: () => void pinSelectedNotes(!allPinned),
-        },
-        {
-          label: "Move to notebook…",
-          onSelect: () => setNotebookPicker("move"),
-        },
-        {
-          label: count > 1 ? `Duplicate ${count} notes` : "Duplicate note",
-          onSelect: () => void duplicateSelectedNotes(),
-        },
-        {
-          label: "Copy to notebook…",
-          onSelect: () => setNotebookPicker("copy"),
-        },
-        ...(count > 1
-          ? [
-              {
-                label: `Merge ${count} notes`,
-                onSelect: () => void mergeSelectedNotes(),
-              },
-            ]
-          : []),
-        {
-          label: count > 1 ? "Export notes as HTML" : "Export as HTML",
-          onSelect: () => void exportSelectedNotes("html"),
-        },
-        {
-          label: count > 1 ? "Export notes as Evernote XML" : "Export as Evernote XML",
-          onSelect: () => void exportSelectedNotes("enex"),
-        },
-        ...(count === 1
-          ? [
-              {
-                label: "Copy note link",
-                onSelect: () =>
-                  void navigator.clipboard.writeText(noteAppLink(targets[0].id)),
-              },
-              {
-                label: "Note info",
-                onSelect: () => {
-                  void loadNote(targets[0].id);
-                  setShowInfo(true);
-                },
-              },
-            ]
-          : []),
-        { type: "separator" },
-        ...(count === 1
-          ? [
-              {
-                label: allTemplates ? "Convert to note" : "Save as template",
-                onSelect: async () => {
-                  await updateNoteById(ids[0], {
-                    is_template: !allTemplates,
-                    template_category: allTemplates ? null : "My templates",
-                  });
-                  await refreshMeta();
-                },
-              },
-            ]
-          : []),
-        {
-          label: allArchived
-            ? count > 1
-              ? `Unarchive ${count} notes`
-              : "Unarchive note"
-            : count > 1
-              ? `Archive ${count} notes`
-              : "Archive note",
-          onSelect: () => void archiveSelectedNotes(!allArchived),
-        },
-        { type: "separator" },
-        {
-          label: count > 1 ? `Move ${count} notes to trash` : "Move to trash",
+      await api.deleteNotebook(notebook.id);
+      if (filter.type === "notebook" && filter.id === notebook.id) {
+        setFilter({ type: "all" });
+      }
+      setActiveNote(null);
+      await refreshMeta();
+      await refreshNotes();
+    },
+    deleteStack: async (stack) => {
+      if (
+        !(await confirm(
+          `Delete “${stack.name}”? Its notebooks and notes will be kept.`,
+          { confirmLabel: "Delete", danger: true }
+        ))
+      ) {
+        return;
+      }
+      await api.deleteStack(stack.id);
+      await refreshMeta();
+    },
+    deleteTag: async (tag) => {
+      if (
+        !(await confirm(`Delete the tag “${tag.name}”?`, {
+          confirmLabel: "Delete",
           danger: true,
-          shortcut: "Delete",
-          onSelect: () => void deleteSelectedNotes(),
-        },
-      ];
-    }
-
-    if (target.kind === "notebook") {
-      const { notebook } = target;
-      return [
-        {
-          label: "New note in this notebook",
-          onSelect: () => void createBlankNote(notebook.id),
-        },
-        {
-          label: "Rename notebook…",
-          onSelect: () =>
-            openRename({
-              kind: "notebook",
-              id: notebook.id,
-              name: notebook.name,
-            }),
-        },
-        {
-          label: "Set as default notebook",
-          checked: notebook.is_default,
-          disabled: notebook.is_default,
-          onSelect: async () => {
-            await api.updateNotebook(notebook.id, { is_default: true });
-            const next = await api.updateSettings({
-              default_notebook_id: notebook.id,
-            });
-            setPrefs({ ...defaultPreferences, ...next });
-            await refreshMeta();
-          },
-        },
-        {
-          label: "Move to stack",
-          children: [
-            {
-              label: "No stack",
-              checked: notebook.stack_id === null,
-              disabled: notebook.stack_id === null,
-              onSelect: () =>
-                void api
-                  .updateNotebook(notebook.id, { stack_id: null })
-                  .then(refreshMeta),
-            },
-            { type: "separator" },
-            ...stacks.map((stack) => ({
-              label: stack.name,
-              checked: notebook.stack_id === stack.id,
-              disabled: notebook.stack_id === stack.id,
-              onSelect: () =>
-                void api
-                  .updateNotebook(notebook.id, { stack_id: stack.id })
-                  .then(refreshMeta),
-            })),
-          ],
-        },
-        { type: "separator" },
-        {
-          label: "Delete notebook",
-          danger: true,
-          disabled: notebook.is_default,
-          onSelect: async () => {
-            if (
-              !(await confirm(
-                `Delete “${notebook.name}”? Notes in this notebook will move to Trash.`,
-                { confirmLabel: "Delete", danger: true }
-              ))
-            ) {
-              return;
-            }
-            await api.deleteNotebook(notebook.id);
-            if (filter.type === "notebook" && filter.id === notebook.id) {
-              setFilter({ type: "all" });
-            }
-            setActiveNote(null);
-            await refreshMeta();
-            await refreshNotes();
-          },
-        },
-      ];
-    }
-
-    if (target.kind === "stack") {
-      const { stack } = target;
-      return [
-        {
-          label: "New notebook in this stack…",
-          onSelect: () => {
-            setNewNotebookStackId(stack.id);
-            setNewName("");
-            setShowNewNotebook(true);
-          },
-        },
-        {
-          label: "Rename stack…",
-          onSelect: () =>
-            openRename({ kind: "stack", id: stack.id, name: stack.name }),
-        },
-        { type: "separator" },
-        {
-          label: "Delete stack",
-          danger: true,
-          onSelect: async () => {
-            if (
-              !(await confirm(
-                `Delete “${stack.name}”? Its notebooks and notes will be kept.`,
-                { confirmLabel: "Delete", danger: true }
-              ))
-            ) {
-              return;
-            }
-            await api.deleteStack(stack.id);
-            await refreshMeta();
-          },
-        },
-      ];
-    }
-
-    const { tag } = target;
-    return [
-      {
-        label: "Show notes with this tag",
-        onSelect: () => setFilter({ type: "tag", id: tag.id, name: tag.name }),
-      },
-      {
-        label: "Rename tag…",
-        onSelect: () =>
-          openRename({ kind: "tag", id: tag.id, name: tag.name }),
-      },
-      { type: "separator" },
-      {
-        label: "Delete tag",
-        danger: true,
-        onSelect: async () => {
-          if (
-            !(await confirm(`Delete the tag “${tag.name}”?`, {
-              confirmLabel: "Delete",
-              danger: true,
-            }))
-          ) {
-            return;
-          }
-          await api.deleteTag(tag.id);
-          if (filter.type === "tag" && filter.id === tag.id) {
-            setFilter({ type: "all" });
-          }
-          await refreshMeta();
-          await refreshNotes();
-        },
-      },
-    ];
+        }))
+      ) {
+        return;
+      }
+      await api.deleteTag(tag.id);
+      if (filter.type === "tag" && filter.id === tag.id) {
+        setFilter({ type: "all" });
+      }
+      await refreshMeta();
+      await refreshNotes();
+    },
+    restoreTemplates: () => void api.restoreTemplates().then(refreshMeta),
+    toggleTheme: () => {
+      const theme = prefs.theme === "dark" ? "light" : "dark";
+      setPrefs((current) => ({ ...current, theme }));
+      void api.updateSettings({ theme });
+    },
   };
-
-  const runEditorCommand = (
-    command: Parameters<typeof dispatchEditorCommand>[0]
-  ) => {
-    dispatchEditorCommand(command);
-  };
-
-  const menuGroups: MenuBarGroup[] = [
-    {
-      label: "File",
-      items: [
-        { label: "New Note", shortcut: "Ctrl/⌘ N", onSelect: () => void createNote() },
-        {
-          label: "New Note from Template…",
-          shortcut: "Ctrl/⌘ ⇧ N",
-          onSelect: () => setShowGallery(true),
-        },
-        {
-          label: "New Tab",
-          shortcut: "Ctrl/⌘ ⇧ T",
-          onSelect: () => openNewTab(),
-        },
-        {
-          label: "Open in New Tab",
-          shortcut: "Ctrl/⌘ Alt O",
-          disabled: !activeNote,
-          onSelect: () => {
-            if (activeNote) void openInNewTab(activeNote.id);
-          },
-        },
-        {
-          label: "Close Tab",
-          shortcut: "Ctrl/⌘ W",
-          onSelect: () => closeTab(activeTabId),
-        },
-        { type: "separator" },
-        {
-          label: "New Notebook…",
-          onSelect: () => {
-            setNewNotebookStackId(null);
-            setNewName("");
-            setShowNewNotebook(true);
-          },
-        },
-        {
-          label: "New Stack…",
-          onSelect: openNewStack,
-        },
-        { type: "separator" },
-        {
-          label: "Import Notes…",
-          onSelect: () => importRef.current?.click(),
-        },
-        {
-          label: "Export as HTML…",
-          disabled: targetNoteIds().length === 0,
-          onSelect: () => void exportSelectedNotes("html"),
-        },
-        {
-          label: "Export as Evernote XML…",
-          disabled: targetNoteIds().length === 0,
-          onSelect: () => void exportSelectedNotes("enex"),
-        },
-        {
-          label: "Print…",
-          shortcut: "Ctrl/⌘ P",
-          disabled: !activeNote,
-          onSelect: printActiveNote,
-        },
-        {
-          label: "Copy Note Link",
-          disabled: !activeNote,
-          onSelect: () => void copyActiveNoteLink(),
-        },
-        { type: "separator" },
-        {
-          label: "Settings…",
-          shortcut: "Ctrl/⌘ ,",
-          onSelect: () => openSettings(),
-        },
-      ],
-    },
-    {
-      label: "Edit",
-      items: [
-        { label: "Undo", shortcut: "Ctrl/⌘ Z", onSelect: () => runEditorCommand({ type: "undo" }) },
-        {
-          label: "Redo",
-          shortcut: "Ctrl/⌘ ⇧ Z",
-          onSelect: () => runEditorCommand({ type: "redo" }),
-        },
-        { type: "separator" },
-        { label: "Cut", shortcut: "Ctrl/⌘ X", onSelect: () => runEditorCommand({ type: "cut" }) },
-        { label: "Copy", shortcut: "Ctrl/⌘ C", onSelect: () => runEditorCommand({ type: "copy" }) },
-        { label: "Paste", shortcut: "Ctrl/⌘ V", onSelect: () => runEditorCommand({ type: "paste" }) },
-        { type: "separator" },
-        {
-          label: "Select All",
-          shortcut: "Ctrl/⌘ A",
-          onSelect: () => {
-            if (isTextInputFocused()) {
-              runEditorCommand({ type: "selectAll" });
-              return;
-            }
-            setSelectedNoteIds(new Set(notes.map((n) => n.id)));
-          },
-        },
-        {
-          label: "Find…",
-          shortcut: "Ctrl/⌘ F",
-          disabled: !activeNote,
-          onSelect: () => setFindTick((tick) => tick + 1),
-        },
-        {
-          label: "Find and Replace…",
-          shortcut: "Ctrl/⌘ H",
-          disabled: !activeNote,
-          onSelect: () => setReplaceTick((tick) => tick + 1),
-        },
-      ],
-    },
-    {
-      label: "View",
-      items: [
-        { label: "All Notes", onSelect: () => { setSidebarFlyout(null); setFilter({ type: "all" }); } },
-        { label: "Shortcuts", onSelect: () => { revealSidebarFlyout("shortcuts"); setFilter({ type: "shortcuts" }); } },
-        { label: "Notebooks", onSelect: () => revealSidebarFlyout("notebooks") },
-        { label: "Tags", onSelect: () => revealSidebarFlyout("tags") },
-        { label: "Reminders", onSelect: () => { setSidebarFlyout(null); setFilter({ type: "reminders" }); } },
-        { label: "Templates", onSelect: () => { setSidebarFlyout(null); setFilter({ type: "templates" }); } },
-        { type: "separator" },
-        {
-          label: paneLayout.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar",
-          onSelect: () =>
-            persistPaneLayout({
-              ...paneLayout,
-              sidebarCollapsed: !paneLayout.sidebarCollapsed,
-            }),
-        },
-        {
-          label: paneLayout.sidebarRail ? "Pin Sidebar Open" : "Collapse Sidebar to Icons",
-          shortcut: "Ctrl/⌘ Alt S",
-          onSelect: () => persistPaneLayout(toggleSidebarRail(paneLayout)),
-        },
-        {
-          label: paneLayout.listCollapsed ? "Show Note List" : "Hide Note List",
-          shortcut: "Ctrl/⌘ Alt ←",
-          onSelect: () => persistPaneLayout(toggleNoteListHidden(paneLayout)),
-        },
-        {
-          label: isNoteExpanded(paneLayout) ? "Restore Panes" : "Expand Note",
-          shortcut: "Ctrl/⌘ Alt →",
-          onSelect: () => persistPaneLayout(toggleNoteExpanded(paneLayout)),
-        },
-        {
-          label: editorChrome.toolbarHidden
-            ? "Show Formatting Toolbar"
-            : "Hide Formatting Toolbar",
-          disabled: !activeNote,
-          onSelect: () =>
-            persistEditorChrome({
-              ...editorChrome,
-              toolbarHidden: !editorChrome.toolbarHidden,
-            }),
-        },
-        {
-          label: editorChrome.attachmentsExpanded
-            ? "Hide Attachments"
-            : "Show Attachments",
-          disabled: !activeNote,
-          onSelect: () =>
-            persistEditorChrome({
-              ...editorChrome,
-              attachmentsExpanded: !editorChrome.attachmentsExpanded,
-            }),
-        },
-        {
-          label: showInfo ? "Hide Note Info" : "Show Note Info",
-          disabled: !activeNote,
-          shortcut: "Ctrl/⌘ ⇧ I",
-          onSelect: () => setShowInfo((open) => !open),
-        },
-        {
-          label: focusMode ? "Exit Focus Mode" : "Enter Focus Mode",
-          shortcut: "F11",
-          onSelect: () => setFocusMode((open) => !open),
-        },
-        { type: "separator" },
-        {
-          label: "Jump to…",
-          shortcut: "Ctrl/⌘ J",
-          onSelect: () => setShowJump(true),
-        },
-        {
-          label: "Snippets View",
-          onSelect: () => setListView("snippets"),
-        },
-        {
-          label: "Titles View",
-          onSelect: () => setListView("titles"),
-        },
-        {
-          label: "Cards View",
-          onSelect: () => setListView("cards"),
-        },
-        { type: "separator" },
-        {
-          label: "Zoom In",
-          shortcut: "Ctrl/⌘ +",
-          disabled: !activeNote,
-          onSelect: () =>
-            persistEditorChrome({
-              ...editorChrome,
-              zoom: nextZoom(editorChrome.zoom, 1),
-            }),
-        },
-        {
-          label: "Zoom Out",
-          shortcut: "Ctrl/⌘ -",
-          disabled: !activeNote,
-          onSelect: () =>
-            persistEditorChrome({
-              ...editorChrome,
-              zoom: nextZoom(editorChrome.zoom, -1),
-            }),
-        },
-        {
-          label: "Actual Size",
-          shortcut: "Ctrl/⌘ 0",
-          disabled: !activeNote || editorChrome.zoom === 100,
-          onSelect: () =>
-            persistEditorChrome({
-              ...editorChrome,
-              zoom: nextZoom(editorChrome.zoom, 0),
-            }),
-        },
-        { type: "separator" },
-        {
-          label: prefs.theme === "dark" ? "Use Light Theme" : "Use Dark Theme",
-          onSelect: () => {
-            const theme = prefs.theme === "dark" ? "light" : "dark";
-            setPrefs((current) => ({ ...current, theme }));
-            void api.updateSettings({ theme });
-          },
-        },
-      ],
-    },
-    {
-      label: "Note",
-      items: [
-        {
-          label:
-            selectedNoteIds.size > 1
-              ? allSelectedPinned
-                ? `Unpin ${selectedNoteIds.size} Notes`
-                : `Pin ${selectedNoteIds.size} Notes`
-              : activeNote?.is_pinned
-                ? "Unpin Note"
-                : "Pin Note",
-          disabled: targetNoteIds().length === 0,
-          onSelect: () => {
-            void pinSelectedNotes(
-              selectedNoteIds.size > 1 ? !allSelectedPinned : !activeNote?.is_pinned
-            );
-          },
-        },
-        {
-          label:
-            selectedNoteIds.size > 1
-              ? allSelectedShortcuts
-                ? `Remove ${selectedNoteIds.size} from Shortcuts`
-                : `Add ${selectedNoteIds.size} to Shortcuts`
-              : isShortcut
-                ? "Remove from Shortcuts"
-                : "Add to Shortcuts",
-          disabled: targetNoteIds().length === 0,
-          onSelect: () => void shortcutSelectedNotes(
-              selectedNoteIds.size > 1 ? !allSelectedShortcuts : !isShortcut
-            ),
-        },
-        {
-          label: "Note Info",
-          shortcut: "Ctrl/⌘ ⇧ I",
-          disabled: !activeNote,
-          onSelect: () => setShowInfo(true),
-        },
-        {
-          label: "Find in Note",
-          shortcut: "Ctrl/⌘ F",
-          disabled: !activeNote,
-          onSelect: () => setFindTick((tick) => tick + 1),
-        },
-        {
-          label: "Move to Notebook…",
-          disabled: targetNoteIds().length === 0 || filter.type === "trash",
-          onSelect: () => setNotebookPicker("move"),
-        },
-        {
-          label: "Copy to Notebook…",
-          disabled: targetNoteIds().length === 0 || filter.type === "trash",
-          onSelect: () => setNotebookPicker("copy"),
-        },
-        {
-          label: "Set Reminder",
-          disabled: !activeNote,
-          onSelect: () => setShowReminderMenu(true),
-        },
-        {
-          label: `Merge ${selectedNoteIds.size} Notes`,
-          disabled: selectedNoteIds.size < 2,
-          onSelect: () => void mergeSelectedNotes(),
-        },
-        {
-          label:
-            selectedNoteIds.size > 1
-              ? allSelectedArchived
-                ? `Unarchive ${selectedNoteIds.size} Notes`
-                : `Archive ${selectedNoteIds.size} Notes`
-              : activeNote?.is_archived
-                ? "Unarchive Note"
-                : "Archive Note",
-          disabled: targetNoteIds().length === 0,
-          onSelect: () => {
-            void archiveSelectedNotes(
-              selectedNoteIds.size > 1
-                ? !allSelectedArchived
-                : !activeNote?.is_archived
-            );
-          },
-        },
-        { type: "separator" },
-        ...(filter.type === "trash"
-          ? [
-              {
-                label:
-                  selectedNoteIds.size > 1
-                    ? `Restore ${selectedNoteIds.size} Notes`
-                    : "Restore Note",
-                disabled: targetNoteIds().length === 0,
-                onSelect: () => void restoreSelectedNotes(),
-              },
-              {
-                label:
-                  selectedNoteIds.size > 1
-                    ? `Delete ${selectedNoteIds.size} Notes Permanently`
-                    : "Delete Note Permanently",
-                disabled: targetNoteIds().length === 0,
-                onSelect: () => void deleteSelectedNotes(),
-              },
-            ]
-          : [
-              {
-                label:
-                  selectedNoteIds.size > 1
-                    ? `Move ${selectedNoteIds.size} Notes to Trash`
-                    : "Move Note to Trash",
-                disabled: targetNoteIds().length === 0,
-                onSelect: () => void deleteSelectedNotes(),
-              },
-            ]),
-      ],
-    },
-    {
-      label: "Format",
-      items: [
-        {
-          label: "Heading 1",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "heading", level: 1 }),
-        },
-        {
-          label: "Heading 2",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "heading", level: 2 }),
-        },
-        {
-          label: "Heading 3",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "heading", level: 3 }),
-        },
-        { type: "separator" },
-        {
-          label: "Bold",
-          shortcut: "Ctrl/⌘ B",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "bold" }),
-        },
-        {
-          label: "Italic",
-          shortcut: "Ctrl/⌘ I",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "italic" }),
-        },
-        {
-          label: "Underline",
-          shortcut: "Ctrl/⌘ U",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "underline" }),
-        },
-        {
-          label: "Strikethrough",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "strike" }),
-        },
-        { type: "separator" },
-        ...HIGHLIGHT_COLORS.map((swatch) => ({
-          label: `Highlight ${swatch.label}`,
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "highlight", color: swatch.color }),
-        })),
-        { type: "separator" },
-        ...TEXT_COLORS.filter((swatch) => swatch.color).map((swatch) => ({
-          label: `Text ${swatch.label}`,
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "color", color: swatch.color }),
-        })),
-        {
-          label: "Remove Text Color",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "color" }),
-        },
-        { type: "separator" },
-        {
-          label: "Align Left",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "align", align: "left" }),
-        },
-        {
-          label: "Align Center",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "align", align: "center" }),
-        },
-        {
-          label: "Align Right",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "align", align: "right" }),
-        },
-        {
-          label: "Justify",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "align", align: "justify" }),
-        },
-        {
-          label: "Increase Indent",
-          shortcut: "Tab",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "indent" }),
-        },
-        {
-          label: "Decrease Indent",
-          shortcut: "⇧ Tab",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "outdent" }),
-        },
-        { type: "separator" },
-        {
-          label: "Insert Table",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "insertTable" }),
-        },
-        {
-          label: "Insert Link…",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "openLinkDialog" }),
-        },
-        { type: "separator" },
-        {
-          label: "Bulleted List",
-          shortcut: "Ctrl/⌘ ⇧ L",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "bulletList" }),
-        },
-        {
-          label: "Numbered List",
-          shortcut: "Ctrl/⌘ ⇧ O",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "orderedList" }),
-        },
-        {
-          label: "Checklist",
-          shortcut: "Ctrl/⌘ ⇧ C",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "taskList" }),
-        },
-        {
-          label: "Insert Checkbox",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "inlineCheckbox" }),
-        },
-        { type: "separator" },
-        {
-          label: "Quote",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "blockquote" }),
-        },
-        {
-          label: "Code Block",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "codeBlock" }),
-        },
-        {
-          label: "Inline Code",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "inlineCode" }),
-        },
-        {
-          label: "Horizontal Rule",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "horizontalRule" }),
-        },
-        {
-          label: "Insert Date and Time",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "insertDate" }),
-        },
-        { type: "separator" },
-        {
-          label: "Remove Formatting",
-          disabled: !activeNote,
-          onSelect: () => runEditorCommand({ type: "clear" }),
-        },
-      ],
-    },
-    {
-      label: "Tools",
-      items: [
-        {
-          label: "Import from Evernote…",
-          onSelect: () => importRef.current?.click(),
-        },
-        {
-          label: "Restore Built-in Templates",
-          onSelect: () => void api.restoreTemplates().then(refreshMeta),
-        },
-      ],
-    },
-    {
-      label: "Help",
-      items: [
-        {
-          label: "Keyboard Shortcuts",
-          shortcut: "Ctrl/⌘ /",
-          onSelect: () => openSettings("shortcuts"),
-        },
-        {
-          label: "About Notebook",
-          onSelect: () => openSettings("about"),
-        },
-      ],
-    },
-  ];
+  const contextMenuItems = (target: ContextTarget) => buildContextMenu(target, menuCtx);
+  const menuGroups = buildMenuBar(menuCtx);
 
   const sidebarRail = isSidebarRail(paneLayout);
 
@@ -3663,143 +2633,6 @@ export default function App() {
           onClose={() => setContextMenu(null)}
         />
       )}
-    </div>
-  );
-}
-
-function PromptModal({
-  title,
-  submitLabel = "Create",
-  value,
-  onChange,
-  onCancel,
-  onSubmit,
-}: {
-  title: string;
-  submitLabel?: string;
-  value: string;
-  onChange: (v: string) => void;
-  onCancel: () => void;
-  onSubmit: () => void;
-}) {
-  return (
-    <div className="modal-backdrop" onMouseDown={onCancel}>
-      <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
-        <h3>{title}</h3>
-        <input
-          autoFocus
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && value && onSubmit()}
-        />
-        <div className="modal-actions">
-          <button onClick={onCancel}>Cancel</button>
-          <button className="primary-btn" disabled={!value.trim()} onClick={onSubmit}>
-            {submitLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function NotebookNavItem({
-  notebook,
-  active,
-  isDropTarget,
-  onSelect,
-  onDragOver,
-  onDragLeave,
-  onDrop,
-  onContextMenu,
-}: {
-  notebook: Notebook;
-  active: boolean;
-  isDropTarget: boolean;
-  onSelect: () => void;
-  onDragOver: (event: DragEvent) => void;
-  onDragLeave: () => void;
-  onDrop: (event: DragEvent) => void;
-  onContextMenu: (event: MouseEvent) => void;
-}) {
-  return (
-    <button
-      className={
-        (active ? "nav-item active indent" : "nav-item indent") +
-        (isDropTarget ? " drop-target" : "")
-      }
-      onClick={onSelect}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-      onContextMenu={onContextMenu}
-    >
-      <span className="nav-item-text">
-        {notebook.name}
-        {notebook.is_default ? (
-          <span className="default-notebook-star" title="Default notebook">
-            <Icon.Shortcuts size={11} />
-          </span>
-        ) : null}
-      </span>
-      <span className="nav-count">{notebook.note_count ?? 0}</span>
-    </button>
-  );
-}
-
-function EmptyListState({
-  filter,
-  onCreate,
-  onBrowseTemplates,
-}: {
-  filter: ViewFilter;
-  onCreate: () => void;
-  onBrowseTemplates: () => void;
-}) {
-  const copy = emptyStateCopy(
-    filter.type,
-    filter.type === "notebook" || filter.type === "tag"
-      ? filter.name
-      : filter.type === "search"
-        ? filter.query
-        : ""
-  );
-  const icon =
-    filter.type === "trash" ? (
-      <Icon.Trash size={36} />
-    ) : filter.type === "shortcuts" ? (
-      <Icon.Shortcuts size={36} />
-    ) : filter.type === "reminders" ? (
-      <Icon.Reminder size={36} />
-    ) : filter.type === "templates" ? (
-      <Icon.Templates size={36} />
-    ) : filter.type === "tag" ? (
-      <Icon.Tags size={36} />
-    ) : filter.type === "search" ? (
-      <Icon.Search size={36} />
-    ) : (
-      <Icon.Notes size={36} />
-    );
-  return (
-    <div className="empty-state">
-      <div className="empty-illustration" aria-hidden>
-        {icon}
-      </div>
-      <h3>{copy.title}</h3>
-      <p>{copy.body}</p>
-      {filter.type === "templates" ? (
-        <div className="empty-actions">
-          <button type="button" className="primary-btn" onClick={onBrowseTemplates}>
-            Open gallery
-          </button>
-        </div>
-      ) : filter.type !== "trash" && filter.type !== "search" ? (
-        <div className="empty-actions">
-          <button type="button" className="primary-btn" onClick={onCreate}>
-            New note
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 }

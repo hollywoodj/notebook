@@ -3,6 +3,11 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+const menuSource = readFileSync(new URL("./appMenus.ts", import.meta.url), "utf8");
+const navSource = readFileSync(
+  new URL("./components/NotebookNavItem.tsx", import.meta.url),
+  "utf8"
+);
 
 describe("App hook order", () => {
   it("does not call hooks after the boot-screen early return", () => {
@@ -28,7 +33,7 @@ describe("App hook order", () => {
 
   it("wires Evernote-style toolbar focus and attachment collapse", () => {
     assert.match(appSource, /attachmentsExpanded=\{editorChrome\.attachmentsExpanded\}/);
-    assert.match(appSource, /Hide Attachments/);
+    assert.match(menuSource, /Hide Attachments/);
     const editorSource = readFileSync(new URL("./components/NoteEditor.tsx", import.meta.url), "utf8");
     assert.match(editorSource, /formattingToolbarVisible\(toolbarHidden, editorFocused\)/);
     assert.match(editorSource, /note-attachments-toggle/);
@@ -65,8 +70,8 @@ describe("Evernote sidebar chrome", () => {
   });
 
   it("keeps import in the menu bar instead of the sidebar", () => {
-    assert.match(appSource, /label: "Import Notes…"/);
-    assert.match(appSource, /label: "Import from Evernote…"/);
+    assert.match(menuSource, /label: "Import Notes…"/);
+    assert.match(menuSource, /label: "Import from Evernote…"/);
     assert.equal(appSource.includes("Evernote (.enex)"), false);
     assert.equal(appSource.includes("prefs.show_import"), false);
   });
@@ -108,7 +113,7 @@ describe("Evernote sidebar chrome", () => {
       assert.match(appSource, new RegExp(`<span className="nav-label">${label}</span>`));
     }
     assert.match(appSource, /title=\{sidebarRail \? "Pin sidebar open" : "Collapse sidebar to icons"\}/);
-    assert.match(appSource, /label: paneLayout\.sidebarRail \? "Pin Sidebar Open" : "Collapse Sidebar to Icons"/);
+    assert.match(menuSource, /sidebarRail \? "Pin Sidebar Open" : "Collapse Sidebar to Icons"/);
   });
 
   it("counts the current view rather than repeating the all-notes total", () => {
@@ -116,6 +121,6 @@ describe("Evernote sidebar chrome", () => {
     assert.match(appSource, /\{notes\.length\}/);
     assert.match(appSource, /\{shortcutNotes\.length\}/);
     assert.match(appSource, /\{notebooks\.length\}/);
-    assert.match(appSource, /notebook\.note_count \?\? 0/);
+    assert.match(navSource, /notebook\.note_count \?\? 0/);
   });
 });
