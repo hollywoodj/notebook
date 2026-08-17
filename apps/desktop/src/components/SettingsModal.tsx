@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { Account, Notebook, Preferences } from "../api";
 import { Icon } from "./Icons";
 
-type Section =
+export type SettingsSection =
   | "application"
   | "notes"
   | "notebooks"
@@ -13,7 +13,7 @@ type Section =
   | "advanced"
   | "about";
 
-const SECTIONS: { id: Section; label: string; icon: typeof Icon.Application }[] = [
+const SECTIONS: { id: SettingsSection; label: string; icon: typeof Icon.Application }[] = [
   { id: "application", label: "Application", icon: Icon.Application },
   { id: "notes", label: "Notes", icon: Icon.Notes },
   { id: "notebooks", label: "Notebooks", icon: Icon.Notebooks },
@@ -51,6 +51,7 @@ export function SettingsModal({
   onRestoreTemplates,
   onImport,
   onEmptyTrash,
+  initialSection = "application",
 }: {
   prefs: Preferences;
   account: Account;
@@ -64,8 +65,9 @@ export function SettingsModal({
   onRestoreTemplates: () => void;
   onImport: () => void;
   onEmptyTrash: () => void;
+  initialSection?: SettingsSection;
 }) {
-  const [section, setSection] = useState<Section>("application");
+  const [section, setSection] = useState<SettingsSection>(initialSection);
   const [name, setName] = useState(account.display_name);
   const [email, setEmail] = useState(account.email);
 

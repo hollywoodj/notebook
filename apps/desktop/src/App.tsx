@@ -13,10 +13,14 @@ import {
   ViewFilter,
 } from "./api";
 import { NoteEditor } from "./components/NoteEditor";
-import { SettingsModal } from "./components/SettingsModal";
+import {
+  SettingsModal,
+  SettingsSection,
+} from "./components/SettingsModal";
 import { TemplateGallery } from "./components/TemplateGallery";
 import { Icon } from "./components/Icons";
 import { ContextMenu, ContextMenuEntry } from "./components/ContextMenu";
+import { MenuBar, MenuBarGroup } from "./components/MenuBar";
 
 type ContextTarget =
   | { kind: "note"; x: number; y: number; note: NoteSummary }
@@ -72,6 +76,8 @@ export default function App() {
   const [newName, setNewName] = useState("");
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsSection, setSettingsSection] =
+    useState<SettingsSection>("application");
   const [showGallery, setShowGallery] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showNoteMenu, setShowNoteMenu] = useState(false);
@@ -87,6 +93,11 @@ export default function App() {
   const importRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const skipNextSave = useRef(false);
+
+  const openSettings = (section: SettingsSection = "application") => {
+    setSettingsSection(section);
+    setShowSettings(true);
+  };
 
   const defaultNotebook = useMemo(() => {
     if (prefs.default_notebook_id) {
@@ -328,7 +339,7 @@ export default function App() {
         searchRef.current?.focus();
       } else if (meta && e.key === ",") {
         e.preventDefault();
-        setShowSettings(true);
+        openSettings();
       } else if (meta && e.key === "t" && e.shiftKey) {
         e.preventDefault();
         setFilter({ type: "templates" });
@@ -413,7 +424,7 @@ export default function App() {
         {
           label: "Settings…",
           shortcut: "Ctrl/⌘ ,",
-          onSelect: () => setShowSettings(true),
+          onSelect: () => openSettings(),
         },
       ];
     }
@@ -644,6 +655,185 @@ export default function App() {
     ];
   };
 
+  const runEditorCommand = (command: string) => {
+    document.execCommand(command);
+  };
+
+  const menuGroups: MenuBarGroup[] = [
+    {
+      label: "File",
+      items: [
+        { label: "New Note", shortcut: "Ctrl/⌘ N", onSelect: () => void createNote() },
+        {
+          label: "New Note from Template…",
+          shortcut: "Ctrl/⌘ ⇧ N",
+          onSelect: () => setShowGallery(true),
+        },
+        {
+          label: "New Notebook…",
+          onSelect: () => {
+            setNewNotebookStackId(null);
+            setNewName("");
+            setShowNewNotebook(true);
+          },
+        },
+        { type: "separator" },
+        {
+          label: "Import Notes…",
+          onSelect: () => importRef.current?.click(),
+        },
+      ],
+    },
+    {
+      label: "Edit",
+      items: [
+        { label: "Undo", shortcut: "Ctrl/⌘ Z", onSelect: () => runEditorCommand("undo") },
+        {
+          label: "Redo",
+          shortcut: "Ctrl/⌘ ⇧ Z",
+          onSelect: () => runEditorCommand("redo"),
+        },
+        { type: "separator" },
+        { label: "Cut", shortcut: "Ctrl/⌘ X", onSelect: () => runEditorCommand("cut") },
+        { label: "Copy", shortcut: "Ctrl/⌘ C", onSelect: () => runEditorCommand("copy") },
+        { label: "Paste", shortcut: "Ctrl/⌘ V", onSelect: () => runEditorCommand("paste") },
+        { type: "separator" },
+        {
+          label: "Select All",
+          shortcut: "Ctrl/⌘ A",
+          onSelect: () => runEditorCommand("selectAll"),
+        },
+      ],
+    },
+    {
+      label: "View",
+      items: [
+        { label: "All Notes", onSelect: () => setFilter({ type: "all" }) },
+        { label: "Shortcuts", onSelect: () => setFilter({ type: "shortcuts" }) },
+        { label: "Templates", onSelect: () => setFilter({ type: "templates" }) },
+        { type: "separator" },
+        {
+          label: prefs.theme === "dark" ? "Use Light Theme" : "Use Dark Theme",
+          onSelect: () => {
+            const theme = prefs.theme === "dark" ? "light" : "dark";
+            setPrefs((current) => ({ ...current, theme }));
+            void api.updateSettings({ theme });
+          },
+        },
+      ],
+    },
+    {
+      label: "Note",
+      items: [
+        {
+          label: activeNote?.is_pinned ? "Unpin Note" : "Pin Note",
+          disabled: !activeNote,
+          onSelect: () =>
+            activeNote &&
+            void saveNote({ ...activeNote, is_pinned: !activeNote.is_pinned }),
+        },
+        {
+          label: isShortcut ? "Remove from Shortcuts" : "Add to Shortcuts",
+          disabled: !activeNote,
+          onSelect: () => {
+            if (!activeNote) return;
+            void (isShortcut
+              ? api.removeShortcut(activeNote.id)
+              : api.addShortcut(activeNote.id)
+            ).then(refreshMeta);
+          },
+        },
+        {
+          label: activeNote?.is_archived ? "Unarchive Note" : "Archive Note",
+          disabled: !activeNote,
+          onSelect: () =>
+            activeNote &&
+            void saveNote({
+              ...activeNote,
+              is_archived: !activeNote.is_archived,
+            }),
+        },
+        { type: "separator" },
+        {
+          label: "Move Note to Trash",
+          disabled: !activeNote || filter.type === "trash",
+          onSelect: () => {
+            if (!activeNote || !confirm("Move this note to Trash?")) return;
+            void api.deleteNote(activeNote.id).then(async () => {
+              setActiveNote(null);
+              await refreshNotes();
+            });
+          },
+        },
+      ],
+    },
+    {
+      label: "Format",
+      items: [
+        {
+          label: "Bold",
+          shortcut: "Ctrl/⌘ B",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand("bold"),
+        },
+        {
+          label: "Italic",
+          shortcut: "Ctrl/⌘ I",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand("italic"),
+        },
+        {
+          label: "Underline",
+          shortcut: "Ctrl/⌘ U",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand("underline"),
+        },
+        {
+          label: "Strikethrough",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand("strikeThrough"),
+        },
+        { type: "separator" },
+        {
+          label: "Remove Formatting",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand("removeFormat"),
+        },
+      ],
+    },
+    {
+      label: "Tools",
+      items: [
+        {
+          label: "Settings…",
+          shortcut: "Ctrl/⌘ ,",
+          onSelect: () => openSettings(),
+        },
+        {
+          label: "Import from Evernote…",
+          onSelect: () => importRef.current?.click(),
+        },
+        {
+          label: "Restore Built-in Templates",
+          onSelect: () => void api.restoreTemplates().then(refreshMeta),
+        },
+      ],
+    },
+    {
+      label: "Help",
+      items: [
+        {
+          label: "Keyboard Shortcuts",
+          onSelect: () => openSettings("shortcuts"),
+        },
+        {
+          label: "About Notebook",
+          onSelect: () => openSettings("about"),
+        },
+      ],
+    },
+  ];
+
   return (
     <div
       className="app-shell"
@@ -653,6 +843,7 @@ export default function App() {
         setContextMenu(null);
       }}
     >
+      <MenuBar groups={menuGroups} />
       <aside
         className="sidebar"
         onContextMenu={(event) => {
@@ -669,13 +860,6 @@ export default function App() {
             <span className="avatar">{account.display_name.slice(0, 1).toUpperCase()}</span>
             <span className="account-name">{account.display_name}</span>
           </div>
-          <button
-            className="icon-btn"
-            title="Settings"
-            onClick={() => setShowSettings(true)}
-          >
-            <Icon.Gear size={18} />
-          </button>
         </div>
 
         <div className="new-note-wrap" onMouseDown={(e) => e.stopPropagation()}>
@@ -1265,8 +1449,9 @@ export default function App() {
                 setActiveNote({ ...activeNote, content: html })
               }
               onAttach={async (file) => {
-                await api.uploadAttachment(activeNote.id, file);
+                const attachment = await api.uploadAttachment(activeNote.id, file);
                 await refreshNotes();
+                return attachment;
               }}
             />
           </>
@@ -1381,11 +1566,13 @@ export default function App() {
 
       {showSettings && (
         <SettingsModal
+          key={settingsSection}
           prefs={prefs}
           account={account}
           notebooks={notebooks}
           version={version}
           storage={storage}
+          initialSection={settingsSection}
           onClose={() => setShowSettings(false)}
           onSavePrefs={async (patch) => {
             const next = await api.updateSettings(patch);
