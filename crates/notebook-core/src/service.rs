@@ -42,9 +42,13 @@ impl NotebookService {
     pub fn list_notebooks(&self, include_deleted: bool) -> Result<Vec<Notebook>> {
         let user_id = self.db.default_user_id()?;
         let sql = if include_deleted {
-            "SELECT id, user_id, stack_id, name, is_default, sort_order, created_at, updated_at, deleted_at FROM notebooks WHERE user_id = ?1 ORDER BY sort_order, name"
+            "SELECT id, user_id, stack_id, name, is_default, sort_order, created_at, updated_at, deleted_at,
+             (SELECT COUNT(*) FROM notes n WHERE n.notebook_id = notebooks.id AND n.deleted_at IS NULL AND IFNULL(n.is_template, 0) = 0) as note_count
+             FROM notebooks WHERE user_id = ?1 ORDER BY sort_order, name"
         } else {
-            "SELECT id, user_id, stack_id, name, is_default, sort_order, created_at, updated_at, deleted_at FROM notebooks WHERE user_id = ?1 AND deleted_at IS NULL ORDER BY sort_order, name"
+            "SELECT id, user_id, stack_id, name, is_default, sort_order, created_at, updated_at, deleted_at,
+             (SELECT COUNT(*) FROM notes n WHERE n.notebook_id = notebooks.id AND n.deleted_at IS NULL AND IFNULL(n.is_template, 0) = 0) as note_count
+             FROM notebooks WHERE user_id = ?1 AND deleted_at IS NULL ORDER BY sort_order, name"
         };
         let conn = self.db.connection();
         let mut stmt = conn.prepare(sql)?;
@@ -61,6 +65,7 @@ impl NotebookService {
                 created_at: Self::parse_dt(&row.get::<_, String>(6)?).unwrap(),
                 updated_at: Self::parse_dt(&row.get::<_, String>(7)?).unwrap(),
                 deleted_at: Self::optional_dt(row.get(8)?).unwrap(),
+                note_count: row.get(9)?,
             })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -95,7 +100,9 @@ impl NotebookService {
     pub fn get_notebook(&self, id: Uuid) -> Result<Notebook> {
         let conn = self.db.connection();
         conn.query_row(
-            "SELECT id, user_id, stack_id, name, is_default, sort_order, created_at, updated_at, deleted_at FROM notebooks WHERE id = ?1",
+            "SELECT id, user_id, stack_id, name, is_default, sort_order, created_at, updated_at, deleted_at,
+             (SELECT COUNT(*) FROM notes n WHERE n.notebook_id = notebooks.id AND n.deleted_at IS NULL AND IFNULL(n.is_template, 0) = 0) as note_count
+             FROM notebooks WHERE id = ?1",
             params![id.to_string()],
             |row| {
                 Ok(Notebook {
@@ -110,6 +117,7 @@ impl NotebookService {
                     created_at: Self::parse_dt(&row.get::<_, String>(6)?).unwrap(),
                     updated_at: Self::parse_dt(&row.get::<_, String>(7)?).unwrap(),
                     deleted_at: Self::optional_dt(row.get(8)?).unwrap(),
+                    note_count: row.get(9)?,
                 })
             },
         )
@@ -275,7 +283,9 @@ impl NotebookService {
         let user_id = self.db.default_user_id()?;
         let conn = self.db.connection();
         let mut stmt = conn.prepare(
-            "SELECT id, user_id, name, created_at, updated_at FROM tags WHERE user_id = ?1 ORDER BY name",
+            "SELECT id, user_id, name, created_at, updated_at,
+             (SELECT COUNT(*) FROM note_tags nt JOIN notes n ON n.id = nt.note_id WHERE nt.tag_id = tags.id AND n.deleted_at IS NULL AND IFNULL(n.is_template, 0) = 0) as note_count
+             FROM tags WHERE user_id = ?1 ORDER BY name",
         )?;
         let rows = stmt.query_map(params![user_id.to_string()], |row| {
             Ok(Tag {
@@ -284,6 +294,7 @@ impl NotebookService {
                 name: row.get(2)?,
                 created_at: Self::parse_dt(&row.get::<_, String>(3)?).unwrap(),
                 updated_at: Self::parse_dt(&row.get::<_, String>(4)?).unwrap(),
+                note_count: row.get(5)?,
             })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -305,7 +316,9 @@ impl NotebookService {
         self.db
             .connection()
             .query_row(
-                "SELECT id, user_id, name, created_at, updated_at FROM tags WHERE id = ?1",
+                "SELECT id, user_id, name, created_at, updated_at,
+                 (SELECT COUNT(*) FROM note_tags nt JOIN notes n ON n.id = nt.note_id WHERE nt.tag_id = tags.id AND n.deleted_at IS NULL AND IFNULL(n.is_template, 0) = 0) as note_count
+                 FROM tags WHERE id = ?1",
                 params![id.to_string()],
                 |row| {
                     Ok(Tag {
@@ -314,6 +327,7 @@ impl NotebookService {
                         name: row.get(2)?,
                         created_at: Self::parse_dt(&row.get::<_, String>(3)?).unwrap(),
                         updated_at: Self::parse_dt(&row.get::<_, String>(4)?).unwrap(),
+                        note_count: row.get(5)?,
                     })
                 },
             )
@@ -605,7 +619,11 @@ impl NotebookService {
             note.reminder_at = reminder;
         }
         if let Some(source_url) = req.source_url {
-            note.source_url = Some(source_url);
+            note.source_url = if source_url.trim().is_empty() {
+                None
+            } else {
+                Some(source_url)
+            };
         }
         if let Some(is_template) = req.is_template {
             note.is_template = is_template;
@@ -1070,6 +1088,43 @@ impl NotebookService {
             "attachments": self.db.data_dir().display().to_string(),
         })
     }
+
+    pub fn sidebar_counts(&self) -> Result<crate::SidebarCounts> {
+        let user_id = self.db.default_user_id()?;
+        let conn = self.db.connection();
+        let notes: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM notes WHERE user_id = ?1 AND deleted_at IS NULL AND IFNULL(is_template, 0) = 0",
+            params![user_id.to_string()],
+            |row| row.get(0),
+        )?;
+        let reminders: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM notes WHERE user_id = ?1 AND deleted_at IS NULL AND IFNULL(is_template, 0) = 0 AND reminder_at IS NOT NULL",
+            params![user_id.to_string()],
+            |row| row.get(0),
+        )?;
+        let trash: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM notes WHERE user_id = ?1 AND deleted_at IS NOT NULL",
+            params![user_id.to_string()],
+            |row| row.get(0),
+        )?;
+        let templates: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM notes WHERE user_id = ?1 AND deleted_at IS NULL AND IFNULL(is_template, 0) = 1",
+            params![user_id.to_string()],
+            |row| row.get(0),
+        )?;
+        let shortcuts: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM shortcuts WHERE user_id = ?1",
+            params![user_id.to_string()],
+            |row| row.get(0),
+        )?;
+        Ok(crate::SidebarCounts {
+            notes,
+            reminders,
+            trash,
+            templates,
+            shortcuts,
+        })
+    }
 }
 
 impl Default for UpdateNoteRequest {
@@ -1086,5 +1141,74 @@ impl Default for UpdateNoteRequest {
             is_template: None,
             template_category: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{CreateNoteRequest, UpdateNoteRequest};
+
+    fn temp_service(name: &str) -> NotebookService {
+        let dir = std::env::temp_dir().join(format!("notebook-ui-gap-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        NotebookService::new(Database::open(dir.join("test.db")).unwrap())
+    }
+
+    #[test]
+    fn sidebar_counts_and_notebook_badges() {
+        let service = temp_service("counts");
+        let notebooks = service.list_notebooks(false).unwrap();
+        let notebook_id = notebooks[0].id;
+        service
+            .create_note(CreateNoteRequest {
+                notebook_id,
+                title: Some("Alarm".into()),
+                content: Some("<p>Wake up</p>".into()),
+                tag_ids: None,
+                is_pinned: None,
+                reminder_at: Some(Utc::now()),
+                source_url: None,
+                is_template: None,
+                template_category: None,
+            })
+            .unwrap();
+        let counts = service.sidebar_counts().unwrap();
+        assert!(counts.notes >= 1);
+        assert_eq!(counts.reminders, 1);
+        assert_eq!(counts.trash, 0);
+        let listed = service.list_notebooks(false).unwrap();
+        assert!(listed.iter().any(|nb| nb.id == notebook_id && nb.note_count >= 1));
+    }
+
+    #[test]
+    fn clearing_a_reminder_writes_null() {
+        let service = temp_service("reminder-clear");
+        let notebook_id = service.list_notebooks(false).unwrap()[0].id;
+        let note = service
+            .create_note(CreateNoteRequest {
+                notebook_id,
+                title: Some("Later".into()),
+                content: Some("<p>x</p>".into()),
+                tag_ids: None,
+                is_pinned: None,
+                reminder_at: Some(Utc::now()),
+                source_url: None,
+                is_template: None,
+                template_category: None,
+            })
+            .unwrap();
+        assert!(note.reminder_at.is_some());
+        let cleared = service
+            .update_note(
+                note.id,
+                UpdateNoteRequest {
+                    reminder_at: Some(None),
+                    ..UpdateNoteRequest::default()
+                },
+            )
+            .unwrap();
+        assert!(cleared.reminder_at.is_none());
     }
 }

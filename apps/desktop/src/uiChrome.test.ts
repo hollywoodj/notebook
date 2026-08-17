@@ -1,0 +1,180 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import {
+  adjacentNoteId,
+  clampPaneWidth,
+  countWords,
+  decodeNoteDrag,
+  encodeNoteDrag,
+  findMatchOffsets,
+  fromDatetimeLocalValue,
+  groupNotesForList,
+  isReminderOverdue,
+  mergeNoteBodies,
+  nextMatchIndex,
+  noteAppLink,
+  notesToEnex,
+  parsePaneLayout,
+  snippetParts,
+  suggestedTags,
+  toDatetimeLocalValue,
+  toEnexTimestamp,
+} from "./uiChrome.ts";
+
+describe("clampPaneWidth", () => {
+  it("keeps widths inside Evernote-like pane bounds", () => {
+    assert.equal(clampPaneWidth(100, 180, 420), 180);
+    assert.equal(clampPaneWidth(900, 220, 560), 560);
+    assert.equal(clampPaneWidth(300.6, 180, 420), 301);
+  });
+});
+
+describe("parsePaneLayout", () => {
+  it("falls back when storage is empty or corrupt", () => {
+    assert.equal(parsePaneLayout(null).sidebarWidth, 248);
+    assert.equal(parsePaneLayout("{").listWidth, 320);
+  });
+
+  it("reads a saved layout", () => {
+    const layout = parsePaneLayout(
+      JSON.stringify({ sidebarWidth: 200, listWidth: 400, sidebarCollapsed: true })
+    );
+    assert.equal(layout.sidebarWidth, 200);
+    assert.equal(layout.listWidth, 400);
+    assert.equal(layout.sidebarCollapsed, true);
+  });
+});
+
+describe("countWords", () => {
+  it("ignores extra whitespace", () => {
+    assert.equal(countWords(""), 0);
+    assert.equal(countWords("  hello   world\n\nagain "), 3);
+  });
+});
+
+describe("findMatchOffsets", () => {
+  it("finds non-overlapping case-insensitive matches", () => {
+    assert.deepEqual(findMatchOffsets("Note note NOTE", "note"), [0, 5, 10]);
+    assert.deepEqual(findMatchOffsets("aaaa", "aa"), [0, 2]);
+    assert.deepEqual(findMatchOffsets("hello", "z"), []);
+  });
+});
+
+describe("nextMatchIndex", () => {
+  it("wraps around the match list", () => {
+    assert.equal(nextMatchIndex(3, 2, 1), 0);
+    assert.equal(nextMatchIndex(3, 0, -1), 2);
+    assert.equal(nextMatchIndex(0, 0, 1), 0);
+  });
+});
+
+describe("adjacentNoteId", () => {
+  const notes = ["a", "b", "c"].map((id) => ({ id }));
+
+  it("moves to the next or previous note without wrapping", () => {
+    assert.equal(adjacentNoteId(notes, "b", 1), "c");
+    assert.equal(adjacentNoteId(notes, "c", 1), "c");
+    assert.equal(adjacentNoteId(notes, "a", -1), "a");
+    assert.equal(adjacentNoteId(notes, null, 1), "a");
+  });
+});
+
+describe("reminder datetime helpers", () => {
+  it("round-trips a local datetime value", () => {
+    const iso = fromDatetimeLocalValue("2026-08-17T09:30");
+    assert.ok(iso);
+    assert.equal(toDatetimeLocalValue(iso), "2026-08-17T09:30");
+  });
+
+  it("marks past reminders as overdue", () => {
+    assert.equal(isReminderOverdue("2020-01-01T00:00:00Z", new Date("2026-01-01")), true);
+    assert.equal(isReminderOverdue(null), false);
+  });
+});
+
+describe("note drag payload", () => {
+  it("encodes and decodes note ids", () => {
+    assert.deepEqual(decodeNoteDrag(encodeNoteDrag(["a", "b"])), ["a", "b"]);
+    assert.deepEqual(decodeNoteDrag("nope"), []);
+  });
+});
+
+describe("noteAppLink", () => {
+  it("uses an Evernote-style app URL", () => {
+    assert.equal(noteAppLink("abc"), "notebook://note/abc");
+  });
+});
+
+describe("suggestedTags", () => {
+  it("filters already-applied tags and matches the query", () => {
+    const tags = [
+      { id: "1", name: "work" },
+      { id: "2", name: "travel" },
+      { id: "3", name: "recipes" },
+    ];
+    assert.deepEqual(
+      suggestedTags(tags, "e", ["1"]).map((tag) => tag.name),
+      ["travel", "recipes"]
+    );
+  });
+});
+
+describe("groupNotesForList", () => {
+  it("puts pinned notes first and buckets the rest by day", () => {
+    const now = new Date("2026-08-17T15:00:00");
+    const notes = [
+      { id: "p", is_pinned: true, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" },
+      { id: "t", is_pinned: false, created_at: "2026-08-17T10:00:00", updated_at: "2026-08-17T10:00:00" },
+      { id: "y", is_pinned: false, created_at: "2026-08-16T10:00:00", updated_at: "2026-08-16T10:00:00" },
+      { id: "e", is_pinned: false, created_at: "2026-01-02T00:00:00Z", updated_at: "2026-01-02T00:00:00Z" },
+    ];
+    const groups = groupNotesForList(notes, "updated", now);
+    assert.deepEqual(
+      groups.map((group) => [group.label, group.notes.map((note) => note.id)]),
+      [
+        ["Pinned", ["p"]],
+        ["Today", ["t"]],
+        ["Yesterday", ["y"]],
+        ["Earlier", ["e"]],
+      ]
+    );
+  });
+});
+
+describe("snippetParts", () => {
+  it("marks query hits inside a snippet", () => {
+    assert.deepEqual(snippetParts("Buy milk and eggs", "milk"), [
+      { text: "Buy ", hit: false },
+      { text: "milk", hit: true },
+      { text: " and eggs", hit: false },
+    ]);
+  });
+});
+
+describe("mergeNoteBodies", () => {
+  it("keeps the first body and appends later titles as headings", () => {
+    const html = mergeNoteBodies([
+      { title: "A", content: "<p>one</p>" },
+      { title: "B & C", content: "<p>two</p>" },
+    ]);
+    assert.equal(html, "<p>one</p><h1>B &amp; C</h1><p>two</p>");
+  });
+});
+
+describe("notesToEnex", () => {
+  it("wraps notes in Evernote export XML", () => {
+    const enex = notesToEnex([
+      {
+        title: "Hello",
+        content: "<p>Hi</p>",
+        created_at: "2026-08-17T12:00:00.000Z",
+        updated_at: "2026-08-17T12:00:00.000Z",
+        tag_names: ["work"],
+      },
+    ]);
+    assert.match(enex, /<en-export>/);
+    assert.match(enex, /<title>Hello<\/title>/);
+    assert.match(enex, /<tag>work<\/tag>/);
+    assert.equal(toEnexTimestamp("2026-08-17T12:00:00.000Z"), "20260817T120000Z");
+  });
+});

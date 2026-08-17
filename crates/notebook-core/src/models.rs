@@ -1,6 +1,14 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
+
+fn deserialize_double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Ok(Some(Option::deserialize(deserializer)?))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
@@ -32,6 +40,8 @@ pub struct Notebook {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub note_count: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +51,8 @@ pub struct Tag {
     pub name: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub note_count: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,6 +156,7 @@ pub struct UpdateNoteRequest {
     pub tag_ids: Option<Vec<Uuid>>,
     pub is_pinned: Option<bool>,
     pub is_archived: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
     pub reminder_at: Option<Option<DateTime<Utc>>>,
     pub source_url: Option<String>,
     #[serde(default)]
@@ -254,4 +267,37 @@ pub struct UpdateUserRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UseTemplateRequest {
     pub notebook_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SidebarCounts {
+    pub notes: i32,
+    pub reminders: i32,
+    pub trash: i32,
+    pub templates: i32,
+    pub shortcuts: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn omitted_reminder_does_not_patch() {
+        let req: UpdateNoteRequest = serde_json::from_str(r#"{}"#).unwrap();
+        assert_eq!(req.reminder_at, None);
+    }
+
+    #[test]
+    fn null_reminder_clears_the_alarm() {
+        let req: UpdateNoteRequest = serde_json::from_str(r#"{"reminder_at":null}"#).unwrap();
+        assert_eq!(req.reminder_at, Some(None));
+    }
+
+    #[test]
+    fn reminder_timestamp_is_set() {
+        let req: UpdateNoteRequest =
+            serde_json::from_str(r#"{"reminder_at":"2026-08-17T12:00:00Z"}"#).unwrap();
+        assert!(req.reminder_at.unwrap().is_some());
+    }
 }
