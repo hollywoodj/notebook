@@ -1,30 +1,54 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Account,
   api,
+  defaultPreferences,
   Note,
   NoteSummary,
   Notebook,
+  Preferences,
   Stack,
   Tag,
+  TemplateCatalogItem,
   ViewFilter,
 } from "./api";
 import { NoteEditor } from "./components/NoteEditor";
+import { SettingsModal } from "./components/SettingsModal";
+import { TemplateGallery } from "./components/TemplateGallery";
+import { Icon } from "./components/Icons";
 
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+function formatDate(iso: string, format: Preferences["date_format"]) {
+  const options: Intl.DateTimeFormatOptions =
+    format === "short"
+      ? { month: "numeric", day: "numeric" }
+      : format === "long"
+        ? { weekday: "short", month: "long", day: "numeric", year: "numeric" }
+        : { month: "short", day: "numeric", year: "numeric" };
+  return new Date(iso).toLocaleDateString(undefined, options);
+}
+
+function applyTheme(theme: Preferences["theme"]) {
+  const dark =
+    theme === "dark" ||
+    (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+}
+
+function isBlankNote(note: Note) {
+  const text = note.content_plain?.trim() || note.content.replace(/<[^>]+>/g, "").trim();
+  return (!note.title || note.title === "Untitled") && text.length === 0;
 }
 
 export default function App() {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [version, setVersion] = useState("0.1.1");
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [stacks, setStacks] = useState<Stack[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
+  const [templates, setTemplates] = useState<NoteSummary[]>([]);
+  const [catalog, setCatalog] = useState<TemplateCatalogItem[]>([]);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [activeNote, setActiveNote] = useState<Note | null>(null);
   const [filter, setFilter] = useState<ViewFilter>({ type: "all" });
@@ -34,29 +58,48 @@ export default function App() {
   const [showNewTag, setShowNewTag] = useState(false);
   const [newName, setNewName] = useState("");
   const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showGallery, setShowGallery] = useState(false);
+  const [showNewMenu, setShowNewMenu] = useState(false);
+  const [showNoteMenu, setShowNoteMenu] = useState(false);
+  const [prefs, setPrefs] = useState<Preferences>(defaultPreferences);
+  const [account, setAccount] = useState<Account | null>(null);
+  const [storage, setStorage] = useState({ database: "", attachments: "" });
+  const [shortcutIds, setShortcutIds] = useState<Set<string>>(new Set());
+  const [notebooksOpen, setNotebooksOpen] = useState(true);
+  const [tagsOpen, setTagsOpen] = useState(true);
   const importRef = useRef<HTMLInputElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const skipNextSave = useRef(false);
 
-  const defaultNotebook = useMemo(
-    () => notebooks.find((n) => n.is_default) || notebooks[0],
-    [notebooks]
-  );
+  const defaultNotebook = useMemo(() => {
+    if (prefs.default_notebook_id) {
+      const match = notebooks.find((n) => n.id === prefs.default_notebook_id);
+      if (match) return match;
+    }
+    return notebooks.find((n) => n.is_default) || notebooks[0];
+  }, [notebooks, prefs.default_notebook_id]);
 
   const refreshMeta = useCallback(async () => {
-    const [nb, st, tg] = await Promise.all([
+    const [nb, st, tg, sc, tm] = await Promise.all([
       api.listNotebooks(),
       api.listStacks(),
       api.listTags(),
+      api.listShortcuts(),
+      api.listNotes({ templates: true }),
     ]);
     setNotebooks(nb);
     setStacks(st);
     setTags(tg);
+    setShortcutIds(new Set(sc.map((n) => n.id)));
+    setTemplates(tm);
   }, []);
 
   const refreshNotes = useCallback(async () => {
     let list: NoteSummary[] = [];
     switch (filter.type) {
       case "all":
-        list = await api.listNotes({});
+        list = await api.listNotes({ templates: false });
         break;
       case "notebook":
         list = await api.listNotes({ notebookId: filter.id });
@@ -67,6 +110,9 @@ export default function App() {
       case "shortcuts":
         list = await api.listShortcuts();
         break;
+      case "templates":
+        list = await api.listNotes({ templates: true });
+        break;
       case "trash":
         list = await api.listNotes({ trash: true });
         break;
@@ -74,23 +120,47 @@ export default function App() {
         list = (await api.search(filter.query)).notes;
         break;
     }
-    setNotes(list);
-  }, [filter]);
+    const sorted = [...list].sort((a, b) => {
+      if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
+      if (prefs.sort_by === "title") return a.title.localeCompare(b.title);
+      if (prefs.sort_by === "created") {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    });
+    setNotes(sorted);
+  }, [filter, prefs.sort_by]);
 
   const loadNote = useCallback(async (id: string) => {
+    skipNextSave.current = true;
     const note = await api.getNote(id);
     setActiveNote(note);
     setSelectedNoteId(id);
+    setShowNoteMenu(false);
   }, []);
 
   useEffect(() => {
     (async () => {
       for (let i = 0; i < 30; i++) {
         try {
-          await api.health();
+          const health = await api.health();
+          setVersion(health.version);
+          const [loadedPrefs, loadedAccount, loadedStorage, loadedCatalog] = await Promise.all([
+            api.getSettings(),
+            api.getAccount(),
+            api.storageInfo(),
+            api.templateCatalog(),
+          ]);
+          setPrefs({ ...defaultPreferences, ...loadedPrefs });
+          applyTheme(loadedPrefs.theme);
+          setAccount(loadedAccount);
+          setStorage(loadedStorage);
+          setCatalog(loadedCatalog);
           setReady(true);
           await refreshMeta();
-          await refreshNotes();
+          if (loadedPrefs.startup_view === "shortcuts") {
+            setFilter({ type: "shortcuts" });
+          }
           return;
         } catch {
           await new Promise((r) => setTimeout(r, 200));
@@ -98,11 +168,19 @@ export default function App() {
       }
       setError("Could not connect to Notebook API on http://127.0.0.1:8799");
     })();
-  }, [refreshMeta, refreshNotes]);
+  }, [refreshMeta]);
 
   useEffect(() => {
     if (ready) refreshNotes().catch(console.error);
   }, [ready, filter, refreshNotes]);
+
+  useEffect(() => {
+    applyTheme(prefs.theme);
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => applyTheme(prefs.theme);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [prefs.theme]);
 
   const saveNote = useCallback(
     async (patch: Partial<Note>) => {
@@ -115,37 +193,67 @@ export default function App() {
           notebook_id: patch.notebook_id,
           is_pinned: patch.is_pinned,
           is_archived: patch.is_archived,
+          is_template: patch.is_template,
+          template_category: patch.template_category,
+          tag_ids: patch.tag_ids,
         });
         setActiveNote(updated);
         setSaveState("saved");
         await refreshNotes();
+        if (updated.is_template) await refreshMeta();
       } catch {
         setSaveState("error");
       }
     },
-    [activeNote, refreshNotes]
+    [activeNote, refreshNotes, refreshMeta]
   );
 
   useEffect(() => {
     if (!activeNote) return;
+    if (skipNextSave.current) {
+      skipNextSave.current = false;
+      return;
+    }
     const timer = setTimeout(() => {
       saveNote({
         title: activeNote.title,
         content: activeNote.content,
       });
-    }, 600);
+    }, prefs.auto_save_ms || 600);
     return () => clearTimeout(timer);
-  }, [activeNote?.title, activeNote?.content]);
+  }, [activeNote?.title, activeNote?.content, prefs.auto_save_ms]);
 
-  const createNote = async () => {
+  const createBlankNote = async () => {
     const nbId =
-      filter.type === "notebook"
-        ? filter.id
-        : defaultNotebook?.id;
+      filter.type === "notebook" ? filter.id : defaultNotebook?.id;
     if (!nbId) return;
     const note = await api.createNote(nbId);
     await refreshNotes();
     await loadNote(note.id);
+  };
+
+  const createNote = async () => {
+    setShowNewMenu(false);
+    if (prefs.new_note_behavior === "ask") {
+      setShowGallery(true);
+      return;
+    }
+    await createBlankNote();
+  };
+
+  const useTemplate = async (templateId: string, notebookId?: string) => {
+    const nbId =
+      notebookId ||
+      (filter.type === "notebook" ? filter.id : defaultNotebook?.id);
+    const note = await api.useTemplate(templateId, nbId);
+    setShowGallery(false);
+    await refreshNotes();
+    await loadNote(note.id);
+  };
+
+  const confirm = (message: string) => {
+    if (!prefs.confirm_delete) return true;
+    return window.confirm(message);
   };
 
   const notebooksByStack = useMemo(() => {
@@ -161,19 +269,48 @@ export default function App() {
     return grouped;
   }, [notebooks, stacks]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const meta = e.metaKey || e.ctrlKey;
+      if (meta && e.key === "n" && e.shiftKey) {
+        e.preventDefault();
+        setShowGallery(true);
+      } else if (meta && e.key === "n") {
+        e.preventDefault();
+        createNote();
+      } else if (meta && e.key === "f") {
+        e.preventDefault();
+        searchRef.current?.focus();
+      } else if (meta && e.key === ",") {
+        e.preventDefault();
+        setShowSettings(true);
+      } else if (meta && e.key === "t" && e.shiftKey) {
+        e.preventDefault();
+        setFilter({ type: "templates" });
+      } else if (meta && e.key === "p" && activeNote) {
+        e.preventDefault();
+        saveNote({ ...activeNote, is_pinned: !activeNote.is_pinned });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   if (error) {
     return (
       <div className="boot-screen">
         <h1>Notebook</h1>
         <p className="error">{error}</p>
         {!window.notebookDesktop?.isElectron && (
-          <p>Start the API with: <code>cargo run -p notebook-api</code></p>
+          <p>
+            Start the API with: <code>cargo run -p notebook-api</code>
+          </p>
         )}
       </div>
     );
   }
 
-  if (!ready) {
+  if (!ready || !account) {
     return (
       <div className="boot-screen">
         <div className="logo-mark">N</div>
@@ -182,21 +319,92 @@ export default function App() {
     );
   }
 
+  const viewTitle =
+    filter.type === "all"
+      ? "Notes"
+      : filter.type === "notebook"
+        ? filter.name
+        : filter.type === "tag"
+          ? `#${filter.name}`
+          : filter.type === "shortcuts"
+            ? "Shortcuts"
+            : filter.type === "templates"
+              ? "Templates"
+              : filter.type === "trash"
+                ? "Trash"
+                : `Search: ${filter.query}`;
+
+  const isShortcut = activeNote ? shortcutIds.has(activeNote.id) : false;
+
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      onMouseDown={() => {
+        setShowNewMenu(false);
+        setShowNoteMenu(false);
+      }}
+    >
       <aside className="sidebar">
-        <div className="sidebar-header">
-          <div className="logo">
-            <span className="logo-mark">N</span>
-            <span>Notebook</span>
+        <div className="sidebar-account">
+          <div className="account-chip">
+            <span className="avatar">{account.display_name.slice(0, 1).toUpperCase()}</span>
+            <span className="account-name">{account.display_name}</span>
           </div>
-          <button className="primary-btn" onClick={createNote} title="New Note">
-            +
+          <button
+            className="icon-btn"
+            title="Settings"
+            onClick={() => setShowSettings(true)}
+          >
+            <Icon.Gear size={18} />
           </button>
         </div>
 
+        <div className="new-note-wrap" onMouseDown={(e) => e.stopPropagation()}>
+          <button className="new-note-btn" onClick={createNote}>
+            <Icon.Plus size={16} />
+            New note
+          </button>
+          <button
+            className="new-note-more"
+            title="More"
+            onClick={() => setShowNewMenu((v) => !v)}
+          >
+            <Icon.Chevron size={16} />
+          </button>
+          {showNewMenu && (
+            <div className="menu-popover">
+              <button
+                onClick={() => {
+                  setShowNewMenu(false);
+                  createBlankNote();
+                }}
+              >
+                Blank note
+              </button>
+              <button
+                onClick={() => {
+                  setShowNewMenu(false);
+                  setShowGallery(true);
+                }}
+              >
+                From template
+              </button>
+              <button
+                onClick={() => {
+                  setShowNewMenu(false);
+                  setShowNewNotebook(true);
+                }}
+              >
+                New notebook
+              </button>
+            </div>
+          )}
+        </div>
+
         <div className="sidebar-search">
+          <Icon.Search size={15} />
           <input
+            ref={searchRef}
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             onKeyDown={(e) => {
@@ -204,104 +412,182 @@ export default function App() {
                 setFilter({ type: "search", query: searchInput.trim() });
               }
             }}
-            placeholder="Search notes..."
+            placeholder="Search"
           />
         </div>
 
-        <nav className="sidebar-nav">
+        <nav className="sidebar-nav scroll-pane">
           <button
             className={filter.type === "all" ? "nav-item active" : "nav-item"}
             onClick={() => setFilter({ type: "all" })}
           >
-            All Notes
+            <Icon.Notes size={16} />
+            Notes
           </button>
-          <button
-            className={filter.type === "shortcuts" ? "nav-item active" : "nav-item"}
-            onClick={() => setFilter({ type: "shortcuts" })}
-          >
-            Shortcuts
-          </button>
+          {prefs.show_shortcuts && (
+            <button
+              className={filter.type === "shortcuts" ? "nav-item active" : "nav-item"}
+              onClick={() => setFilter({ type: "shortcuts" })}
+            >
+              <Icon.Shortcuts size={16} />
+              Shortcuts
+            </button>
+          )}
 
-          <div className="nav-section">
-            <div className="nav-section-title">
-              <span>Notebooks</span>
-              <button onClick={() => setShowNewNotebook(true)}>+</button>
+          {prefs.show_notebooks && (
+            <div className="nav-section">
+              <button
+                className="nav-section-title"
+                onClick={() => setNotebooksOpen((v) => !v)}
+              >
+                <span>
+                  <Icon.Notebooks size={14} />
+                  Notebooks
+                </span>
+                <span className="section-actions">
+                  <span
+                    className="plus"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowNewNotebook(true);
+                    }}
+                  >
+                    +
+                  </span>
+                  <Icon.Chevron
+                    size={14}
+                    style={{
+                      transform: notebooksOpen ? "rotate(0deg)" : "rotate(-90deg)",
+                    }}
+                  />
+                </span>
+              </button>
+              {notebooksOpen && (
+                <>
+                  {stacks.map((stack) => (
+                    <div key={stack.id} className="stack-group">
+                      <div className="stack-name">{stack.name}</div>
+                      {(notebooksByStack[stack.id] || []).map((nb) => (
+                        <button
+                          key={nb.id}
+                          className={
+                            filter.type === "notebook" && filter.id === nb.id
+                              ? "nav-item active indent"
+                              : "nav-item indent"
+                          }
+                          onClick={() =>
+                            setFilter({ type: "notebook", id: nb.id, name: nb.name })
+                          }
+                        >
+                          {nb.name}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                  {notebooksByStack.uncategorized.map((nb) => (
+                    <button
+                      key={nb.id}
+                      className={
+                        filter.type === "notebook" && filter.id === nb.id
+                          ? "nav-item active indent"
+                          : "nav-item indent"
+                      }
+                      onClick={() =>
+                        setFilter({ type: "notebook", id: nb.id, name: nb.name })
+                      }
+                    >
+                      {nb.name}
+                    </button>
+                  ))}
+                </>
+              )}
             </div>
-            {stacks.map((stack) => (
-              <div key={stack.id} className="stack-group">
-                <div className="stack-name">{stack.name}</div>
-                {(notebooksByStack[stack.id] || []).map((nb) => (
+          )}
+
+          {prefs.show_tags && (
+            <div className="nav-section">
+              <button
+                className="nav-section-title"
+                onClick={() => setTagsOpen((v) => !v)}
+              >
+                <span>
+                  <Icon.Tags size={14} />
+                  Tags
+                </span>
+                <span className="section-actions">
+                  <span
+                    className="plus"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowNewTag(true);
+                    }}
+                  >
+                    +
+                  </span>
+                  <Icon.Chevron
+                    size={14}
+                    style={{
+                      transform: tagsOpen ? "rotate(0deg)" : "rotate(-90deg)",
+                    }}
+                  />
+                </span>
+              </button>
+              {tagsOpen &&
+                tags.map((tag) => (
                   <button
-                    key={nb.id}
+                    key={tag.id}
                     className={
-                      filter.type === "notebook" && filter.id === nb.id
+                      filter.type === "tag" && filter.id === tag.id
                         ? "nav-item active indent"
                         : "nav-item indent"
                     }
                     onClick={() =>
-                      setFilter({ type: "notebook", id: nb.id, name: nb.name })
+                      setFilter({ type: "tag", id: tag.id, name: tag.name })
                     }
                   >
-                    {nb.name}
+                    #{tag.name}
                   </button>
                 ))}
-              </div>
-            ))}
-            {notebooksByStack.uncategorized.map((nb) => (
-              <button
-                key={nb.id}
-                className={
-                  filter.type === "notebook" && filter.id === nb.id
-                    ? "nav-item active indent"
-                    : "nav-item indent"
-                }
-                onClick={() =>
-                  setFilter({ type: "notebook", id: nb.id, name: nb.name })
-                }
-              >
-                {nb.name}
-              </button>
-            ))}
-          </div>
-
-          <div className="nav-section">
-            <div className="nav-section-title">
-              <span>Tags</span>
-              <button onClick={() => setShowNewTag(true)}>+</button>
             </div>
-            {tags.map((tag) => (
-              <button
-                key={tag.id}
-                className={
-                  filter.type === "tag" && filter.id === tag.id
-                    ? "nav-item active indent"
-                    : "nav-item indent"
-                }
-                onClick={() =>
-                  setFilter({ type: "tag", id: tag.id, name: tag.name })
-                }
-              >
-                #{tag.name}
-              </button>
-            ))}
-          </div>
+          )}
 
-          <button
-            className={filter.type === "trash" ? "nav-item active" : "nav-item"}
-            onClick={() => setFilter({ type: "trash" })}
-          >
-            Trash
-          </button>
-
-          <div className="nav-section">
-            <div className="nav-section-title">
-              <span>Import</span>
-            </div>
-            <button className="nav-item indent" onClick={() => importRef.current?.click()}>
-              Import Evernote (.enex)
+          {prefs.show_templates && (
+            <button
+              className={filter.type === "templates" ? "nav-item active" : "nav-item"}
+              onClick={() => setFilter({ type: "templates" })}
+            >
+              <Icon.Templates size={16} />
+              Templates
             </button>
-            {importStatus && <div className="import-status">{importStatus}</div>}
-          </div>
+          )}
+
+          {prefs.show_trash && (
+            <button
+              className={filter.type === "trash" ? "nav-item active" : "nav-item"}
+              onClick={() => setFilter({ type: "trash" })}
+            >
+              <Icon.Trash size={16} />
+              Trash
+            </button>
+          )}
+
+          {prefs.show_import && (
+            <div className="nav-section">
+              <div className="nav-section-title static">
+                <span>
+                  <Icon.Import size={14} />
+                  Import
+                </span>
+              </div>
+              <button
+                className="nav-item indent"
+                onClick={() => importRef.current?.click()}
+              >
+                Evernote (.enex)
+              </button>
+              {importStatus && <div className="import-status">{importStatus}</div>}
+            </div>
+          )}
         </nav>
         <input
           ref={importRef}
@@ -331,8 +617,11 @@ export default function App() {
                 notebookCount = Math.max(notebookCount, result.notebook_count ?? 1);
               }
               const target =
-                files.length === 1 && notebookCount <= 1 && lastNotebookId && lastNotebookName
-                  ? ` into "${lastNotebookName}"`
+                files.length === 1 &&
+                notebookCount <= 1 &&
+                lastNotebookId &&
+                lastNotebookName
+                  ? ` into “${lastNotebookName}”`
                   : "";
               setImportStatus(
                 `Imported ${totalImported} note${totalImported === 1 ? "" : "s"}${target}` +
@@ -340,7 +629,12 @@ export default function App() {
               );
               await refreshMeta();
               await refreshNotes();
-              if (files.length === 1 && notebookCount <= 1 && lastNotebookId && lastNotebookName) {
+              if (
+                files.length === 1 &&
+                notebookCount <= 1 &&
+                lastNotebookId &&
+                lastNotebookName
+              ) {
                 setFilter({
                   type: "notebook",
                   id: lastNotebookId,
@@ -358,31 +652,65 @@ export default function App() {
 
       <section className="note-list-panel">
         <div className="panel-header">
-          <h2>
-            {filter.type === "all" && "All Notes"}
-            {filter.type === "notebook" && filter.name}
-            {filter.type === "tag" && `#${filter.name}`}
-            {filter.type === "shortcuts" && "Shortcuts"}
-            {filter.type === "trash" && "Trash"}
-            {filter.type === "search" && `Search: ${filter.query}`}
-          </h2>
-          <span className="count">{notes.length}</span>
+          <div>
+            <h2>{viewTitle}</h2>
+            <span className="count">{notes.length}</span>
+          </div>
+          <div className="panel-tools">
+            {filter.type === "templates" && (
+              <button className="ghost-btn small" onClick={() => setShowGallery(true)}>
+                Gallery
+              </button>
+            )}
+            {filter.type === "trash" && notes.length > 0 && (
+              <button
+                className="ghost-btn small"
+                onClick={async () => {
+                  if (!confirm("Permanently delete all notes in Trash?")) return;
+                  await api.emptyTrash();
+                  setActiveNote(null);
+                  await refreshNotes();
+                }}
+              >
+                Empty
+              </button>
+            )}
+            <select
+              value={prefs.sort_by}
+              onChange={(e) => {
+                const sort_by = e.target.value as Preferences["sort_by"];
+                setPrefs((p) => ({ ...p, sort_by }));
+                api.updateSettings({ sort_by }).catch(console.error);
+              }}
+            >
+              <option value="updated">Updated</option>
+              <option value="created">Created</option>
+              <option value="title">Title</option>
+            </select>
+          </div>
         </div>
-        <div className="note-list">
+        <div className="note-list scroll-pane">
           {notes.map((note) => (
             <button
               key={note.id}
               className={
-                selectedNoteId === note.id ? "note-card selected" : "note-card"
+                (selectedNoteId === note.id ? "note-card selected" : "note-card") +
+                (prefs.list_density === "compact" ? " compact" : "")
               }
               onClick={() => loadNote(note.id)}
             >
               <div className="note-card-title">
-                {note.is_pinned && <span className="pin">📌</span>}
+                {note.is_pinned && <Icon.Pin size={13} />}
+                {note.is_template && <Icon.Templates size={13} />}
                 {note.title || "Untitled"}
               </div>
-              <div className="note-card-meta">{formatDate(note.updated_at)}</div>
-              <div className="note-card-snippet">{note.snippet}</div>
+              <div className="note-card-meta">
+                {formatDate(note.updated_at, prefs.date_format)}
+                {note.notebook_name ? ` · ${note.notebook_name}` : ""}
+              </div>
+              {prefs.show_snippets && (
+                <div className="note-card-snippet">{note.snippet}</div>
+              )}
               {note.tag_names.length > 0 && (
                 <div className="note-card-tags">
                   {note.tag_names.map((t) => (
@@ -393,7 +721,11 @@ export default function App() {
             </button>
           ))}
           {notes.length === 0 && (
-            <div className="empty-state">No notes here yet.</div>
+            <div className="empty-state">
+              {filter.type === "templates"
+                ? "No templates yet. Open the gallery to get started."
+                : "No notes here yet."}
+            </div>
           )}
         </div>
       </section>
@@ -401,6 +733,21 @@ export default function App() {
       <main className="editor-panel">
         {activeNote ? (
           <>
+            {activeNote.is_template && (
+              <div className="template-banner">
+                <div>
+                  <Icon.Templates size={16} />
+                  <strong>You’re editing a template.</strong>
+                  <span>Changes save back to this template.</span>
+                </div>
+                <button
+                  className="primary-btn"
+                  onClick={() => useTemplate(activeNote.id)}
+                >
+                  Use this template
+                </button>
+              </div>
+            )}
             <div className="editor-header">
               <input
                 className="title-input"
@@ -431,54 +778,114 @@ export default function App() {
                   {activeNote.is_pinned ? "Unpin" : "Pin"}
                 </button>
                 <button
-                  onClick={() =>
-                    saveNote({
-                      ...activeNote,
-                      is_archived: !activeNote.is_archived,
-                    })
-                  }
+                  onClick={async () => {
+                    if (isShortcut) await api.removeShortcut(activeNote.id);
+                    else await api.addShortcut(activeNote.id);
+                    await refreshMeta();
+                  }}
                 >
-                  {activeNote.is_archived ? "Unarchive" : "Archive"}
+                  {isShortcut ? "Unstar" : "Shortcut"}
                 </button>
-                {filter.type === "trash" ? (
-                  <>
-                    <button
-                      onClick={async () => {
-                        await api.restoreNote(activeNote.id);
-                        setActiveNote(null);
-                        await refreshNotes();
-                      }}
-                    >
-                      Restore
-                    </button>
-                    <button
-                      className="danger"
-                      onClick={async () => {
-                        await api.permanentlyDeleteNote(activeNote.id);
-                        setActiveNote(null);
-                        await refreshNotes();
-                      }}
-                    >
-                      Delete Forever
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    className="danger"
-                    onClick={async () => {
-                      await api.deleteNote(activeNote.id);
-                      setActiveNote(null);
-                      await refreshNotes();
-                    }}
-                  >
-                    Delete
+                <div className="menu-anchor" onMouseDown={(e) => e.stopPropagation()}>
+                  <button onClick={() => setShowNoteMenu((v) => !v)} title="More">
+                    <Icon.More size={16} />
                   </button>
-                )}
+                  {showNoteMenu && (
+                    <div className="menu-popover right">
+                      {!activeNote.is_template && (
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            saveNote({
+                              ...activeNote,
+                              is_template: true,
+                              template_category: "My templates",
+                            });
+                            setFilter({ type: "templates" });
+                          }}
+                        >
+                          Save as template
+                        </button>
+                      )}
+                      {activeNote.is_template && (
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            saveNote({ ...activeNote, is_template: false });
+                          }}
+                        >
+                          Convert to note
+                        </button>
+                      )}
+                      <button
+                        onClick={() => {
+                          setShowNoteMenu(false);
+                          saveNote({
+                            ...activeNote,
+                            is_archived: !activeNote.is_archived,
+                          });
+                        }}
+                      >
+                        {activeNote.is_archived ? "Unarchive" : "Archive"}
+                      </button>
+                      {filter.type === "trash" ? (
+                        <>
+                          <button
+                            onClick={async () => {
+                              await api.restoreNote(activeNote.id);
+                              setActiveNote(null);
+                              await refreshNotes();
+                            }}
+                          >
+                            Restore
+                          </button>
+                          <button
+                            className="danger-text"
+                            onClick={async () => {
+                              if (!confirm("Delete this note forever?")) return;
+                              await api.permanentlyDeleteNote(activeNote.id);
+                              setActiveNote(null);
+                              await refreshNotes();
+                            }}
+                          >
+                            Delete forever
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          className="danger-text"
+                          onClick={async () => {
+                            if (!confirm("Move this note to Trash?")) return;
+                            await api.deleteNote(activeNote.id);
+                            setActiveNote(null);
+                            await refreshNotes();
+                          }}
+                        >
+                          Move to trash
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
                 <span className="save-state">{saveState}</span>
               </div>
             </div>
+            {isBlankNote(activeNote) && !activeNote.is_template && (
+              <div className="template-hint">
+                <button className="chip" onClick={() => setShowGallery(true)}>
+                  <Icon.Templates size={14} />
+                  My templates
+                </button>
+                <span>or just start writing</span>
+              </div>
+            )}
             <NoteEditor
+              key={activeNote.id}
               content={activeNote.content}
+              spellCheck={prefs.spell_check}
+              fontFamily={prefs.font_family}
+              fontSize={prefs.font_size}
+              noteWidth={prefs.note_width}
               onChange={(html) =>
                 setActiveNote({ ...activeNote, content: html })
               }
@@ -490,17 +897,23 @@ export default function App() {
           </>
         ) : (
           <div className="empty-editor">
+            <div className="logo-mark large">N</div>
             <h2>Select a note or create a new one</h2>
-            <button className="primary-btn large" onClick={createNote}>
-              New Note
-            </button>
+            <div className="empty-actions">
+              <button className="primary-btn large" onClick={createNote}>
+                New note
+              </button>
+              <button className="ghost-btn large" onClick={() => setShowGallery(true)}>
+                Browse templates
+              </button>
+            </div>
           </div>
         )}
       </main>
 
       {showNewNotebook && (
-        <Modal
-          title="New Notebook"
+        <PromptModal
+          title="New notebook"
           value={newName}
           onChange={setNewName}
           onCancel={() => {
@@ -517,8 +930,8 @@ export default function App() {
       )}
 
       {showNewTag && (
-        <Modal
-          title="New Tag"
+        <PromptModal
+          title="New tag"
           value={newName}
           onChange={setNewName}
           onCancel={() => {
@@ -533,11 +946,71 @@ export default function App() {
           }}
         />
       )}
+
+      {showGallery && (
+        <TemplateGallery
+          templates={templates}
+          catalog={catalog}
+          notebooks={notebooks}
+          defaultNotebookId={
+            filter.type === "notebook" ? filter.id : defaultNotebook?.id || ""
+          }
+          onClose={() => setShowGallery(false)}
+          onUse={useTemplate}
+          onCreateBlank={() => {
+            setShowGallery(false);
+            createBlankNote();
+          }}
+        />
+      )}
+
+      {showSettings && (
+        <SettingsModal
+          prefs={prefs}
+          account={account}
+          notebooks={notebooks}
+          version={version}
+          storage={storage}
+          onClose={() => setShowSettings(false)}
+          onSavePrefs={async (patch) => {
+            const next = await api.updateSettings(patch);
+            setPrefs({ ...defaultPreferences, ...next });
+            if (patch.default_notebook_id) {
+              await api.updateNotebook(patch.default_notebook_id, {
+                is_default: true,
+              });
+              await refreshMeta();
+            }
+          }}
+          onSaveAccount={async (patch) => {
+            const next = await api.updateAccount(patch);
+            setAccount(next);
+          }}
+          onResetPrefs={async () => {
+            const next = await api.resetSettings();
+            setPrefs({ ...defaultPreferences, ...next });
+          }}
+          onRestoreTemplates={async () => {
+            await api.restoreTemplates();
+            await refreshMeta();
+            await refreshNotes();
+          }}
+          onImport={() => {
+            setShowSettings(false);
+            importRef.current?.click();
+          }}
+          onEmptyTrash={async () => {
+            if (!confirm("Permanently delete all notes in Trash?")) return;
+            await api.emptyTrash();
+            await refreshNotes();
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function Modal({
+function PromptModal({
   title,
   value,
   onChange,
@@ -551,8 +1024,8 @@ function Modal({
   onSubmit: () => void;
 }) {
   return (
-    <div className="modal-backdrop">
-      <div className="modal">
+    <div className="modal-backdrop" onMouseDown={onCancel}>
+      <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
         <h3>{title}</h3>
         <input
           autoFocus

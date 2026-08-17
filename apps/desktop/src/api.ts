@@ -38,6 +38,9 @@ export interface NoteSummary {
   tag_ids: string[];
   tag_names: string[];
   attachment_count: number;
+  is_template: boolean;
+  template_category: string | null;
+  notebook_name: string;
   created_at: string;
   updated_at: string;
 }
@@ -55,6 +58,11 @@ export interface Note {
   source_url: string | null;
   latitude: number | null;
   longitude: number | null;
+  is_template: boolean;
+  template_category: string | null;
+  template_key: string | null;
+  tag_ids: string[];
+  tag_names: string[];
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -73,8 +81,72 @@ export type ViewFilter =
   | { type: "notebook"; id: string; name: string }
   | { type: "tag"; id: string; name: string }
   | { type: "shortcuts" }
+  | { type: "templates" }
   | { type: "trash" }
   | { type: "search"; query: string };
+
+export interface Account {
+  id: string;
+  email: string;
+  display_name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Preferences {
+  theme: "light" | "dark" | "system";
+  startup_view: "all" | "shortcuts" | "notebook";
+  confirm_delete: boolean;
+  spell_check: boolean;
+  date_format: "short" | "medium" | "long";
+  week_starts_on: "sunday" | "monday";
+  note_width: "readable" | "full";
+  font_family: "default" | "serif" | "mono";
+  font_size: number;
+  show_snippets: boolean;
+  list_density: "comfortable" | "compact";
+  sort_by: "updated" | "created" | "title";
+  new_note_behavior: "blank" | "ask";
+  auto_save_ms: number;
+  show_shortcuts: boolean;
+  show_notebooks: boolean;
+  show_tags: boolean;
+  show_templates: boolean;
+  show_trash: boolean;
+  show_import: boolean;
+  default_notebook_id: string | null;
+}
+
+export const defaultPreferences: Preferences = {
+  theme: "light",
+  startup_view: "all",
+  confirm_delete: true,
+  spell_check: true,
+  date_format: "medium",
+  week_starts_on: "sunday",
+  note_width: "readable",
+  font_family: "default",
+  font_size: 16,
+  show_snippets: true,
+  list_density: "comfortable",
+  sort_by: "updated",
+  new_note_behavior: "blank",
+  auto_save_ms: 600,
+  show_shortcuts: true,
+  show_notebooks: true,
+  show_tags: true,
+  show_templates: true,
+  show_trash: true,
+  show_import: true,
+  default_notebook_id: null,
+};
+
+export interface TemplateCatalogItem {
+  key: string;
+  title: string;
+  category: string;
+  description: string;
+}
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8799";
 
@@ -117,6 +189,14 @@ export const api = {
     }),
   deleteNotebook: (id: string) =>
     request<void>(`/api/v1/notebooks/${id}`, { method: "DELETE" }),
+  updateNotebook: (
+    id: string,
+    patch: Partial<{ name: string; is_default: boolean; stack_id: string | null }>
+  ) =>
+    request<Notebook>(`/api/v1/notebooks/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
 
   listStacks: () => request<Stack[]>("/api/v1/stacks"),
   createStack: (name: string) =>
@@ -137,25 +217,39 @@ export const api = {
     tagId?: string;
     trash?: boolean;
     archived?: boolean;
+    templates?: boolean;
   }) => {
     const qs = new URLSearchParams();
     if (params.notebookId) qs.set("notebook_id", params.notebookId);
     if (params.tagId) qs.set("tag_id", params.tagId);
     if (params.trash) qs.set("trash", "true");
     if (params.archived !== undefined) qs.set("archived", String(params.archived));
+    if (params.templates !== undefined) qs.set("templates", String(params.templates));
     const query = qs.toString();
     return request<NoteSummary[]>(`/api/v1/notes${query ? `?${query}` : ""}`);
   },
 
   getNote: (id: string) => request<Note>(`/api/v1/notes/${id}`),
 
-  createNote: (notebookId: string, title = "Untitled") =>
+  createNote: (
+    notebookId: string,
+    options?: {
+      title?: string;
+      content?: string;
+      tag_ids?: string[];
+      is_template?: boolean;
+      template_category?: string;
+    }
+  ) =>
     request<Note>("/api/v1/notes", {
       method: "POST",
       body: JSON.stringify({
         notebook_id: notebookId,
-        title,
-        content: "<p></p>",
+        title: options?.title ?? "Untitled",
+        content: options?.content ?? "<p></p>",
+        tag_ids: options?.tag_ids,
+        is_template: options?.is_template ?? false,
+        template_category: options?.template_category ?? null,
       }),
     }),
 
@@ -169,6 +263,8 @@ export const api = {
       is_archived: boolean;
       tag_ids: string[];
       reminder_at: string | null;
+      is_template: boolean;
+      template_category: string | null;
     }>
   ) =>
     request<Note>(`/api/v1/notes/${id}`, {
@@ -279,4 +375,35 @@ export const api = {
     }
     return parseImportResponse(res);
   },
+
+  getAccount: () => request<Account>("/api/v1/account"),
+  updateAccount: (patch: Partial<{ email: string; display_name: string }>) =>
+    request<Account>("/api/v1/account", {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
+
+  getSettings: () => request<Preferences>("/api/v1/settings"),
+  updateSettings: (patch: Partial<Preferences>) =>
+    request<Preferences>("/api/v1/settings", {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
+  resetSettings: () =>
+    request<Preferences>("/api/v1/settings", { method: "DELETE" }),
+
+  templateCatalog: () =>
+    request<TemplateCatalogItem[]>("/api/v1/templates/catalog"),
+  restoreTemplates: () =>
+    request<{ restored: number }>("/api/v1/templates/restore", {
+      method: "POST",
+    }),
+  useTemplate: (id: string, notebookId?: string) =>
+    request<Note>(`/api/v1/templates/${id}/use`, {
+      method: "POST",
+      body: JSON.stringify({ notebook_id: notebookId || null }),
+    }),
+
+  storageInfo: () =>
+    request<{ database: string; attachments: string }>("/api/v1/storage"),
 };

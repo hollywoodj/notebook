@@ -71,7 +71,7 @@ pub fn search_notes(service: &NotebookService, query: SearchQuery) -> Result<Sea
     let mut notes = Vec::new();
     for row in rows {
         let id = Uuid::parse_str(&row?).unwrap();
-        let all = service.list_notes(None, None, include_trash, None)?;
+        let all = service.list_notes(None, None, include_trash, None, None)?;
         if let Some(summary) = all.into_iter().find(|n| n.id == id) {
             if include_archived || !summary.is_archived {
                 notes.push(summary);

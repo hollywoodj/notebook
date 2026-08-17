@@ -125,6 +125,8 @@ impl NotebookService {
             is_pinned: None,
             reminder_at: note.reminder_at,
             source_url: note.source_url,
+            is_template: None,
+            template_category: None,
         })?;
 
         if let (Some(created_at), Some(updated_at)) = (note.created, note.updated) {

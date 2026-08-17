@@ -92,7 +92,7 @@ pub fn note(service: &NotebookService, action: &NoteAction, json_out: bool) -> R
             tag,
             archived,
         } => {
-            let notes = service.list_notes(*notebook, *tag, false, *archived)?;
+            let notes = service.list_notes(*notebook, *tag, false, *archived, None)?;
             print_notes(&notes, json_out);
         }
         NoteAction::Get { id } => {
@@ -127,6 +127,8 @@ pub fn note(service: &NotebookService, action: &NoteAction, json_out: bool) -> R
                 is_pinned: Some(*pinned),
                 reminder_at: None,
                 source_url: None,
+                is_template: None,
+                template_category: None,
             })?;
             if json_out {
                 println!("{}", serde_json::to_string_pretty(&note)?);
@@ -153,6 +155,8 @@ pub fn note(service: &NotebookService, action: &NoteAction, json_out: bool) -> R
                     is_archived: *archived,
                     reminder_at: None,
                     source_url: None,
+                    is_template: None,
+                    template_category: None,
                 },
             )?;
             if json_out {
@@ -308,7 +312,7 @@ pub fn search(service: &NotebookService, query: SearchQuery, json_out: bool) -> 
 pub fn trash(service: &NotebookService, action: &TrashAction, json_out: bool) -> Result<()> {
     match action {
         TrashAction::List => {
-            let notes = service.list_notes(None, None, true, None)?;
+            let notes = service.list_notes(None, None, true, None, None)?;
             print_notes(&notes, json_out);
         }
         TrashAction::Empty => {

@@ -16,6 +16,8 @@ Built for **macOS and Windows** (Tauri desktop), with a **REST API** and **CLI**
 | Trash / restore / empty trash | ✅ |
 | Note revision history | ✅ |
 | Shortcuts | ✅ |
+| Templates (gallery + custom) | ✅ |
+| Settings / preferences | ✅ |
 | Pin / archive notes | ✅ |
 | REST API | ✅ |
 | CLI (local + remote API) | ✅ |
@@ -194,6 +196,21 @@ Base URL: `http://127.0.0.1:8799`
 - `POST /api/v1/notes/:id/attachments/upload` (multipart field `file`)
 - `GET /api/v1/attachments/:id` (download)
 - `DELETE /api/v1/attachments/:id`
+
+### Templates
+
+- `GET /api/v1/notes?templates=true` — notes marked as templates
+- `POST /api/v1/templates/:id/use` — `{ "notebook_id": "..." }` creates a note from a template
+- `GET /api/v1/templates/catalog` — built-in gallery metadata
+- `POST /api/v1/templates/restore` — restore missing built-in templates
+
+Save any note as a template with `PUT /api/v1/notes/:id` and `{ "is_template": true }`.
+
+### Settings & account
+
+- `GET /api/v1/account` / `PUT /api/v1/account` — `{ "display_name", "email" }`
+- `GET /api/v1/settings` / `PUT /api/v1/settings` / `DELETE /api/v1/settings`
+- `GET /api/v1/storage` — database and attachments paths
 
 ### Shortcuts & trash
 
