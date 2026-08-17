@@ -13,10 +13,13 @@ import { api, Attachment, attachmentUrl } from "../api";
 import { Icon } from "./Icons";
 import {
   FileAttachment,
+  USE_FILE_AS_TITLE,
   contentReferencesAttachment,
   fileAttachmentNode,
+  formatFileSize,
   isFileAttachment,
   isPdfFile,
+  titleFromFilename,
 } from "./fileAttachment";
 
 interface Props {
@@ -28,13 +31,13 @@ interface Props {
   fontFamily: "default" | "serif" | "mono";
   fontSize: number;
   noteWidth: "readable" | "full";
+  pdfView?: "expanded" | "title";
   placeholder?: string;
+  onUseAsTitle?: (filename: string) => void;
 }
 
 function formatSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.max(0.1, bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return formatFileSize(bytes);
 }
 
 export function NoteEditor({
@@ -46,7 +49,9 @@ export function NoteEditor({
   fontFamily,
   fontSize,
   noteWidth,
+  pdfView = "expanded",
   placeholder = "Start writing, or pick a template…",
+  onUseAsTitle,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const queueFilesRef = useRef<(files: File[], position?: number) => void>(() => {});
@@ -56,6 +61,10 @@ export function NoteEditor({
 
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const restoredFilesRef = useRef(false);
+  const pdfViewRef = useRef(pdfView);
+  pdfViewRef.current = pdfView;
+  const onUseAsTitleRef = useRef(onUseAsTitle);
+  onUseAsTitleRef.current = onUseAsTitle;
 
   const editor = useEditor({
     extensions: [
@@ -153,12 +162,35 @@ export function NoteEditor({
       return;
     }
     restoredFilesRef.current = true;
+    const expanded = pdfViewRef.current !== "title";
     const nodes: JSONContent[] = missing.map((item) =>
-      fileAttachmentNode(item, attachmentUrl(item.id))
+      fileAttachmentNode(item, attachmentUrl(item.id), expanded)
     );
     nodes.push({ type: "paragraph" });
     editor.chain().insertContentAt(editor.state.doc.content.size, nodes).run();
   }, [attachments, editor]);
+
+  useEffect(() => {
+    if (!editor) return;
+    const root = editor.view.dom;
+    const onUseTitle = (event: Event) => {
+      const filename = (event as CustomEvent<{ filename?: string }>).detail?.filename;
+      if (filename) onUseAsTitleRef.current?.(titleFromFilename(filename));
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".notebook-file-menu, .notebook-file-more")) return;
+      document.querySelectorAll(".notebook-file-menu.is-open").forEach((menu) => {
+        menu.classList.remove("is-open");
+      });
+    };
+    root.addEventListener(USE_FILE_AS_TITLE, onUseTitle);
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      root.removeEventListener(USE_FILE_AS_TITLE, onUseTitle);
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [editor]);
 
   if (!editor) return null;
 
@@ -195,7 +227,9 @@ export function NoteEditor({
             return;
           }
 
-          nodes.push(fileAttachmentNode(attachment, url));
+          nodes.push(
+            fileAttachmentNode(attachment, url, pdfViewRef.current !== "title")
+          );
         });
 
         nodes.push({ type: "paragraph" });
