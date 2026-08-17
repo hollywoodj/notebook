@@ -159,7 +159,7 @@ button {
 .app-shell {
   display: grid;
   grid-template-columns: var(--sidebar-width, 248px) 5px var(--list-width, 320px) 5px minmax(0, 1fr);
-  grid-template-rows: 32px minmax(0, 1fr);
+  grid-template-rows: 32px 36px minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
 }
@@ -225,6 +225,104 @@ button {
   border-bottom: 1px solid var(--border);
   user-select: none;
   z-index: 30;
+}
+
+.note-tab-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  height: 36px;
+  background: var(--sidebar-bg);
+  border-bottom: 1px solid var(--border);
+  z-index: 20;
+  user-select: none;
+}
+
+.note-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.note-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 0;
+  min-width: 72px;
+  max-width: 220px;
+  height: 100%;
+  padding: 0 8px 0 12px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.note-tab.is-active {
+  background: var(--panel-bg);
+  color: var(--text);
+}
+
+.note-tab:hover {
+  background: var(--sidebar-hover);
+  color: var(--text);
+}
+
+.note-tab.is-active:hover {
+  background: var(--panel-bg);
+}
+
+.note-tab-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.note-tab-close {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+}
+
+.note-tab:hover .note-tab-close,
+.note-tab.is-active .note-tab-close {
+  opacity: 0.7;
+}
+
+.note-tab-close:hover {
+  opacity: 1;
+  background: var(--border);
+}
+
+.note-tab-new {
+  flex: 0 0 auto;
+  width: 36px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  display: grid;
+  place-items: center;
+}
+
+.note-tab-new:hover {
+  color: var(--text);
+  background: var(--sidebar-hover);
 }
 
 .app-menu-group {
@@ -2380,6 +2478,7 @@ kbd {
 
 @media print {
   .app-menu-bar,
+  .note-tab-bar,
   .sidebar,
   .pane-splitter,
   .note-list-panel,

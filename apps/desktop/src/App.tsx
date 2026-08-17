@@ -24,6 +24,7 @@ import { ContextMenu, ContextMenuEntry } from "./components/ContextMenu";
 import { MenuBar, MenuBarGroup } from "./components/MenuBar";
 import { NoteInfoPanel } from "./components/NoteInfoPanel";
 import { NoteTagBar } from "./components/NoteTagBar";
+import { NoteTabBar } from "./components/NoteTabBar";
 import { PaneSplitter } from "./components/PaneSplitter";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { JumpToDialog } from "./components/JumpToDialog";
@@ -46,6 +47,7 @@ import {
   adjacentNoteId,
   clampPaneWidth,
   countWords,
+  createNoteTab,
   decodeNoteDrag,
   dispatchEditorCommand,
   downloadTextFile,
@@ -59,14 +61,17 @@ import {
   hasVisibleSidebarNotebooks,
   matchesSidebarFilter,
   mergeNoteBodies,
+  nextActiveTabId,
   nextZoom,
   noteAppLink,
+  noteTabLabel,
   notebooksMatchingFilter,
   notesToEnex,
   notesToHtmlDocument,
   parseEditorChrome,
   parsePaneLayout,
   reminderFromPreset,
+  reorderById,
   resolveListView,
   safeFilename,
   snippetParts,
@@ -88,6 +93,20 @@ type RenameTarget =
   | { kind: "notebook"; id: string; name: string }
   | { kind: "stack"; id: string; name: string }
   | { kind: "tag"; id: string; name: string };
+
+type NoteTab = {
+  id: string;
+  noteId: string | null;
+  title: string;
+  filter: ViewFilter;
+};
+
+function makeNoteTab(init?: Partial<NoteTab>): NoteTab {
+  return {
+    ...createNoteTab(init),
+    filter: init?.filter ?? { type: "all" },
+  };
+}
 
 type PendingConfirm = {
   message: string;
@@ -139,6 +158,8 @@ export default function App() {
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set());
   const [activeNote, setActiveNote] = useState<Note | null>(null);
   const [filter, setFilter] = useState<ViewFilter>({ type: "all" });
+  const [tabs, setTabs] = useState<NoteTab[]>(() => [makeNoteTab()]);
+  const [activeTabId, setActiveTabId] = useState(() => tabs[0].id);
   const [searchInput, setSearchInput] = useState("");
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [showNewNotebook, setShowNewNotebook] = useState(false);
@@ -199,6 +220,14 @@ export default function App() {
     dragging: boolean;
   }>({ anchorId: null, dragging: false });
   const skipNoteClickRef = useRef(false);
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const activeTabIdRef = useRef(activeTabId);
+  activeTabIdRef.current = activeTabId;
+  const activeNoteRef = useRef(activeNote);
+  activeNoteRef.current = activeNote;
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
 
   const openSettings = (section: SettingsSection = "application") => {
     setSettingsSection(section);
@@ -290,14 +319,145 @@ export default function App() {
     setNotes(sorted);
   }, [filter, prefs.sort_by]);
 
-  const loadNote = useCallback(async (id: string) => {
+  const loadNote = useCallback(async (id: string, tabId?: string) => {
     skipNextSave.current = true;
     const note = await api.getNote(id);
+    const targetTabId = tabId ?? activeTabIdRef.current;
     setActiveNote(note);
     setSelectedNoteIds(new Set([id]));
     lastClickedNoteId.current = id;
     setShowNoteMenu(false);
+    setTabs((current) =>
+      current.map((tab) =>
+        tab.id === targetTabId
+          ? {
+              ...tab,
+              noteId: note.id,
+              title: noteTabLabel(note.title, true),
+              filter: filterRef.current,
+            }
+          : tab
+      )
+    );
   }, []);
+
+  const rememberCurrentTab = () => {
+    const currentId = activeTabIdRef.current;
+    const note = activeNoteRef.current;
+    const currentFilter = filterRef.current;
+    setTabs((current) =>
+      current.map((tab) =>
+        tab.id === currentId
+          ? {
+              ...tab,
+              filter: currentFilter,
+              noteId: note?.id ?? null,
+              title: noteTabLabel(note?.title, Boolean(note)),
+            }
+          : tab
+      )
+    );
+  };
+
+  const switchToTab = useCallback(async (tabId: string) => {
+    if (tabId === activeTabIdRef.current) return;
+    rememberCurrentTab();
+    const next = tabsRef.current.find((tab) => tab.id === tabId);
+    if (!next) return;
+    activeTabIdRef.current = tabId;
+    setActiveTabId(tabId);
+    setFilter(next.filter);
+    if (next.noteId) {
+      await loadNote(next.noteId, tabId);
+      return;
+    }
+    skipNextSave.current = true;
+    setActiveNote(null);
+    setSelectedNoteIds(new Set());
+    lastClickedNoteId.current = null;
+  }, [loadNote]);
+
+  const openNewTab = useCallback(() => {
+    rememberCurrentTab();
+    const tab = makeNoteTab({ filter: { type: "all" } });
+    setTabs((current) => [...current, tab]);
+    activeTabIdRef.current = tab.id;
+    setActiveTabId(tab.id);
+    setFilter({ type: "all" });
+    skipNextSave.current = true;
+    setActiveNote(null);
+    setSelectedNoteIds(new Set());
+    lastClickedNoteId.current = null;
+  }, []);
+
+  const closeTab = useCallback(
+    (tabId: string) => {
+      const currentTabs = tabsRef.current;
+      const closing = currentTabs.find((tab) => tab.id === tabId);
+      if (!closing) return;
+
+      if (currentTabs.length === 1) {
+        skipNextSave.current = true;
+        setActiveNote(null);
+        setSelectedNoteIds(new Set());
+        lastClickedNoteId.current = null;
+        const emptied = {
+          ...closing,
+          noteId: null,
+          title: noteTabLabel(null, false),
+        };
+        tabsRef.current = [emptied];
+        setTabs([emptied]);
+        return;
+      }
+
+      const remaining = currentTabs.filter((tab) => tab.id !== tabId);
+      const nextId = nextActiveTabId(
+        currentTabs.map((tab) => tab.id),
+        tabId,
+        activeTabIdRef.current
+      );
+      tabsRef.current = remaining;
+      setTabs(remaining);
+      if (!nextId || nextId === activeTabIdRef.current) return;
+      const next = remaining.find((tab) => tab.id === nextId);
+      if (!next) return;
+      activeTabIdRef.current = next.id;
+      setActiveTabId(next.id);
+      setFilter(next.filter);
+      if (next.noteId) {
+        void loadNote(next.noteId, next.id);
+        return;
+      }
+      skipNextSave.current = true;
+      setActiveNote(null);
+      setSelectedNoteIds(new Set());
+      lastClickedNoteId.current = null;
+    },
+    [loadNote]
+  );
+
+  const openInNewTab = useCallback(
+    async (noteId: string) => {
+      const existing = tabsRef.current.find((tab) => tab.noteId === noteId);
+      if (existing) {
+        await switchToTab(existing.id);
+        return;
+      }
+      rememberCurrentTab();
+      const summary = notes.find((note) => note.id === noteId);
+      const tab = makeNoteTab({
+        noteId,
+        title: summary?.title || activeNoteRef.current?.title,
+        filter: filterRef.current,
+      });
+      setTabs((current) => [...current, tab]);
+      activeTabIdRef.current = tab.id;
+      setActiveTabId(tab.id);
+      await loadNote(noteId, tab.id);
+    },
+    [loadNote, notes, switchToTab]
+  );
 
   const handleNoteClick = useCallback(
     (noteId: string, event: MouseEvent) => {
@@ -428,6 +588,33 @@ export default function App() {
     const noteIds = new Set(notes.map((n) => n.id));
     setSelectedNoteIds((prev) => pruneNoteIds(prev, noteIds));
   }, [notes]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const noteIds = new Set(notes.map((note) => note.id));
+    setTabs((current) => {
+      const next = current.map((tab) =>
+        tab.noteId && !noteIds.has(tab.noteId)
+          ? { ...tab, noteId: null, title: noteTabLabel(null, false) }
+          : tab
+      );
+      const changed = next.some((tab, index) => tab !== current[index]);
+      if (!changed) return current;
+      tabsRef.current = next;
+      return next;
+    });
+  }, [notes, ready]);
+
+  useEffect(() => {
+    if (!activeNote) return;
+    setTabs((current) =>
+      current.map((tab) =>
+        tab.id === activeTabIdRef.current && tab.noteId === activeNote.id
+          ? { ...tab, title: noteTabLabel(activeNote.title, true) }
+          : tab
+      )
+    );
+  }, [activeNote?.id, activeNote?.title]);
 
   useEffect(() => {
     if (!activeNote) setShowInfo(false);
@@ -949,7 +1136,22 @@ export default function App() {
         openSettings("shortcuts");
       } else if (meta && e.key === "t" && e.shiftKey) {
         e.preventDefault();
-        setFilter({ type: "templates" });
+        openNewTab();
+      } else if (meta && e.key === "w") {
+        e.preventDefault();
+        closeTab(activeTabIdRef.current);
+      } else if (meta && e.key === "Tab") {
+        e.preventDefault();
+        const ids = tabsRef.current.map((tab) => tab.id);
+        const index = ids.indexOf(activeTabIdRef.current);
+        if (index < 0 || ids.length < 2) return;
+        const nextIndex = e.shiftKey
+          ? (index - 1 + ids.length) % ids.length
+          : (index + 1) % ids.length;
+        void switchToTab(ids[nextIndex]);
+      } else if (meta && e.key === "o" && e.altKey && activeNote) {
+        e.preventDefault();
+        void openInNewTab(activeNote.id);
       } else if (meta && e.key === "a" && !isTextInputFocused()) {
         e.preventDefault();
         setSelectedNoteIds(new Set(notes.map((n) => n.id)));
@@ -1098,7 +1300,13 @@ export default function App() {
 
       return [
         ...(count === 1
-          ? [{ label: "Open note", onSelect: () => void loadNote(targets[0].id) }]
+          ? [
+              { label: "Open note", onSelect: () => void loadNote(targets[0].id) },
+              {
+                label: "Open in New Tab",
+                onSelect: () => void openInNewTab(targets[0].id),
+              },
+            ]
           : []),
         {
           label: allShortcuts
@@ -1365,6 +1573,25 @@ export default function App() {
           shortcut: "Ctrl/⌘ ⇧ N",
           onSelect: () => setShowGallery(true),
         },
+        {
+          label: "New Tab",
+          shortcut: "Ctrl/⌘ ⇧ T",
+          onSelect: () => openNewTab(),
+        },
+        {
+          label: "Open in New Tab",
+          shortcut: "Ctrl/⌘ Alt O",
+          disabled: !activeNote,
+          onSelect: () => {
+            if (activeNote) void openInNewTab(activeNote.id);
+          },
+        },
+        {
+          label: "Close Tab",
+          shortcut: "Ctrl/⌘ W",
+          onSelect: () => closeTab(activeTabId),
+        },
+        { type: "separator" },
         {
           label: "New Notebook…",
           onSelect: () => {
@@ -1857,6 +2084,20 @@ export default function App() {
       }}
     >
       <MenuBar groups={menuGroups} />
+      <NoteTabBar
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onSelect={(id) => void switchToTab(id)}
+        onClose={closeTab}
+        onNewTab={openNewTab}
+        onReorder={(fromId, toId) => {
+          setTabs((current) => {
+            const next = reorderById(current, fromId, toId);
+            tabsRef.current = next;
+            return next;
+          });
+        }}
+      />
       <aside
         className="sidebar"
         onContextMenu={(event) => {
@@ -2635,6 +2876,14 @@ export default function App() {
                     </button>
                     {showNoteMenu && (
                       <div className="menu-popover right">
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            void openInNewTab(activeNote.id);
+                          }}
+                        >
+                          Open in New Tab
+                        </button>
                         {!activeNote.is_template && (
                           <button
                             onClick={() => {
