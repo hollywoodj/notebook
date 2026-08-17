@@ -63,6 +63,7 @@ import {
   matchesSidebarFilter,
   mergeNoteBodies,
   nextActiveTabId,
+  nextSidebarFlyout,
   nextZoom,
   noteAppLink,
   noteTabLabel,
@@ -76,6 +77,8 @@ import {
   resizeSidebarTo,
   resolveListView,
   safeFilename,
+  sidebarFilterLabel,
+  sidebarFlyoutTitle,
   snippetParts,
   TEXT_COLORS,
   toDatetimeLocalValue,
@@ -85,6 +88,8 @@ import {
   windowTitleForNote,
   type ListView,
   type ReminderPreset,
+  type SidebarFlyout,
+  type SidebarFlyoutKind,
 } from "./uiChrome";
 
 type ContextTarget =
@@ -200,8 +205,7 @@ export default function App() {
   const [storage, setStorage] = useState({ database: "", attachments: "" });
   const [shortcutIds, setShortcutIds] = useState<Set<string>>(new Set());
   const [shortcutNotes, setShortcutNotes] = useState<NoteSummary[]>([]);
-  const [sidebarFlyout, setSidebarFlyout] = useState<"shortcuts" | "notebooks" | null>(null);
-  const [tagsOpen, setTagsOpen] = useState(true);
+  const [sidebarFlyout, setSidebarFlyout] = useState<SidebarFlyout>(null);
   const [showInfo, setShowInfo] = useState(false);
   const [findTick, setFindTick] = useState(0);
   const [replaceTick, setReplaceTick] = useState(0);
@@ -210,8 +214,6 @@ export default function App() {
       typeof localStorage === "undefined" ? null : localStorage.getItem(PANE_LAYOUT_KEY)
     )
   );
-  const [sidebarHovered, setSidebarHovered] = useState(false);
-  const [sidebarFocused, setSidebarFocused] = useState(false);
   const [counts, setCounts] = useState<SidebarCounts>({
     notes: 0,
     reminders: 0,
@@ -294,11 +296,20 @@ export default function App() {
     }
   };
 
-  const openSidebarFilter = () => {
+  const openSidebarFilter = (kind: "notebooks" | "tags" = "notebooks") => {
     setSidebarFilterOpen(true);
-    setSidebarFlyout("notebooks");
-    setTagsOpen(true);
+    setSidebarFlyout(kind);
     window.setTimeout(() => sidebarFilterRef.current?.focus(), 0);
+  };
+
+  /** Opening a different section starts it unfiltered, so the panel matches its label. */
+  const openSidebarFlyout = (kind: SidebarFlyoutKind) => {
+    const next = nextSidebarFlyout(sidebarFlyout, kind);
+    setSidebarFlyout(next);
+    if (next !== sidebarFlyout) {
+      setSidebarFilter("");
+      setSidebarFilterOpen(false);
+    }
   };
 
   const refreshNotes = useCallback(async () => {
@@ -1740,8 +1751,10 @@ export default function App() {
       items: [
         { label: "All Notes", onSelect: () => { setSidebarFlyout(null); setFilter({ type: "all" }); } },
         { label: "Shortcuts", onSelect: () => { setSidebarFlyout("shortcuts"); setFilter({ type: "shortcuts" }); } },
-        { label: "Reminders", onSelect: () => setFilter({ type: "reminders" }) },
-        { label: "Templates", onSelect: () => setFilter({ type: "templates" }) },
+        { label: "Notebooks", onSelect: () => setSidebarFlyout("notebooks") },
+        { label: "Tags", onSelect: () => setSidebarFlyout("tags") },
+        { label: "Reminders", onSelect: () => { setSidebarFlyout(null); setFilter({ type: "reminders" }); } },
+        { label: "Templates", onSelect: () => { setSidebarFlyout(null); setFilter({ type: "templates" }); } },
         { type: "separator" },
         {
           label: paneLayout.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar",
@@ -2165,9 +2178,6 @@ export default function App() {
   ];
 
   const sidebarRail = isSidebarRail(paneLayout);
-  const sidebarRailOpen =
-    sidebarRail &&
-    (sidebarHovered || sidebarFocused || Boolean(sidebarFlyout) || showNewMenu);
 
   return (
     <div
@@ -2214,15 +2224,7 @@ export default function App() {
         }}
       />
       <aside
-        className={"sidebar" + (sidebarRailOpen ? " rail-open" : "")}
-        onMouseEnter={() => setSidebarHovered(true)}
-        onMouseLeave={() => setSidebarHovered(false)}
-        onFocus={() => setSidebarFocused(true)}
-        onBlur={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-            setSidebarFocused(false);
-          }
-        }}
+        className="sidebar"
         onContextMenu={(event) => {
           event.preventDefault();
           setContextMenu({
@@ -2312,10 +2314,18 @@ export default function App() {
                 <button
                   onClick={() => {
                     setShowNewMenu(false);
-                    openSidebarFilter();
+                    openSidebarFilter("notebooks");
                   }}
                 >
-                  Filter notebooks & tags
+                  Filter notebooks
+                </button>
+                <button
+                  onClick={() => {
+                    setShowNewMenu(false);
+                    openSidebarFilter("tags");
+                  }}
+                >
+                  Filter tags
                 </button>
               </div>
             )}
@@ -2325,6 +2335,7 @@ export default function App() {
         <nav className="sidebar-nav scroll-pane">
           <button
             className={filter.type === "all" ? "nav-item active" : "nav-item"}
+            title="Notes"
             onClick={() => {
               setSidebarFlyout(null);
               setFilter({ type: "all" });
@@ -2341,10 +2352,10 @@ export default function App() {
                   ? "nav-item active"
                   : "nav-item")
               }
+              title="Shortcuts"
+              aria-expanded={sidebarFlyout === "shortcuts"}
               onClick={() => {
-                setSidebarFlyout((current) =>
-                  current === "shortcuts" ? null : "shortcuts"
-                );
+                openSidebarFlyout("shortcuts");
                 setFilter({ type: "shortcuts" });
               }}
             >
@@ -2356,6 +2367,7 @@ export default function App() {
           {prefs.show_reminders && (
             <button
               className={filter.type === "reminders" ? "nav-item active" : "nav-item"}
+              title="Reminders"
               onClick={() => {
                 setSidebarFlyout(null);
                 setFilter({ type: "reminders" });
@@ -2374,11 +2386,9 @@ export default function App() {
                   ? "nav-item active"
                   : "nav-item")
               }
-              onClick={() =>
-                setSidebarFlyout((current) =>
-                  current === "notebooks" ? null : "notebooks"
-                )
-              }
+              title="Notebooks"
+              aria-expanded={sidebarFlyout === "notebooks"}
+              onClick={() => openSidebarFlyout("notebooks")}
             >
               <Icon.Notebooks size={16} />
               <span className="nav-label">Notebooks</span>
@@ -2387,77 +2397,26 @@ export default function App() {
           )}
 
           {prefs.show_tags && (
-            <div className="nav-section">
-              <button
-                className="nav-section-title"
-                onClick={() => setTagsOpen((v) => !v)}
-              >
-                <span>
-                  <Icon.Tags size={16} />
-                  <span className="nav-label">Tags</span>
-                </span>
-                <span className="section-actions">
-                  <span
-                    className="plus"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowNewTag(true);
-                    }}
-                  >
-                    +
-                  </span>
-                  <Icon.Chevron
-                    size={14}
-                    style={{
-                      transform:
-                        tagsOpen || sidebarFilter.trim()
-                          ? "rotate(0deg)"
-                          : "rotate(-90deg)",
-                    }}
-                  />
-                </span>
-              </button>
-              {(tagsOpen || Boolean(sidebarFilter.trim())) &&
-                visibleTags.map((tag) => (
-                  <button
-                    key={tag.id}
-                    className={
-                      (filter.type === "tag" && filter.id === tag.id
-                        ? "nav-item active indent"
-                        : "nav-item indent") +
-                      (dropTarget === `tag:${tag.id}` ? " drop-target" : "")
-                    }
-                    onClick={() => {
-                      setSidebarFlyout(null);
-                      setFilter({ type: "tag", id: tag.id, name: tag.name });
-                    }}
-                    onDragOver={(event) => allowNoteDrop(event, `tag:${tag.id}`)}
-                    onDragLeave={() => setDropTarget(null)}
-                    onDrop={(event) => void tagDroppedNotes(tag.id, event)}
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setContextMenu({
-                        kind: "tag",
-                        x: event.clientX,
-                        y: event.clientY,
-                        tag,
-                      });
-                    }}
-                  >
-                    <span className="nav-label">#{tag.name}</span>
-                    <span className="nav-count">{tag.note_count ?? 0}</span>
-                  </button>
-                ))}
-              {sidebarFilter.trim() && tagsOpen !== false && visibleTags.length === 0 && (
-                <div className="empty-state compact">No matching tags</div>
-              )}
-            </div>
+            <button
+              className={
+                (filter.type === "tag" || sidebarFlyout === "tags"
+                  ? "nav-item active"
+                  : "nav-item")
+              }
+              title="Tags"
+              aria-expanded={sidebarFlyout === "tags"}
+              onClick={() => openSidebarFlyout("tags")}
+            >
+              <Icon.Tags size={16} />
+              <span className="nav-label">Tags</span>
+              <span className="nav-count">{tags.length}</span>
+            </button>
           )}
 
           {prefs.show_templates && (
             <button
               className={filter.type === "templates" ? "nav-item active" : "nav-item"}
+              title="Templates"
               onClick={() => {
                 setSidebarFlyout(null);
                 setFilter({ type: "templates" });
@@ -2472,6 +2431,7 @@ export default function App() {
           {prefs.show_trash && (
             <button
               className={filter.type === "trash" ? "nav-item active" : "nav-item"}
+              title="Trash"
               onClick={() => {
                 setSidebarFlyout(null);
                 setFilter({ type: "trash" });
@@ -2486,13 +2446,13 @@ export default function App() {
         {sidebarFlyout && (
           <div className="sidebar-flyout" onMouseDown={(event) => event.stopPropagation()}>
             <div className="sidebar-flyout-header">
-              <h3>{sidebarFlyout === "shortcuts" ? "Shortcuts" : "Notebooks"}</h3>
-              {sidebarFlyout === "notebooks" && (
+              <h3>{sidebarFlyoutTitle(sidebarFlyout)}</h3>
+              {sidebarFlyout !== "shortcuts" && (
                 <div className="sidebar-flyout-actions">
                   <button
                     type="button"
                     className="icon-btn"
-                    title="Filter notebooks & tags"
+                    title={sidebarFilterLabel(sidebarFlyout)}
                     onClick={() => {
                       if (sidebarFilterOpen || sidebarFilter.trim()) {
                         setSidebarFilter("");
@@ -2508,8 +2468,12 @@ export default function App() {
                   <button
                     type="button"
                     className="icon-btn"
-                    title="New notebook"
+                    title={sidebarFlyout === "tags" ? "New tag" : "New notebook"}
                     onClick={() => {
+                      if (sidebarFlyout === "tags") {
+                        setShowNewTag(true);
+                        return;
+                      }
                       setNewNotebookStackId(null);
                       setShowNewNotebook(true);
                     }}
@@ -2527,35 +2491,40 @@ export default function App() {
                 <Icon.Close size={14} />
               </button>
             </div>
-            {sidebarFlyout === "notebooks" && (sidebarFilterOpen || Boolean(sidebarFilter.trim())) && (
-              <div className="sidebar-search sidebar-filter">
-                <Icon.Notebooks size={15} />
-                <input
-                  ref={sidebarFilterRef}
-                  value={sidebarFilter}
-                  onChange={(e) => setSidebarFilter(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") {
+            {sidebarFlyout !== "shortcuts" &&
+              (sidebarFilterOpen || Boolean(sidebarFilter.trim())) && (
+                <div className="sidebar-search sidebar-filter">
+                  {sidebarFlyout === "tags" ? (
+                    <Icon.Tags size={15} />
+                  ) : (
+                    <Icon.Notebooks size={15} />
+                  )}
+                  <input
+                    ref={sidebarFilterRef}
+                    value={sidebarFilter}
+                    onChange={(e) => setSidebarFilter(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        setSidebarFilter("");
+                        setSidebarFilterOpen(false);
+                      }
+                    }}
+                    placeholder={sidebarFilterLabel(sidebarFlyout)}
+                    aria-label={sidebarFilterLabel(sidebarFlyout)}
+                  />
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="Close filter"
+                    onClick={() => {
                       setSidebarFilter("");
                       setSidebarFilterOpen(false);
-                    }
-                  }}
-                  placeholder="Filter notebooks & tags"
-                  aria-label="Filter notebooks and tags"
-                />
-                <button
-                  type="button"
-                  className="icon-btn"
-                  title="Close filter"
-                  onClick={() => {
-                    setSidebarFilter("");
-                    setSidebarFilterOpen(false);
-                  }}
-                >
-                  <Icon.Close size={14} />
-                </button>
-              </div>
-            )}
+                    }}
+                  >
+                    <Icon.Close size={14} />
+                  </button>
+                </div>
+              )}
             <div className="sidebar-flyout-body scroll-pane">
               {sidebarFlyout === "shortcuts" &&
                 (shortcutNotes.length === 0 ? (
@@ -2681,6 +2650,46 @@ export default function App() {
                     )}
                 </>
               )}
+              {sidebarFlyout === "tags" &&
+                (visibleTags.length === 0 ? (
+                  <div className="empty-state compact">
+                    {sidebarFilter.trim()
+                      ? "No matching tags"
+                      : "Add a tag to a note and it will appear here."}
+                  </div>
+                ) : (
+                  visibleTags.map((tag) => (
+                    <button
+                      key={tag.id}
+                      type="button"
+                      className={
+                        (filter.type === "tag" && filter.id === tag.id
+                          ? "nav-item active"
+                          : "nav-item") +
+                        (dropTarget === `tag:${tag.id}` ? " drop-target" : "")
+                      }
+                      onClick={() =>
+                        setFilter({ type: "tag", id: tag.id, name: tag.name })
+                      }
+                      onDragOver={(event) => allowNoteDrop(event, `tag:${tag.id}`)}
+                      onDragLeave={() => setDropTarget(null)}
+                      onDrop={(event) => void tagDroppedNotes(tag.id, event)}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setContextMenu({
+                          kind: "tag",
+                          x: event.clientX,
+                          y: event.clientY,
+                          tag,
+                        });
+                      }}
+                    >
+                      <span className="nav-label">#{tag.name}</span>
+                      <span className="nav-count">{tag.note_count ?? 0}</span>
+                    </button>
+                  ))
+                ))}
             </div>
           </div>
         )}

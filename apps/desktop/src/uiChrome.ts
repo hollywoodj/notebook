@@ -652,6 +652,28 @@ export function emptyStateCopy(
   }
 }
 
+/** Sidebar sections whose contents open in a panel beside the sidebar. */
+export type SidebarFlyoutKind = "shortcuts" | "notebooks" | "tags";
+export type SidebarFlyout = SidebarFlyoutKind | null;
+
+/** Clicking the section that is already open closes its panel. */
+export function nextSidebarFlyout(
+  current: SidebarFlyout,
+  clicked: SidebarFlyoutKind
+): SidebarFlyout {
+  return current === clicked ? null : clicked;
+}
+
+export function sidebarFlyoutTitle(kind: SidebarFlyoutKind): string {
+  if (kind === "shortcuts") return "Shortcuts";
+  if (kind === "notebooks") return "Notebooks";
+  return "Tags";
+}
+
+export function sidebarFilterLabel(kind: SidebarFlyoutKind): string {
+  return kind === "tags" ? "Filter tags" : "Filter notebooks";
+}
+
 export function matchesSidebarFilter(name: string, query: string): boolean {
   const needle = query.trim().toLowerCase();
   if (!needle) return true;
