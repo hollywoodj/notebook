@@ -160,3 +160,171 @@ export function suggestedTags(
     .filter((tag) => !needle || tag.name.toLowerCase().includes(needle))
     .slice(0, 8);
 }
+
+export const EDITOR_COMMAND_EVENT = "notebook:editor-command";
+
+export const HIGHLIGHT_COLORS = [
+  { id: "yellow", label: "Yellow", color: "#fff3a0" },
+  { id: "green", label: "Green", color: "#c6f6d5" },
+  { id: "pink", label: "Pink", color: "#ffcce5" },
+  { id: "blue", label: "Blue", color: "#cde4ff" },
+] as const;
+
+export type EditorCommand =
+  | { type: "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll" }
+  | { type: "bold" | "italic" | "underline" | "strike" | "clear" }
+  | { type: "highlight"; color?: string }
+  | { type: "horizontalRule" | "insertDate" }
+  | { type: "heading"; level: 1 | 2 | 3 }
+  | { type: "bulletList" | "orderedList" | "taskList" | "blockquote" | "codeBlock" }
+  | { type: "link"; href?: string }
+  | { type: "replace"; query: string; replacement: string; all?: boolean };
+
+export function dispatchEditorCommand(command: EditorCommand) {
+  window.dispatchEvent(new CustomEvent(EDITOR_COMMAND_EVENT, { detail: command }));
+}
+
+export type NoteListGroup<T> = { key: string; label: string; notes: T[] };
+
+function startOfLocalDay(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+export function groupNotesForList<
+  T extends { is_pinned: boolean; created_at: string; updated_at: string },
+>(
+  notes: T[],
+  sortBy: "updated" | "created" | "title",
+  now = new Date()
+): NoteListGroup<T>[] {
+  if (sortBy === "title") {
+    const pinned = notes.filter((note) => note.is_pinned);
+    const rest = notes.filter((note) => !note.is_pinned);
+    const groups: NoteListGroup<T>[] = [];
+    if (pinned.length) groups.push({ key: "pinned", label: "Pinned", notes: pinned });
+    if (rest.length) groups.push({ key: "all", label: "", notes: rest });
+    return groups.length ? groups : [{ key: "all", label: "", notes }];
+  }
+
+  const today = startOfLocalDay(now);
+  const yesterday = today - 86_400_000;
+  const week = today - 7 * 86_400_000;
+  const buckets: Record<string, T[]> = {
+    pinned: [],
+    today: [],
+    yesterday: [],
+    week: [],
+    earlier: [],
+  };
+  for (const note of notes) {
+    if (note.is_pinned) {
+      buckets.pinned.push(note);
+      continue;
+    }
+    const stamp = startOfLocalDay(
+      new Date(sortBy === "created" ? note.created_at : note.updated_at)
+    );
+    if (stamp >= today) buckets.today.push(note);
+    else if (stamp >= yesterday) buckets.yesterday.push(note);
+    else if (stamp >= week) buckets.week.push(note);
+    else buckets.earlier.push(note);
+  }
+  return (
+    [
+      ["pinned", "Pinned"],
+      ["today", "Today"],
+      ["yesterday", "Yesterday"],
+      ["week", "Previous 7 Days"],
+      ["earlier", "Earlier"],
+    ] as const
+  )
+    .filter(([key]) => buckets[key].length > 0)
+    .map(([key, label]) => ({ key, label, notes: buckets[key] }));
+}
+
+export function snippetParts(
+  text: string,
+  query: string
+): { text: string; hit: boolean }[] {
+  const needle = query.trim();
+  if (!needle || !text) return [{ text, hit: false }];
+  const offsets = findMatchOffsets(text, needle);
+  if (!offsets.length) return [{ text, hit: false }];
+  const parts: { text: string; hit: boolean }[] = [];
+  let cursor = 0;
+  for (const start of offsets) {
+    if (start > cursor) parts.push({ text: text.slice(cursor, start), hit: false });
+    parts.push({ text: text.slice(start, start + needle.length), hit: true });
+    cursor = start + needle.length;
+  }
+  if (cursor < text.length) parts.push({ text: text.slice(cursor), hit: false });
+  return parts;
+}
+
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+export function mergeNoteBodies(
+  notes: { title: string; content: string }[]
+): string {
+  if (notes.length === 0) return "<p></p>";
+  const [first, ...rest] = notes;
+  const extra = rest.map((note) => {
+    const heading = `<h1>${escapeHtml(note.title || "Untitled")}</h1>`;
+    return `${heading}${note.content || ""}`;
+  });
+  return `${first.content || "<p></p>"}${extra.join("")}`;
+}
+
+export function toEnexTimestamp(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+export function notesToHtmlDocument(title: string, content: string): string {
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${escapeHtml(title || "Untitled")}</title></head>
+<body><h1>${escapeHtml(title || "Untitled")}</h1>${content}</body></html>`;
+}
+
+export function notesToEnex(
+  notes: {
+    title: string;
+    content: string;
+    created_at: string;
+    updated_at: string;
+    tag_names?: string[];
+  }[]
+): string {
+  const body = notes
+    .map((note) => {
+      const enml = `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd"><en-note>${note.content}</en-note>`;
+      const tags = (note.tag_names || [])
+        .map((tag) => `<tag>${escapeHtml(tag)}</tag>`)
+        .join("");
+      return `<note><title>${escapeHtml(note.title || "Untitled")}</title><content><![CDATA[${enml}]]></content><created>${toEnexTimestamp(note.created_at)}</created><updated>${toEnexTimestamp(note.updated_at)}</updated>${tags}</note>`;
+    })
+    .join("");
+  return `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE en-export SYSTEM "http://xml.evernote.com/pub/evernote-export3.dtd"><en-export>${body}</en-export>`;
+}
+
+export function downloadTextFile(filename: string, text: string, mime: string) {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+export function safeFilename(title: string): string {
+  const cleaned = (title || "Untitled").replace(/[\\/:*?"<>|]+/g, " ").trim();
+  return cleaned || "Untitled";
+}

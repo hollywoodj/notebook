@@ -8,12 +8,17 @@ import {
   encodeNoteDrag,
   findMatchOffsets,
   fromDatetimeLocalValue,
+  groupNotesForList,
   isReminderOverdue,
+  mergeNoteBodies,
   nextMatchIndex,
   noteAppLink,
+  notesToEnex,
   parsePaneLayout,
+  snippetParts,
   suggestedTags,
   toDatetimeLocalValue,
+  toEnexTimestamp,
 } from "./uiChrome.ts";
 
 describe("clampPaneWidth", () => {
@@ -111,5 +116,65 @@ describe("suggestedTags", () => {
       suggestedTags(tags, "e", ["1"]).map((tag) => tag.name),
       ["travel", "recipes"]
     );
+  });
+});
+
+describe("groupNotesForList", () => {
+  it("puts pinned notes first and buckets the rest by day", () => {
+    const now = new Date("2026-08-17T15:00:00");
+    const notes = [
+      { id: "p", is_pinned: true, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" },
+      { id: "t", is_pinned: false, created_at: "2026-08-17T10:00:00", updated_at: "2026-08-17T10:00:00" },
+      { id: "y", is_pinned: false, created_at: "2026-08-16T10:00:00", updated_at: "2026-08-16T10:00:00" },
+      { id: "e", is_pinned: false, created_at: "2026-01-02T00:00:00Z", updated_at: "2026-01-02T00:00:00Z" },
+    ];
+    const groups = groupNotesForList(notes, "updated", now);
+    assert.deepEqual(
+      groups.map((group) => [group.label, group.notes.map((note) => note.id)]),
+      [
+        ["Pinned", ["p"]],
+        ["Today", ["t"]],
+        ["Yesterday", ["y"]],
+        ["Earlier", ["e"]],
+      ]
+    );
+  });
+});
+
+describe("snippetParts", () => {
+  it("marks query hits inside a snippet", () => {
+    assert.deepEqual(snippetParts("Buy milk and eggs", "milk"), [
+      { text: "Buy ", hit: false },
+      { text: "milk", hit: true },
+      { text: " and eggs", hit: false },
+    ]);
+  });
+});
+
+describe("mergeNoteBodies", () => {
+  it("keeps the first body and appends later titles as headings", () => {
+    const html = mergeNoteBodies([
+      { title: "A", content: "<p>one</p>" },
+      { title: "B & C", content: "<p>two</p>" },
+    ]);
+    assert.equal(html, "<p>one</p><h1>B &amp; C</h1><p>two</p>");
+  });
+});
+
+describe("notesToEnex", () => {
+  it("wraps notes in Evernote export XML", () => {
+    const enex = notesToEnex([
+      {
+        title: "Hello",
+        content: "<p>Hi</p>",
+        created_at: "2026-08-17T12:00:00.000Z",
+        updated_at: "2026-08-17T12:00:00.000Z",
+        tag_names: ["work"],
+      },
+    ]);
+    assert.match(enex, /<en-export>/);
+    assert.match(enex, /<title>Hello<\/title>/);
+    assert.match(enex, /<tag>work<\/tag>/);
+    assert.equal(toEnexTimestamp("2026-08-17T12:00:00.000Z"), "20260817T120000Z");
   });
 });

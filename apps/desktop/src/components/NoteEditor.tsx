@@ -11,7 +11,14 @@ import type { JSONContent } from "@tiptap/core";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { api, Attachment, attachmentUrl } from "../api";
 import { Icon } from "./Icons";
-import { findMatchOffsets, nextMatchIndex } from "../uiChrome";
+import {
+  EDITOR_COMMAND_EVENT,
+  HIGHLIGHT_COLORS,
+  findMatchOffsets,
+  nextMatchIndex,
+  type EditorCommand,
+} from "../uiChrome";
+import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
 import {
   FileAttachment,
   USE_FILE_AS_TITLE,
@@ -36,13 +43,21 @@ interface Props {
   placeholder?: string;
   onUseAsTitle?: (filename: string) => void;
   findTick?: number;
+  onOpenNoteLink?: (noteId: string) => void;
 }
 
 function formatSize(bytes: number) {
   return formatFileSize(bytes);
 }
 
-function textOffsetToPos(doc: { descendants: (fn: (node: { isText?: boolean; text?: string }, pos: number) => boolean | void) => void }, offset: number) {
+function textOffsetToPos(
+  doc: {
+    descendants: (
+      fn: (node: { isText?: boolean; text?: string }, pos: number) => boolean | void
+    ) => void;
+  },
+  offset: number
+) {
   let remaining = offset;
   let found = 1;
   doc.descendants((node, pos) => {
@@ -69,6 +84,7 @@ export function NoteEditor({
   placeholder = "Start writing, or pick a template…",
   onUseAsTitle,
   findTick = 0,
+  onOpenNoteLink,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const queueFilesRef = useRef<(files: File[], position?: number) => void>(() => {});
@@ -80,6 +96,10 @@ export function NoteEditor({
   const [findQuery, setFindQuery] = useState("");
   const [findIndex, setFindIndex] = useState(0);
   const [findCount, setFindCount] = useState(0);
+  const [replaceQuery, setReplaceQuery] = useState("");
+  const [showReplace, setShowReplace] = useState(false);
+  const [showColors, setShowColors] = useState(false);
+  const [editorMenu, setEditorMenu] = useState<{ x: number; y: number } | null>(null);
 
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const restoredFilesRef = useRef(false);
@@ -96,7 +116,7 @@ export function NoteEditor({
         openOnClick: false,
         HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" },
       }),
-      Highlight,
+      Highlight.configure({ multicolor: true }),
       TaskList,
       TaskItem.configure({ nested: true }),
       Placeholder.configure({ placeholder }),
@@ -120,12 +140,19 @@ export function NoteEditor({
       handleClick: (_view, _pos, event) => {
         const target = event.target as HTMLElement | null;
         const href = target?.closest("a")?.getAttribute("href");
+        if (!href) return false;
         if (
-          href &&
-          (href.includes("/attachments/") || href.startsWith("notebook-attachment://"))
+          href.includes("/attachments/") ||
+          href.startsWith("notebook-attachment://")
         ) {
           event.preventDefault();
           window.open(href, "_blank", "noopener,noreferrer");
+          return true;
+        }
+        const noteLink = href.match(/^notebook:\/\/note\/([0-9a-f-]{36})$/i);
+        if (noteLink) {
+          event.preventDefault();
+          onOpenNoteLink?.(noteLink[1]);
           return true;
         }
         return false;
@@ -237,6 +264,111 @@ export function NoteEditor({
     editor.commands.scrollIntoView();
   }, [editor, findQuery, findIndex, showFind]);
 
+  const replaceCurrent = () => {
+    if (!editor || !findQuery.trim()) return;
+    const { from, to } = editor.state.selection;
+    const selected = editor.state.doc.textBetween(from, to, "");
+    if (selected.toLowerCase() !== findQuery.trim().toLowerCase()) return;
+    editor.chain().focus().insertContent(replaceQuery).run();
+    setFindIndex((current) => current);
+  };
+
+  const replaceAll = () => {
+    if (!editor || !findQuery.trim()) return;
+    const needle = findQuery.trim();
+    const text = editor.state.doc.textBetween(0, editor.state.doc.content.size, "", "");
+    const offsets = findMatchOffsets(text, needle);
+    for (let i = offsets.length - 1; i >= 0; i--) {
+      const from = textOffsetToPos(editor.state.doc, offsets[i]);
+      const to = from + needle.length;
+      editor.commands.insertContentAt({ from, to }, replaceQuery);
+    }
+  };
+
+  useEffect(() => {
+    if (!editor) return;
+    const onCommand = (event: Event) => {
+      const command = (event as CustomEvent<EditorCommand>).detail;
+      if (!command) return;
+      const chain = editor.chain().focus();
+      switch (command.type) {
+        case "undo":
+          chain.undo().run();
+          break;
+        case "redo":
+          chain.redo().run();
+          break;
+        case "cut":
+          document.execCommand("cut");
+          break;
+        case "copy":
+          document.execCommand("copy");
+          break;
+        case "paste":
+          document.execCommand("paste");
+          break;
+        case "selectAll":
+          chain.selectAll().run();
+          break;
+        case "bold":
+          chain.toggleBold().run();
+          break;
+        case "italic":
+          chain.toggleItalic().run();
+          break;
+        case "underline":
+          chain.toggleUnderline().run();
+          break;
+        case "strike":
+          chain.toggleStrike().run();
+          break;
+        case "clear":
+          chain.unsetAllMarks().clearNodes().run();
+          break;
+        case "highlight":
+          if (command.color) chain.toggleHighlight({ color: command.color }).run();
+          else chain.toggleHighlight().run();
+          break;
+        case "horizontalRule":
+          chain.setHorizontalRule().run();
+          break;
+        case "insertDate":
+          chain.insertContent(new Date().toLocaleString()).run();
+          break;
+        case "heading":
+          chain.toggleHeading({ level: command.level }).run();
+          break;
+        case "bulletList":
+          chain.toggleBulletList().run();
+          break;
+        case "orderedList":
+          chain.toggleOrderedList().run();
+          break;
+        case "taskList":
+          chain.toggleTaskList().run();
+          break;
+        case "blockquote":
+          chain.toggleBlockquote().run();
+          break;
+        case "codeBlock":
+          chain.toggleCodeBlock().run();
+          break;
+        case "link": {
+          const href = command.href ?? window.prompt("URL") ?? "";
+          if (href) chain.setLink({ href }).run();
+          else chain.unsetLink().run();
+          break;
+        }
+        case "replace":
+          if (command.all) replaceAll();
+          else replaceCurrent();
+          break;
+      }
+    };
+    window.addEventListener(EDITOR_COMMAND_EVENT, onCommand);
+    return () => window.removeEventListener(EDITOR_COMMAND_EVENT, onCommand);
+  }, [editor, findQuery, replaceQuery]);
+
   if (!editor) return null;
 
   queueFilesRef.current = (files, position) => {
@@ -249,10 +381,7 @@ export function NoteEditor({
       .then((uploaded) => {
         setAttachments((current) => {
           const seen = new Set(current.map((item) => item.id));
-          return [
-            ...current,
-            ...uploaded.filter((item) => !seen.has(item.id)),
-          ];
+          return [...current, ...uploaded.filter((item) => !seen.has(item.id))];
         });
         const nodes: JSONContent[] = [];
         uploaded.forEach((attachment) => {
@@ -314,6 +443,25 @@ export function NoteEditor({
         ? "font-mono"
         : "font-sans";
 
+  const editorMenuItems: ContextMenuEntry[] = [
+    { label: "Cut", shortcut: "Ctrl/⌘ X", onSelect: () => document.execCommand("cut") },
+    { label: "Copy", shortcut: "Ctrl/⌘ C", onSelect: () => document.execCommand("copy") },
+    { label: "Paste", shortcut: "Ctrl/⌘ V", onSelect: () => document.execCommand("paste") },
+    { type: "separator" },
+    { label: "Bold", onSelect: () => editor.chain().focus().toggleBold().run() },
+    { label: "Italic", onSelect: () => editor.chain().focus().toggleItalic().run() },
+    { label: "Highlight", onSelect: () => editor.chain().focus().toggleHighlight().run() },
+    { type: "separator" },
+    {
+      label: "Link…",
+      onSelect: () => {
+        const url = window.prompt("URL");
+        if (url) editor.chain().focus().setLink({ href: url }).run();
+      },
+    },
+    { label: "Insert date and time", onSelect: () => editor.chain().focus().insertContent(new Date().toLocaleString()).run() },
+  ];
+
   return (
     <div
       className={dragActive ? "note-editor is-dragging" : "note-editor"}
@@ -364,10 +512,24 @@ export function NoteEditor({
               } else if (event.key === "Escape") {
                 event.preventDefault();
                 setShowFind(false);
+                setShowReplace(false);
                 editor.commands.focus();
               }
             }}
           />
+          {showReplace && (
+            <input
+              value={replaceQuery}
+              placeholder="Replace with"
+              onChange={(event) => setReplaceQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  replaceCurrent();
+                }
+              }}
+            />
+          )}
           <span className="find-count">
             {findQuery.trim()
               ? findCount
@@ -375,6 +537,23 @@ export function NoteEditor({
                 : "No matches"
               : ""}
           </span>
+          <button
+            type="button"
+            className="ghost-btn small"
+            onClick={() => setShowReplace((open) => !open)}
+          >
+            Replace
+          </button>
+          {showReplace && (
+            <>
+              <button type="button" className="ghost-btn small" onClick={replaceCurrent}>
+                Replace
+              </button>
+              <button type="button" className="ghost-btn small" onClick={replaceAll}>
+                All
+              </button>
+            </>
+          )}
           <button
             type="button"
             className="icon-btn"
@@ -397,6 +576,7 @@ export function NoteEditor({
             title="Close"
             onClick={() => {
               setShowFind(false);
+              setShowReplace(false);
               editor.commands.focus();
             }}
           >
@@ -442,12 +622,41 @@ export function NoteEditor({
           editor.isActive("strike"),
           <Icon.Strike size={16} />
         )}
-        {btn(
-          "Highlight",
-          () => editor.chain().focus().toggleHighlight().run(),
-          editor.isActive("highlight"),
-          <span className="toolbar-text hl">HL</span>
-        )}
+        <div className="highlight-picker">
+          {btn(
+            "Highlight",
+            () => setShowColors((open) => !open),
+            editor.isActive("highlight"),
+            <span className="toolbar-text hl">HL</span>
+          )}
+          {showColors && (
+            <div className="highlight-colors" onMouseDown={(event) => event.preventDefault()}>
+              {HIGHLIGHT_COLORS.map((swatch) => (
+                <button
+                  key={swatch.id}
+                  type="button"
+                  title={swatch.label}
+                  className="highlight-swatch"
+                  style={{ background: swatch.color }}
+                  onClick={() => {
+                    editor.chain().focus().toggleHighlight({ color: swatch.color }).run();
+                    setShowColors(false);
+                  }}
+                />
+              ))}
+              <button
+                type="button"
+                className="ghost-btn small"
+                onClick={() => {
+                  editor.chain().focus().unsetHighlight().run();
+                  setShowColors(false);
+                }}
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </div>
         <span className="toolbar-sep" />
         {btn(
           "Bulleted list",
@@ -478,6 +687,18 @@ export function NoteEditor({
           () => editor.chain().focus().toggleCodeBlock().run(),
           editor.isActive("codeBlock"),
           <Icon.Code size={16} />
+        )}
+        {btn(
+          "Divider",
+          () => editor.chain().focus().setHorizontalRule().run(),
+          false,
+          <span className="toolbar-text">—</span>
+        )}
+        {btn(
+          "Insert date and time",
+          () => editor.chain().focus().insertContent(new Date().toLocaleString()).run(),
+          false,
+          <span className="toolbar-text">Date</span>
         )}
         {btn(
           "Link",
@@ -543,7 +764,13 @@ export function NoteEditor({
           <span>Images appear inline; other files become attachments.</span>
         </div>
       )}
-      <div className="editor-scroll">
+      <div
+        className="editor-scroll"
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setEditorMenu({ x: event.clientX, y: event.clientY });
+        }}
+      >
         <div
           className={`editor-page ${fontClass} ${noteWidth === "readable" ? "readable" : "full"}`}
           style={{ fontSize: `${fontSize}px` }}
@@ -551,6 +778,14 @@ export function NoteEditor({
           <EditorContent editor={editor} />
         </div>
       </div>
+      {editorMenu && (
+        <ContextMenu
+          x={editorMenu.x}
+          y={editorMenu.y}
+          items={editorMenuItems}
+          onClose={() => setEditorMenu(null)}
+        />
+      )}
     </div>
   );
 }

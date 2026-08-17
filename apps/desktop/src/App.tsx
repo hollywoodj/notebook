@@ -25,6 +25,7 @@ import { MenuBar, MenuBarGroup } from "./components/MenuBar";
 import { NoteInfoPanel } from "./components/NoteInfoPanel";
 import { NoteTagBar } from "./components/NoteTagBar";
 import { PaneSplitter } from "./components/PaneSplitter";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 import {
   batchConfirmMessage,
   noteIdsInRange,
@@ -43,11 +44,20 @@ import {
   clampPaneWidth,
   countWords,
   decodeNoteDrag,
+  dispatchEditorCommand,
+  downloadTextFile,
   encodeNoteDrag,
   formatReminderLabel,
+  groupNotesForList,
+  HIGHLIGHT_COLORS,
   isReminderOverdue,
+  mergeNoteBodies,
   noteAppLink,
+  notesToEnex,
+  notesToHtmlDocument,
   parsePaneLayout,
+  safeFilename,
+  snippetParts,
 } from "./uiChrome";
 
 type ContextTarget =
@@ -61,6 +71,13 @@ type RenameTarget =
   | { kind: "notebook"; id: string; name: string }
   | { kind: "stack"; id: string; name: string }
   | { kind: "tag"; id: string; name: string };
+
+type PendingConfirm = {
+  message: string;
+  confirmLabel?: string;
+  danger?: boolean;
+  resolve: (ok: boolean) => void;
+};
 
 function formatDate(iso: string, format: Preferences["date_format"]) {
   const options: Intl.DateTimeFormatOptions =
@@ -108,7 +125,10 @@ export default function App() {
   const [searchInput, setSearchInput] = useState("");
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [showNewNotebook, setShowNewNotebook] = useState(false);
+  const [showNewStack, setShowNewStack] = useState(false);
   const [showNewTag, setShowNewTag] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
   const [newName, setNewName] = useState("");
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -461,9 +481,19 @@ export default function App() {
     await loadNote(note.id);
   };
 
-  const confirm = (message: string) => {
-    if (!prefs.confirm_delete) return true;
-    return window.confirm(message);
+  const confirm = (
+    message: string,
+    options?: { confirmLabel?: string; danger?: boolean; always?: boolean }
+  ) => {
+    if (!prefs.confirm_delete && !options?.always) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      setPendingConfirm({
+        message,
+        confirmLabel: options?.confirmLabel,
+        danger: options?.danger,
+        resolve,
+      });
+    });
   };
 
   const selectedNotes = useMemo(
@@ -509,7 +539,12 @@ export default function App() {
     const first = notes.find((note) => note.id === ids[0]);
     const title = first?.title || "Untitled";
     if (inTrash) {
-      if (!confirm(batchConfirmMessage("permanent", ids.length, title))) {
+      if (
+        !(await confirm(batchConfirmMessage("permanent", ids.length, title), {
+          confirmLabel: "Delete",
+          danger: true,
+        }))
+      ) {
         return;
       }
       await applyToNotes(ids, (id) => api.permanentlyDeleteNote(id), {
@@ -518,7 +553,12 @@ export default function App() {
       });
       return;
     }
-    if (!confirm(batchConfirmMessage("trash", ids.length, title))) {
+    if (
+      !(await confirm(batchConfirmMessage("trash", ids.length, title), {
+        confirmLabel: "Move to Trash",
+        danger: true,
+      }))
+    ) {
       return;
     }
     await applyToNotes(ids, (id) => api.deleteNote(id), {
@@ -590,6 +630,76 @@ export default function App() {
     }
     await refreshNotes();
     if (lastId) await loadNote(lastId);
+  };
+
+  const mergeSelectedNotes = async () => {
+    const ids = targetNoteIds();
+    if (ids.length < 2) return;
+    const first = notes.find((note) => note.id === ids[0]);
+    const title = first?.title || "Untitled";
+    if (
+      !(await confirm(
+        `Merge ${ids.length} notes into “${title}”? The other notes will move to Trash.`,
+        { confirmLabel: "Merge", danger: true, always: true }
+      ))
+    ) {
+      return;
+    }
+    const full: Note[] = [];
+    for (const id of ids) {
+      full.push(await api.getNote(id));
+    }
+    const [keep, ...rest] = full;
+    if (!keep) return;
+    const content = mergeNoteBodies(full);
+    const tagIds = [...new Set(full.flatMap((note) => note.tag_ids))];
+    await api.updateNote(keep.id, { content, tag_ids: tagIds });
+    for (const note of rest) {
+      await api.deleteNote(note.id);
+    }
+    setActiveNote(null);
+    setSelectedNoteIds(new Set([keep.id]));
+    lastClickedNoteId.current = keep.id;
+    await refreshNotes();
+    await refreshMeta();
+    await loadNote(keep.id);
+  };
+
+  const exportSelectedNotes = async (format: "html" | "enex") => {
+    const ids = targetNoteIds();
+    if (!ids.length) return;
+    const full: Note[] = [];
+    for (const id of ids) {
+      full.push(await api.getNote(id));
+    }
+    if (format === "html") {
+      if (full.length === 1) {
+        downloadTextFile(
+          `${safeFilename(full[0].title)}.html`,
+          notesToHtmlDocument(full[0].title, full[0].content),
+          "text/html"
+        );
+        return;
+      }
+      const html = full
+        .map((note) => notesToHtmlDocument(note.title, note.content))
+        .join("\n");
+      downloadTextFile("notes.html", html, "text/html");
+      return;
+    }
+    downloadTextFile(
+      full.length === 1 ? `${safeFilename(full[0].title)}.enex` : "notes.enex",
+      notesToEnex(
+        full.map((note) => ({
+          title: note.title,
+          content: note.content,
+          created_at: note.created_at,
+          updated_at: note.updated_at,
+          tag_names: note.tag_names,
+        }))
+      ),
+      "application/xml"
+    );
   };
 
   const printActiveNote = () => window.print();
@@ -666,6 +776,12 @@ export default function App() {
         e.preventDefault();
         if (activeNote) setFindTick((tick) => tick + 1);
         else searchRef.current?.focus();
+      } else if (e.key === "F11") {
+        e.preventDefault();
+        setFocusMode((open) => !open);
+      } else if (e.key === "Escape" && focusMode) {
+        e.preventDefault();
+        setFocusMode(false);
       } else if (meta && e.key === "p") {
         e.preventDefault();
         window.print();
@@ -768,6 +884,24 @@ export default function App() {
   const allSelectedShortcuts =
     selectedNotes.length > 0 &&
     selectedNotes.every((note) => shortcutIds.has(note.id));
+  const groupedNotes = useMemo(
+    () =>
+      groupNotesForList(
+        notes,
+        prefs.sort_by === "title"
+          ? "title"
+          : prefs.sort_by === "created"
+            ? "created"
+            : "updated"
+      ),
+    [notes, prefs.sort_by]
+  );
+  const searchQuery = filter.type === "search" ? filter.query : "";
+
+  const openNewStack = () => {
+    setNewName("");
+    setShowNewStack(true);
+  };
 
   const openRename = (target: RenameTarget) => {
     setRenameTarget(target);
@@ -789,6 +923,10 @@ export default function App() {
             setNewName("");
             setShowNewNotebook(true);
           },
+        },
+        {
+          label: "New stack…",
+          onSelect: openNewStack,
         },
         {
           label: "New tag…",
@@ -875,6 +1013,22 @@ export default function App() {
         {
           label: count > 1 ? `Duplicate ${count} notes` : "Duplicate note",
           onSelect: () => void duplicateSelectedNotes(),
+        },
+        ...(count > 1
+          ? [
+              {
+                label: `Merge ${count} notes`,
+                onSelect: () => void mergeSelectedNotes(),
+              },
+            ]
+          : []),
+        {
+          label: count > 1 ? "Export notes as HTML" : "Export as HTML",
+          onSelect: () => void exportSelectedNotes("html"),
+        },
+        {
+          label: count > 1 ? "Export notes as Evernote XML" : "Export as Evernote XML",
+          onSelect: () => void exportSelectedNotes("enex"),
         },
         ...(count === 1
           ? [
@@ -987,9 +1141,10 @@ export default function App() {
           disabled: notebook.is_default,
           onSelect: async () => {
             if (
-              !confirm(
-                `Delete “${notebook.name}”? Notes in this notebook will move to Trash.`
-              )
+              !(await confirm(
+                `Delete “${notebook.name}”? Notes in this notebook will move to Trash.`,
+                { confirmLabel: "Delete", danger: true }
+              ))
             ) {
               return;
             }
@@ -1027,9 +1182,10 @@ export default function App() {
           danger: true,
           onSelect: async () => {
             if (
-              !confirm(
-                `Delete “${stack.name}”? Its notebooks and notes will be kept.`
-              )
+              !(await confirm(
+                `Delete “${stack.name}”? Its notebooks and notes will be kept.`,
+                { confirmLabel: "Delete", danger: true }
+              ))
             ) {
               return;
             }
@@ -1056,7 +1212,14 @@ export default function App() {
         label: "Delete tag",
         danger: true,
         onSelect: async () => {
-          if (!confirm(`Delete the tag “${tag.name}”?`)) return;
+          if (
+            !(await confirm(`Delete the tag “${tag.name}”?`, {
+              confirmLabel: "Delete",
+              danger: true,
+            }))
+          ) {
+            return;
+          }
           await api.deleteTag(tag.id);
           if (filter.type === "tag" && filter.id === tag.id) {
             setFilter({ type: "all" });
@@ -1068,8 +1231,10 @@ export default function App() {
     ];
   };
 
-  const runEditorCommand = (command: string) => {
-    document.execCommand(command);
+  const runEditorCommand = (
+    command: Parameters<typeof dispatchEditorCommand>[0]
+  ) => {
+    dispatchEditorCommand(command);
   };
 
   const menuGroups: MenuBarGroup[] = [
@@ -1090,10 +1255,24 @@ export default function App() {
             setShowNewNotebook(true);
           },
         },
+        {
+          label: "New Stack…",
+          onSelect: openNewStack,
+        },
         { type: "separator" },
         {
           label: "Import Notes…",
           onSelect: () => importRef.current?.click(),
+        },
+        {
+          label: "Export as HTML…",
+          disabled: targetNoteIds().length === 0,
+          onSelect: () => void exportSelectedNotes("html"),
+        },
+        {
+          label: "Export as Evernote XML…",
+          disabled: targetNoteIds().length === 0,
+          onSelect: () => void exportSelectedNotes("enex"),
         },
         {
           label: "Print…",
@@ -1117,27 +1296,33 @@ export default function App() {
     {
       label: "Edit",
       items: [
-        { label: "Undo", shortcut: "Ctrl/⌘ Z", onSelect: () => runEditorCommand("undo") },
+        { label: "Undo", shortcut: "Ctrl/⌘ Z", onSelect: () => runEditorCommand({ type: "undo" }) },
         {
           label: "Redo",
           shortcut: "Ctrl/⌘ ⇧ Z",
-          onSelect: () => runEditorCommand("redo"),
+          onSelect: () => runEditorCommand({ type: "redo" }),
         },
         { type: "separator" },
-        { label: "Cut", shortcut: "Ctrl/⌘ X", onSelect: () => runEditorCommand("cut") },
-        { label: "Copy", shortcut: "Ctrl/⌘ C", onSelect: () => runEditorCommand("copy") },
-        { label: "Paste", shortcut: "Ctrl/⌘ V", onSelect: () => runEditorCommand("paste") },
+        { label: "Cut", shortcut: "Ctrl/⌘ X", onSelect: () => runEditorCommand({ type: "cut" }) },
+        { label: "Copy", shortcut: "Ctrl/⌘ C", onSelect: () => runEditorCommand({ type: "copy" }) },
+        { label: "Paste", shortcut: "Ctrl/⌘ V", onSelect: () => runEditorCommand({ type: "paste" }) },
         { type: "separator" },
         {
           label: "Select All",
           shortcut: "Ctrl/⌘ A",
           onSelect: () => {
             if (isTextInputFocused()) {
-              runEditorCommand("selectAll");
+              runEditorCommand({ type: "selectAll" });
               return;
             }
             setSelectedNoteIds(new Set(notes.map((n) => n.id)));
           },
+        },
+        {
+          label: "Find and Replace…",
+          shortcut: "Ctrl/⌘ F",
+          disabled: !activeNote,
+          onSelect: () => setFindTick((tick) => tick + 1),
         },
       ],
     },
@@ -1162,6 +1347,11 @@ export default function App() {
           disabled: !activeNote,
           shortcut: "Ctrl/⌘ ⇧ I",
           onSelect: () => setShowInfo((open) => !open),
+        },
+        {
+          label: focusMode ? "Exit Focus Mode" : "Enter Focus Mode",
+          shortcut: "F11",
+          onSelect: () => setFocusMode((open) => !open),
         },
         { type: "separator" },
         {
@@ -1220,6 +1410,11 @@ export default function App() {
           onSelect: () => setFindTick((tick) => tick + 1),
         },
         {
+          label: `Merge ${selectedNoteIds.size} Notes`,
+          disabled: selectedNoteIds.size < 2,
+          onSelect: () => void mergeSelectedNotes(),
+        },
+        {
           label:
             selectedNoteIds.size > 1
               ? allSelectedArchived
@@ -1273,33 +1468,81 @@ export default function App() {
       label: "Format",
       items: [
         {
+          label: "Heading 1",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "heading", level: 1 }),
+        },
+        {
+          label: "Heading 2",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "heading", level: 2 }),
+        },
+        {
+          label: "Heading 3",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "heading", level: 3 }),
+        },
+        { type: "separator" },
+        {
           label: "Bold",
           shortcut: "Ctrl/⌘ B",
           disabled: !activeNote,
-          onSelect: () => runEditorCommand("bold"),
+          onSelect: () => runEditorCommand({ type: "bold" }),
         },
         {
           label: "Italic",
           shortcut: "Ctrl/⌘ I",
           disabled: !activeNote,
-          onSelect: () => runEditorCommand("italic"),
+          onSelect: () => runEditorCommand({ type: "italic" }),
         },
         {
           label: "Underline",
           shortcut: "Ctrl/⌘ U",
           disabled: !activeNote,
-          onSelect: () => runEditorCommand("underline"),
+          onSelect: () => runEditorCommand({ type: "underline" }),
         },
         {
           label: "Strikethrough",
           disabled: !activeNote,
-          onSelect: () => runEditorCommand("strikeThrough"),
+          onSelect: () => runEditorCommand({ type: "strike" }),
+        },
+        { type: "separator" },
+        ...HIGHLIGHT_COLORS.map((swatch) => ({
+          label: `Highlight ${swatch.label}`,
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "highlight", color: swatch.color }),
+        })),
+        { type: "separator" },
+        {
+          label: "Bulleted List",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "bulletList" }),
+        },
+        {
+          label: "Numbered List",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "orderedList" }),
+        },
+        {
+          label: "Checkbox List",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "taskList" }),
+        },
+        {
+          label: "Horizontal Rule",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "horizontalRule" }),
+        },
+        {
+          label: "Insert Date and Time",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "insertDate" }),
         },
         { type: "separator" },
         {
           label: "Remove Formatting",
           disabled: !activeNote,
-          onSelect: () => runEditorCommand("removeFormat"),
+          onSelect: () => runEditorCommand({ type: "clear" }),
         },
       ],
     },
@@ -1336,6 +1579,7 @@ export default function App() {
       className={
         "app-shell" +
         (paneLayout.sidebarCollapsed ? " sidebar-collapsed" : "") +
+        (focusMode ? " focus-mode" : "") +
         (showInfo && activeNote ? " info-open" : "")
       }
       style={
@@ -1767,7 +2011,14 @@ export default function App() {
               <button
                 className="ghost-btn small"
                 onClick={async () => {
-                  if (!confirm("Permanently delete all notes in Trash?")) return;
+                  if (
+                    !(await confirm("Permanently delete all notes in Trash?", {
+                      confirmLabel: "Empty Trash",
+                      danger: true,
+                    }))
+                  ) {
+                    return;
+                  }
                   await api.emptyTrash();
                   setActiveNote(null);
                   await refreshNotes();
@@ -1832,6 +2083,12 @@ export default function App() {
                     {allSelectedPinned ? "Unpin" : "Pin"}
                   </button>
                   <button
+                    className="ghost-btn small"
+                    onClick={() => void mergeSelectedNotes()}
+                  >
+                    Merge
+                  </button>
+                  <button
                     className="ghost-btn small danger-text"
                     onClick={() => void deleteSelectedNotes()}
                   >
@@ -1843,7 +2100,10 @@ export default function App() {
           </div>
         )}
         <div className="note-list scroll-pane" ref={noteListRef}>
-          {notes.map((note) => (
+          {groupedNotes.map((group) => (
+            <div className="note-list-group" key={group.key}>
+              {group.label ? <div className="list-group-label">{group.label}</div> : null}
+              {group.notes.map((note) => (
             <button
               key={note.id}
               className={
@@ -1895,7 +2155,19 @@ export default function App() {
                 {note.notebook_name ? ` · ${note.notebook_name}` : ""}
               </div>
               {prefs.show_snippets && (
-                <div className="note-card-snippet">{note.snippet}</div>
+                <div className="note-card-snippet">
+                  {searchQuery
+                    ? snippetParts(note.snippet, searchQuery).map((part, index) =>
+                        part.hit ? (
+                          <mark className="snippet-hit" key={index}>
+                            {part.text}
+                          </mark>
+                        ) : (
+                          <span key={index}>{part.text}</span>
+                        )
+                      )
+                    : note.snippet}
+                </div>
               )}
               {note.tag_names.length > 0 && (
                 <div className="note-card-tags">
@@ -1905,6 +2177,8 @@ export default function App() {
                 </div>
               )}
             </button>
+              ))}
+            </div>
           ))}
           {notes.length === 0 && (
             <div className="empty-state">
@@ -2045,7 +2319,14 @@ export default function App() {
                           <button
                             className="danger-text"
                             onClick={async () => {
-                              if (!confirm("Delete this note forever?")) return;
+                              if (
+                                !(await confirm("Delete this note forever?", {
+                                  confirmLabel: "Delete",
+                                  danger: true,
+                                }))
+                              ) {
+                                return;
+                              }
                               await api.permanentlyDeleteNote(activeNote.id);
                               setActiveNote(null);
                               await refreshNotes();
@@ -2058,7 +2339,14 @@ export default function App() {
                         <button
                           className="danger-text"
                           onClick={async () => {
-                            if (!confirm("Move this note to Trash?")) return;
+                            if (
+                              !(await confirm("Move this note to Trash?", {
+                                confirmLabel: "Move to Trash",
+                                danger: true,
+                              }))
+                            ) {
+                              return;
+                            }
                             await api.deleteNote(activeNote.id);
                             setActiveNote(null);
                             await refreshNotes();
@@ -2091,6 +2379,7 @@ export default function App() {
               noteWidth={prefs.note_width}
               pdfView={prefs.pdf_view || "expanded"}
               findTick={findTick}
+              onOpenNoteLink={(id) => void loadNote(id)}
               onChange={(html) =>
                 setActiveNote({ ...activeNote, content: html })
               }
@@ -2184,6 +2473,24 @@ export default function App() {
             await refreshMeta();
             setShowNewNotebook(false);
             setNewNotebookStackId(null);
+            setNewName("");
+          }}
+        />
+      )}
+
+      {showNewStack && (
+        <PromptModal
+          title="New stack"
+          value={newName}
+          onChange={setNewName}
+          onCancel={() => {
+            setShowNewStack(false);
+            setNewName("");
+          }}
+          onSubmit={async () => {
+            await api.createStack(newName.trim());
+            await refreshMeta();
+            setShowNewStack(false);
             setNewName("");
           }}
         />
@@ -2297,9 +2604,32 @@ export default function App() {
             importRef.current?.click();
           }}
           onEmptyTrash={async () => {
-            if (!confirm("Permanently delete all notes in Trash?")) return;
+            if (
+              !(await confirm("Permanently delete all notes in Trash?", {
+                confirmLabel: "Empty Trash",
+                danger: true,
+              }))
+            ) {
+              return;
+            }
             await api.emptyTrash();
             await refreshNotes();
+          }}
+        />
+      )}
+
+      {pendingConfirm && (
+        <ConfirmDialog
+          message={pendingConfirm.message}
+          confirmLabel={pendingConfirm.confirmLabel}
+          danger={pendingConfirm.danger}
+          onCancel={() => {
+            pendingConfirm.resolve(false);
+            setPendingConfirm(null);
+          }}
+          onConfirm={() => {
+            pendingConfirm.resolve(true);
+            setPendingConfirm(null);
           }}
         />
       )}
