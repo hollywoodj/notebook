@@ -432,11 +432,23 @@ export const DEFAULT_ZOOM = 100;
 
 export interface EditorChrome {
   toolbarHidden: boolean;
+  attachmentsExpanded: boolean;
   zoom: number;
 }
 
 export function defaultEditorChrome(): EditorChrome {
-  return { toolbarHidden: false, zoom: DEFAULT_ZOOM };
+  return { toolbarHidden: false, attachmentsExpanded: false, zoom: DEFAULT_ZOOM };
+}
+
+export function formattingToolbarVisible(
+  toolbarHidden: boolean,
+  editorFocused: boolean
+): boolean {
+  return !toolbarHidden && editorFocused;
+}
+
+export function attachmentsLabel(count: number): string {
+  return count === 1 ? "1 attachment" : `${count} attachments`;
 }
 
 export function clampZoom(value: number): number {
@@ -452,6 +464,7 @@ export function parseEditorChrome(raw: string | null): EditorChrome {
     const parsed = JSON.parse(raw) as Partial<EditorChrome>;
     return {
       toolbarHidden: Boolean(parsed.toolbarHidden),
+      attachmentsExpanded: Boolean(parsed.attachmentsExpanded),
       zoom: clampZoom(Number(parsed.zoom ?? DEFAULT_ZOOM)),
     };
   } catch {

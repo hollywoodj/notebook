@@ -23,8 +23,10 @@ import {
   EDITOR_COMMAND_EVENT,
   HIGHLIGHT_COLORS,
   TEXT_COLORS,
+  attachmentsLabel,
   escapeHtml,
   findMatchOffsets,
+  formattingToolbarVisible,
   nextMatchIndex,
   type EditorCommand,
 } from "../uiChrome";
@@ -56,6 +58,8 @@ interface Props {
   findTick?: number;
   replaceTick?: number;
   toolbarHidden?: boolean;
+  attachmentsExpanded?: boolean;
+  onAttachmentsExpandedChange?: (expanded: boolean) => void;
   zoom?: number;
   onOpenNoteLink?: (noteId: string) => void;
 }
@@ -129,12 +133,15 @@ export function NoteEditor({
   findTick = 0,
   replaceTick = 0,
   toolbarHidden = false,
+  attachmentsExpanded = false,
+  onAttachmentsExpandedChange,
   zoom = 100,
   onOpenNoteLink,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const queueFilesRef = useRef<(files: File[], position?: number) => void>(() => {});
   const findInputRef = useRef<HTMLInputElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -151,6 +158,7 @@ export function NoteEditor({
   const indentRef = useRef<(shift: boolean) => boolean>(() => false);
 
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [editorFocused, setEditorFocused] = useState(false);
   const restoredFilesRef = useRef(false);
   const pdfViewRef = useRef(pdfView);
   pdfViewRef.current = pdfView;
@@ -180,7 +188,20 @@ export function NoteEditor({
       Color,
     ],
     content,
+    autofocus: false,
     onUpdate: ({ editor }) => onChange(editor.getHTML()),
+    onFocus: () => setEditorFocused(true),
+    onBlur: ({ editor: current, event }) => {
+      const related = (event as FocusEvent | undefined)?.relatedTarget as Node | null;
+      if (related && toolbarRef.current?.contains(related)) return;
+      queueMicrotask(() => {
+        if (current.view.hasFocus()) return;
+        if (toolbarRef.current?.contains(document.activeElement)) return;
+        setEditorFocused(false);
+        setShowColors(false);
+        setShowTextColors(false);
+      });
+    },
     editorProps: {
       attributes: {
         class: "note-editor-content",
@@ -545,6 +566,9 @@ export function NoteEditor({
         ? "font-mono"
         : "font-sans";
 
+  const fileAttachments = attachments.filter(isFileAttachment);
+  const showToolbar = formattingToolbarVisible(toolbarHidden, editorFocused);
+
   const editorMenuItems: ContextMenuEntry[] = [
     { label: "Cut", shortcut: "Ctrl/⌘ X", onSelect: () => document.execCommand("cut") },
     { label: "Copy", shortcut: "Ctrl/⌘ C", onSelect: () => document.execCommand("copy") },
@@ -578,7 +602,13 @@ export function NoteEditor({
 
   return (
     <div
-      className={dragActive ? "note-editor is-dragging" : "note-editor"}
+      className={
+        dragActive
+          ? "note-editor is-dragging"
+          : editorFocused
+            ? "note-editor is-editing"
+            : "note-editor"
+      }
       onDragEnter={(event) => {
         if (event.dataTransfer.types.includes("Files")) setDragActive(true);
       }}
@@ -698,8 +728,8 @@ export function NoteEditor({
           </button>
         </div>
       )}
-      {!toolbarHidden && (
-      <div className="editor-toolbar">
+      {showToolbar && (
+      <div ref={toolbarRef} className="editor-toolbar">
         {btn(
           "Heading 1",
           () => editor.chain().focus().toggleHeading({ level: 1 }).run(),
@@ -913,26 +943,40 @@ export function NoteEditor({
           </button>
         </div>
       )}
-      {attachments.filter(isFileAttachment).length > 0 && (
+      {fileAttachments.length > 0 && (
         <div className="note-attachments">
-          {attachments.filter(isFileAttachment).map((attachment) => (
-            <a
-              key={attachment.id}
-              className={
-                isPdfFile(attachment.mime_type, attachment.filename)
-                  ? "note-attachment-chip is-pdf"
-                  : "note-attachment-chip"
-              }
-              href={attachmentUrl(attachment.id)}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={attachment.filename}
-            >
-              <Icon.Attach size={14} />
-              <span className="note-attachment-name">{attachment.filename}</span>
-              <span className="note-attachment-size">{formatSize(attachment.size)}</span>
-            </a>
-          ))}
+          <button
+            type="button"
+            className="note-attachments-toggle"
+            aria-expanded={attachmentsExpanded}
+            onClick={() => onAttachmentsExpandedChange?.(!attachmentsExpanded)}
+          >
+            <Icon.Attach size={14} />
+            <span>{attachmentsLabel(fileAttachments.length)}</span>
+            <Icon.Chevron size={14} />
+          </button>
+          {attachmentsExpanded && (
+            <div className="note-attachments-list">
+              {fileAttachments.map((attachment) => (
+                <a
+                  key={attachment.id}
+                  className={
+                    isPdfFile(attachment.mime_type, attachment.filename)
+                      ? "note-attachment-chip is-pdf"
+                      : "note-attachment-chip"
+                  }
+                  href={attachmentUrl(attachment.id)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={attachment.filename}
+                >
+                  <Icon.Attach size={14} />
+                  <span className="note-attachment-name">{attachment.filename}</span>
+                  <span className="note-attachment-size">{formatSize(attachment.size)}</span>
+                </a>
+              ))}
+            </div>
+          )}
         </div>
       )}
       {dragActive && (
@@ -944,6 +988,19 @@ export function NoteEditor({
       )}
       <div
         className="editor-scroll"
+        onMouseDown={(event) => {
+          const scroller = event.currentTarget;
+          const rect = scroller.getBoundingClientRect();
+          if (
+            event.clientX >= rect.left + scroller.clientWidth ||
+            event.clientY >= rect.top + scroller.clientHeight
+          ) {
+            return;
+          }
+          const target = event.target as HTMLElement | null;
+          if (target?.closest(".ProseMirror, a, button, input, .notebook-file")) return;
+          editor.chain().focus("end").run();
+        }}
         onContextMenu={(event) => {
           event.preventDefault();
           setEditorMenu({ x: event.clientX, y: event.clientY });

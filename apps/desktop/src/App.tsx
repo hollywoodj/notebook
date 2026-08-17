@@ -1486,6 +1486,17 @@ export default function App() {
             }),
         },
         {
+          label: editorChrome.attachmentsExpanded
+            ? "Hide Attachments"
+            : "Show Attachments",
+          disabled: !activeNote,
+          onSelect: () =>
+            persistEditorChrome({
+              ...editorChrome,
+              attachmentsExpanded: !editorChrome.attachmentsExpanded,
+            }),
+        },
+        {
           label: showInfo ? "Hide Note Info" : "Show Note Info",
           disabled: !activeNote,
           shortcut: "Ctrl/⌘ ⇧ I",
@@ -2794,6 +2805,13 @@ export default function App() {
               findTick={findTick}
               replaceTick={replaceTick}
               toolbarHidden={editorChrome.toolbarHidden}
+              attachmentsExpanded={editorChrome.attachmentsExpanded}
+              onAttachmentsExpandedChange={(expanded) =>
+                persistEditorChrome({
+                  ...editorChrome,
+                  attachmentsExpanded: expanded,
+                })
+              }
               zoom={editorChrome.zoom}
               onOpenNoteLink={(id) => void loadNote(id)}
               onChange={(html) =>
