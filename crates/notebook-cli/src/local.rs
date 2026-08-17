@@ -33,6 +33,8 @@ pub fn import(service: &NotebookService, action: &ImportAction, json_out: bool) 
                             Some(mut acc) => {
                                 acc.imported += result.imported;
                                 acc.skipped += result.skipped;
+                                acc.notebook_count =
+                                    acc.notebook_count.max(result.notebook_count);
                                 acc.errors.extend(result.errors);
                                 acc
                             }

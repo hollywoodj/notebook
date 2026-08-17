@@ -307,27 +307,48 @@ export default function App() {
           ref={importRef}
           type="file"
           accept=".enex,application/xml,text/xml"
+          multiple
           hidden
           onChange={async (e) => {
-            const file = e.target.files?.[0];
+            const files = Array.from(e.target.files ?? []);
             e.target.value = "";
-            if (!file) return;
+            if (!files.length) return;
             try {
               setImportStatus("Importing…");
-              const result = await api.importEnex(file, {
-                notebookName: file.name.replace(/\.enex$/i, ""),
-              });
+              let totalImported = 0;
+              let totalSkipped = 0;
+              let lastNotebookId: string | undefined;
+              let lastNotebookName: string | undefined;
+              let notebookCount = 0;
+              for (const file of files) {
+                const result = await api.importEnex(file, {
+                  notebookName: file.name.replace(/\.enex$/i, ""),
+                });
+                totalImported += result.imported;
+                totalSkipped += result.skipped;
+                lastNotebookId = result.notebook_id;
+                lastNotebookName = result.notebook_name;
+                notebookCount = Math.max(notebookCount, result.notebook_count ?? 1);
+              }
+              const target =
+                files.length === 1 && notebookCount <= 1 && lastNotebookId && lastNotebookName
+                  ? ` into "${lastNotebookName}"`
+                  : "";
               setImportStatus(
-                `Imported ${result.imported} notes into "${result.notebook_name}"` +
-                  (result.skipped ? ` (${result.skipped} skipped)` : "")
+                `Imported ${totalImported} note${totalImported === 1 ? "" : "s"}${target}` +
+                  (totalSkipped ? ` (${totalSkipped} skipped)` : "")
               );
               await refreshMeta();
               await refreshNotes();
-              setFilter({
-                type: "notebook",
-                id: result.notebook_id,
-                name: result.notebook_name,
-              });
+              if (files.length === 1 && notebookCount <= 1 && lastNotebookId && lastNotebookName) {
+                setFilter({
+                  type: "notebook",
+                  id: lastNotebookId,
+                  name: lastNotebookName,
+                });
+              } else {
+                setFilter({ type: "all" });
+              }
             } catch (err) {
               setImportStatus(err instanceof Error ? err.message : "Import failed");
             }

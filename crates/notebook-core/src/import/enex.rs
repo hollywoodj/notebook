@@ -18,6 +18,7 @@ pub struct EnexExport {
 pub struct EnexNote {
     pub title: String,
     pub content: String,
+    pub notebook: Option<String>,
     pub created: Option<DateTime<Utc>>,
     pub updated: Option<DateTime<Utc>>,
     pub reminder_at: Option<DateTime<Utc>>,
@@ -102,6 +103,12 @@ pub fn parse_enex(data: &[u8]) -> Result<EnexExport> {
                 } else if let Some(note) = current.as_mut() {
                     match current_field.as_str() {
                         "title" => note.title = text.trim().to_string(),
+                        "notebook" => {
+                            let name = text.trim();
+                            if !name.is_empty() {
+                                note.notebook = Some(name.to_string());
+                            }
+                        }
                         "content" => note.content.push_str(&text),
                         "created" => note.created = parse_evernote_datetime(text.trim()),
                         "updated" => note.updated = parse_evernote_datetime(text.trim()),
@@ -125,10 +132,9 @@ pub fn parse_enex(data: &[u8]) -> Result<EnexExport> {
             }
             Ok(Event::CData(e)) => {
                 if let Some(note) = current.as_mut() {
-                    if current_field == "content" || note.content.is_empty() {
+                    if current_field == "content" {
                         let bytes = e.into_inner();
                         note.content.push_str(&String::from_utf8_lossy(&bytes));
-                        current_field = "content".to_string();
                     }
                 }
             }
@@ -140,6 +146,10 @@ pub fn parse_enex(data: &[u8]) -> Result<EnexExport> {
                             notes.push(note.into_note()?);
                         }
                         in_note = false;
+                        in_resource = false;
+                        in_resource_attributes = false;
+                        in_note_attributes = false;
+                        current_resource = None;
                         current_field.clear();
                     }
                     "resource" => {
@@ -179,6 +189,7 @@ pub fn parse_enex(data: &[u8]) -> Result<EnexExport> {
 struct PartialNote {
     title: String,
     content: String,
+    notebook: Option<String>,
     created: Option<DateTime<Utc>>,
     updated: Option<DateTime<Utc>>,
     reminder_at: Option<DateTime<Utc>>,
@@ -196,6 +207,7 @@ impl PartialNote {
                 self.title
             },
             content: self.content,
+            notebook: self.notebook,
             created: self.created,
             updated: self.updated,
             reminder_at: self.reminder_at,
@@ -279,35 +291,7 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
                         out.push_str("<p><em>[Encrypted content not imported]</em></p>");
                     }
                     "en-media" => {
-                        let mut hash = None;
-                        let mut mime = None;
-                        for attr in e.attributes().flatten() {
-                            match attr.key.as_ref() {
-                                b"hash" => hash = Some(String::from_utf8_lossy(&attr.value).to_string()),
-                                b"type" => mime = Some(String::from_utf8_lossy(&attr.value).to_string()),
-                                _ => {}
-                            }
-                        }
-                        if let Some(hash) = hash {
-                            if let Some(resource) = resource_map.get(&hash) {
-                                let use_mime = mime.unwrap_or_else(|| resource.mime.clone());
-                                if use_mime.starts_with("image/") {
-                                    let b64 = base64::engine::general_purpose::STANDARD
-                                        .encode(&resource.data);
-                                    out.push_str(&format!(
-                                        "<img src=\"data:{};base64,{}\" alt=\"{}\" />",
-                                        use_mime,
-                                        b64,
-                                        resource.filename.as_deref().unwrap_or("image")
-                                    ));
-                                } else {
-                                    out.push_str(&format!(
-                                        "<p><a href=\"#\">📎 {}</a></p>",
-                                        resource.filename.as_deref().unwrap_or("attachment")
-                                    ));
-                                }
-                            }
-                        }
+                        render_en_media(&mut out, &e, &resource_map);
                     }
                     "a" | "div" | "span" | "p" | "br" | "ul" | "ol" | "li" | "b" | "i" | "u"
                     | "strong" | "em" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote"
@@ -347,8 +331,10 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
             }
             Ok(Event::Empty(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                if name == "br" {
-                    out.push_str("<br/>");
+                match name.as_str() {
+                    "br" => out.push_str("<br/>"),
+                    "en-media" => render_en_media(&mut out, &e, &resource_map),
+                    _ => {}
                 }
             }
             Ok(Event::Eof) => break,
@@ -368,6 +354,41 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
     }
 
     Ok(out)
+}
+
+fn render_en_media(
+    out: &mut String,
+    e: &quick_xml::events::BytesStart<'_>,
+    resource_map: &HashMap<String, &EnexResource>,
+) {
+    let mut hash = None;
+    let mut mime = None;
+    for attr in e.attributes().flatten() {
+        match attr.key.as_ref() {
+            b"hash" => hash = Some(String::from_utf8_lossy(&attr.value).to_string()),
+            b"type" => mime = Some(String::from_utf8_lossy(&attr.value).to_string()),
+            _ => {}
+        }
+    }
+    if let Some(hash) = hash {
+        if let Some(resource) = resource_map.get(&hash) {
+            let use_mime = mime.unwrap_or_else(|| resource.mime.clone());
+            if use_mime.starts_with("image/") {
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&resource.data);
+                out.push_str(&format!(
+                    "<img src=\"data:{};base64,{}\" alt=\"{}\" />",
+                    use_mime,
+                    b64,
+                    resource.filename.as_deref().unwrap_or("image")
+                ));
+            } else {
+                out.push_str(&format!(
+                    "<p><a href=\"#\">📎 {}</a></p>",
+                    resource.filename.as_deref().unwrap_or("attachment")
+                ));
+            }
+        }
+    }
 }
 
 fn escape_html(input: &str) -> String {
@@ -444,5 +465,91 @@ mod tests {
             })
             .unwrap();
         assert_eq!(search.total, 1);
+    }
+
+    #[test]
+    fn parses_multi_note_enex() {
+        let enex = r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>First</title>
+    <notebook>Work</notebook>
+    <content><![CDATA[<en-note><div>Note one</div></en-note>]]></content>
+  </note>
+  <note>
+    <title>Second</title>
+    <notebook>Personal</notebook>
+    <content><![CDATA[<en-note><div>Note two</div></en-note>]]></content>
+  </note>
+  <note>
+    <title>Third</title>
+    <content><![CDATA[<en-note><div>Note three</div></en-note>]]></content>
+  </note>
+</en-export>"#;
+        let export = parse_enex(enex.as_bytes()).unwrap();
+        assert_eq!(export.notes.len(), 3);
+        assert_eq!(export.notes[0].notebook.as_deref(), Some("Work"));
+        assert_eq!(export.notes[1].notebook.as_deref(), Some("Personal"));
+        assert!(export.notes[2].notebook.is_none());
+    }
+
+    #[test]
+    fn renders_self_closing_en_media() {
+        let hash = "f03c1c2d96bc67eda02968c8b5af9008";
+        let resource = EnexResource {
+            data: vec![0x89, 0x50, 0x4e, 0x47],
+            mime: "image/png".to_string(),
+            filename: Some("photo.png".to_string()),
+            width: None,
+            height: None,
+            hash: hash.to_string(),
+        };
+        let enml = format!(
+            r#"<en-note><div>Before <en-media type="image/png" hash="{}"/> after</div></en-note>"#,
+            hash
+        );
+        let html = enml_to_html(&enml, &[resource]).unwrap();
+        assert!(html.contains("<img"), "expected image tag, got: {html}");
+        assert!(html.contains("Before"));
+        assert!(html.contains("after"));
+    }
+
+    #[test]
+    fn imports_multi_note_enex_into_notebooks() {
+        let enex = r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>Work Note</title>
+    <notebook>Work</notebook>
+    <content><![CDATA[<en-note><div>Work content</div></en-note>]]></content>
+  </note>
+  <note>
+    <title>Personal Note</title>
+    <notebook>Personal</notebook>
+    <content><![CDATA[<en-note><div>Personal content</div></en-note>]]></content>
+  </note>
+</en-export>"#;
+        let dir = std::env::temp_dir().join("notebook-multi-import-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("test.db");
+        let db = crate::db::Database::open(&db_path).unwrap();
+        let service = crate::service::NotebookService::new(db);
+        let result = service
+            .import_enex(
+                enex.as_bytes(),
+                crate::models::EnexImportRequest {
+                    notebook_id: None,
+                    notebook_name: Some("Fallback".into()),
+                    stack_id: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(result.imported, 2, "errors: {:?}", result.errors);
+        assert_eq!(result.notebook_count, 2);
+        let notebooks = service.list_notebooks(false).unwrap();
+        let names: Vec<_> = notebooks.iter().map(|n| n.name.as_str()).collect();
+        assert!(names.contains(&"Work"));
+        assert!(names.contains(&"Personal"));
     }
 }

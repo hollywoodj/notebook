@@ -14,30 +14,64 @@ use self::enex::{parse_enex, EnexNote};
 impl NotebookService {
     pub fn import_enex(&self, data: &[u8], options: EnexImportRequest) -> Result<EnexImportResult> {
         let parsed = parse_enex(data)?;
-        let notebook_id = self.resolve_import_notebook(&options)?;
+        let default_name = options
+            .notebook_name
+            .clone()
+            .unwrap_or_else(|| "Imported".to_string());
         let mut imported = 0u32;
         let mut skipped = 0u32;
         let mut errors = Vec::new();
+        let mut primary_notebook_id = None;
+        let mut primary_notebook_name = None;
+        let mut notebook_ids = std::collections::HashSet::new();
 
         for (index, enex_note) in parsed.notes.into_iter().enumerate() {
+            let note_title = enex_note.title.clone();
+            let notebook_id = if let Some(id) = options.notebook_id {
+                id
+            } else {
+                let name = enex_note
+                    .notebook
+                    .clone()
+                    .unwrap_or_else(|| default_name.clone());
+                self.resolve_import_notebook_by_name(&name, options.stack_id)?
+            };
+
+            notebook_ids.insert(notebook_id);
+            if primary_notebook_id.is_none() {
+                primary_notebook_id = Some(notebook_id);
+                primary_notebook_name = Some(self.get_notebook(notebook_id)?.name);
+            }
+
             match self.import_enex_note(notebook_id, enex_note) {
                 Ok(()) => imported += 1,
                 Err(e) => {
                     skipped += 1;
                     errors.push(ImportError {
                         index,
-                        title: None,
+                        title: Some(note_title),
                         message: e.to_string(),
                     });
                 }
             }
         }
 
+        let notebook_id = primary_notebook_id.ok_or_else(|| {
+            NotebookError::Other("ENEX file contains no notes".to_string())
+        })?;
+        let notebook_count = notebook_ids.len() as u32;
+        let notebook_name = if notebook_count > 1 {
+            format!("{} notebooks", notebook_count)
+        } else {
+            primary_notebook_name.unwrap_or_else(|| default_name)
+        };
+
         Ok(EnexImportResult {
             imported,
             skipped,
             notebook_id,
-            notebook_name: self.get_notebook(notebook_id)?.name,
+            notebook_name,
+            notebook_count,
             errors,
         })
     }
@@ -53,25 +87,19 @@ impl NotebookService {
         self.import_enex(&data, options)
     }
 
-    fn resolve_import_notebook(&self, options: &EnexImportRequest) -> Result<Uuid> {
-        if let Some(id) = options.notebook_id {
-            self.get_notebook(id)?;
-            return Ok(id);
-        }
-
-        let name = options
-            .notebook_name
-            .clone()
-            .unwrap_or_else(|| "Imported".to_string());
-
+    fn resolve_import_notebook_by_name(
+        &self,
+        name: &str,
+        stack_id: Option<Uuid>,
+    ) -> Result<Uuid> {
         let notebooks = self.list_notebooks(false)?;
         if let Some(existing) = notebooks.into_iter().find(|nb| nb.name == name) {
             return Ok(existing.id);
         }
 
         let notebook = self.create_notebook(crate::models::CreateNotebookRequest {
-            name,
-            stack_id: options.stack_id,
+            name: name.to_string(),
+            stack_id,
             is_default: Some(false),
         })?;
         Ok(notebook.id)

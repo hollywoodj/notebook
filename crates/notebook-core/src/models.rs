@@ -200,6 +200,8 @@ pub struct EnexImportResult {
     pub skipped: u32,
     pub notebook_id: Uuid,
     pub notebook_name: String,
+    #[serde(default)]
+    pub notebook_count: u32,
     pub errors: Vec<ImportError>,
 }
 

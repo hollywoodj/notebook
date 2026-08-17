@@ -226,7 +226,8 @@ export const api = {
       skipped: number;
       notebook_id: string;
       notebook_name: string;
-      errors: { index: number; message: string }[];
+      notebook_count?: number;
+      errors: { index: number; title?: string; message: string }[];
     }>;
   },
 };
