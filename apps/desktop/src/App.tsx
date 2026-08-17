@@ -296,9 +296,17 @@ export default function App() {
     }
   };
 
+  /** A hidden sidebar has nowhere to hang the panel, so bring it back first. */
+  const revealSidebarFlyout = (kind: SidebarFlyoutKind) => {
+    if (paneLayout.sidebarCollapsed) {
+      persistPaneLayout({ ...paneLayout, sidebarCollapsed: false });
+    }
+    setSidebarFlyout(kind);
+  };
+
   const openSidebarFilter = (kind: "notebooks" | "tags" = "notebooks") => {
     setSidebarFilterOpen(true);
-    setSidebarFlyout(kind);
+    revealSidebarFlyout(kind);
     window.setTimeout(() => sidebarFilterRef.current?.focus(), 0);
   };
 
@@ -1750,9 +1758,9 @@ export default function App() {
       label: "View",
       items: [
         { label: "All Notes", onSelect: () => { setSidebarFlyout(null); setFilter({ type: "all" }); } },
-        { label: "Shortcuts", onSelect: () => { setSidebarFlyout("shortcuts"); setFilter({ type: "shortcuts" }); } },
-        { label: "Notebooks", onSelect: () => setSidebarFlyout("notebooks") },
-        { label: "Tags", onSelect: () => setSidebarFlyout("tags") },
+        { label: "Shortcuts", onSelect: () => { revealSidebarFlyout("shortcuts"); setFilter({ type: "shortcuts" }); } },
+        { label: "Notebooks", onSelect: () => revealSidebarFlyout("notebooks") },
+        { label: "Tags", onSelect: () => revealSidebarFlyout("tags") },
         { label: "Reminders", onSelect: () => { setSidebarFlyout(null); setFilter({ type: "reminders" }); } },
         { label: "Templates", onSelect: () => { setSidebarFlyout(null); setFilter({ type: "templates" }); } },
         { type: "separator" },
