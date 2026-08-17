@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, Menu } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
@@ -114,6 +114,7 @@ async function createWindow() {
     minWidth: 960,
     minHeight: 600,
     title: "Notebook",
+    autoHideMenuBar: true,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -124,6 +125,8 @@ async function createWindow() {
   });
 
   mainWindow.once("ready-to-show", () => {
+    mainWindow.setMenuBarVisibility(false);
+    mainWindow.removeMenu();
     mainWindow.show();
   });
 
@@ -152,7 +155,10 @@ if (!gotLock) {
     }
   });
 
-  app.whenReady().then(boot).catch((err) => {
+  app.whenReady().then(async () => {
+    Menu.setApplicationMenu(null);
+    await boot();
+  }).catch((err) => {
     console.error(err);
     app.quit();
   });

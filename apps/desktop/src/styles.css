@@ -169,32 +169,11 @@ button {
   display: flex;
   align-items: stretch;
   min-width: 0;
-  padding: 0 8px;
+  padding: 0 4px;
   background: var(--panel-bg);
   border-bottom: 1px solid var(--border);
   user-select: none;
   z-index: 30;
-}
-
-.app-menu-brand {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 12px 0 4px;
-  margin-right: 2px;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.app-menu-logo {
-  width: 19px;
-  height: 19px;
-  display: grid;
-  place-items: center;
-  border-radius: 5px;
-  background: var(--green);
-  color: white;
-  font-size: 11px;
 }
 
 .app-menu-group {
@@ -667,10 +646,39 @@ button {
   margin-left: 8px;
 }
 
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--green-soft);
+  flex-wrap: wrap;
+}
+
+.bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.bulk-bar select {
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
 .panel-tools {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .panel-tools select,
@@ -699,6 +707,7 @@ button {
   background: transparent;
   padding: 14px 12px;
   border-radius: 0;
+  user-select: none;
 }
 
 .note-card.compact {
@@ -1081,6 +1090,10 @@ button {
 
 .ghost-btn:hover {
   background: var(--sidebar-hover);
+}
+
+.ghost-btn.danger-text:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 .chip {

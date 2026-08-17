@@ -45,10 +45,6 @@ export function MenuBar({ groups }: { groups: MenuBarGroup[] }) {
       role="menubar"
       aria-label="Application menu"
     >
-      <div className="app-menu-brand" aria-label="Notebook">
-        <span className="app-menu-logo">N</span>
-        <span>Notebook</span>
-      </div>
       {groups.map((group) => {
         const open = openMenu === group.label;
         return (
