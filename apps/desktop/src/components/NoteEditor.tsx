@@ -48,7 +48,7 @@ export function NoteEditor({
       TaskList,
       TaskItem.configure({ nested: true }),
       Placeholder.configure({ placeholder }),
-      Image,
+      Image.configure({ allowBase64: true }),
     ],
     content,
     onUpdate: ({ editor }) => onChange(editor.getHTML()),
@@ -56,18 +56,6 @@ export function NoteEditor({
       attributes: {
         class: "note-editor-content",
         spellcheck: spellCheck ? "true" : "false",
-      },
-      handleDrop: (view, event) => {
-        const files = Array.from(event.dataTransfer?.files ?? []);
-        if (!files.length) return false;
-        event.preventDefault();
-        setDragActive(false);
-        const position = view.posAtCoords({
-          left: event.clientX,
-          top: event.clientY,
-        })?.pos;
-        queueFilesRef.current(files, position);
-        return true;
       },
       handlePaste: (_view, event) => {
         const files = Array.from(event.clipboardData?.files ?? []);
@@ -198,7 +186,18 @@ export function NoteEditor({
           setDragActive(false);
         }
       }}
-      onDrop={() => setDragActive(false)}
+      onDropCapture={(event) => {
+        setDragActive(false);
+        const files = Array.from(event.dataTransfer.files);
+        if (!files.length) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const position = editor.view.posAtCoords({
+          left: event.clientX,
+          top: event.clientY,
+        })?.pos;
+        queueFilesRef.current(files, position);
+      }}
     >
       <div className="editor-toolbar">
         {btn(

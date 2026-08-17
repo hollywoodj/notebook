@@ -6,7 +6,9 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::error::{NotebookError, Result};
-use crate::models::{CreateNoteRequest, EnexImportRequest, EnexImportResult, ImportError};
+use crate::models::{
+    CreateNoteRequest, EnexImportRequest, EnexImportResult, ImportError, UpdateNoteRequest,
+};
 use crate::service::NotebookService;
 
 use self::enex::{parse_enex, EnexNote};
@@ -115,12 +117,12 @@ impl NotebookService {
             .map(|t| t.id)
             .collect();
 
-        let html = enex::enml_to_html(&note.content, &note.resources)?;
+        let mut html = enex::enml_to_html(&note.content, &note.resources)?;
 
-        let mut created = self.create_note(CreateNoteRequest {
+        let created = self.create_note(CreateNoteRequest {
             notebook_id,
             title: Some(note.title),
-            content: Some(html),
+            content: Some(html.clone()),
             tag_ids: Some(tag_ids),
             is_pinned: None,
             reminder_at: note.reminder_at,
@@ -129,17 +131,12 @@ impl NotebookService {
             template_category: None,
         })?;
 
-        if let (Some(created_at), Some(updated_at)) = (note.created, note.updated) {
-            self.set_note_timestamps(created.id, created_at, updated_at)?;
-            created.created_at = created_at;
-            created.updated_at = updated_at;
-        }
-
         for resource in note.resources {
             if resource.mime.starts_with("image/") {
                 continue;
             }
-            self.add_attachment(
+            let resource_marker = format!("notebook-resource://{}", resource.hash);
+            let attachment = self.add_attachment(
                 created.id,
                 resource
                     .filename
@@ -147,6 +144,24 @@ impl NotebookService {
                 resource.mime,
                 &resource.data,
             )?;
+            html = html.replace(
+                &resource_marker,
+                &format!("notebook-attachment://{}", attachment.id),
+            );
+        }
+
+        if html != created.content {
+            self.update_note(
+                created.id,
+                UpdateNoteRequest {
+                    content: Some(html),
+                    ..Default::default()
+                },
+            )?;
+        }
+
+        if let (Some(created_at), Some(updated_at)) = (note.created, note.updated) {
+            self.set_note_timestamps(created.id, created_at, updated_at)?;
         }
 
         Ok(())

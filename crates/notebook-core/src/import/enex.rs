@@ -383,7 +383,8 @@ fn render_en_media(
                 ));
             } else {
                 out.push_str(&format!(
-                    "<p><a href=\"#\">📎 {}</a></p>",
+                    "<p><a href=\"notebook-resource://{}\">📎 {}</a></p>",
+                    hash,
                     resource.filename.as_deref().unwrap_or("attachment")
                 ));
             }
@@ -512,6 +513,64 @@ mod tests {
         assert!(html.contains("<img"), "expected image tag, got: {html}");
         assert!(html.contains("Before"));
         assert!(html.contains("after"));
+    }
+
+    #[test]
+    fn imports_file_resources_with_working_attachment_links() {
+        let file_data = b"%PDF-1.4 test document";
+        let hash = format!("{:x}", md5::compute(file_data));
+        let encoded = base64::engine::general_purpose::STANDARD.encode(file_data);
+        let enex = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>PDF Note</title>
+    <content><![CDATA[<en-note><div>Document</div><en-media type="application/pdf" hash="{hash}"/></en-note>]]></content>
+    <resource>
+      <data encoding="base64">{encoded}</data>
+      <mime>application/pdf</mime>
+      <resource-attributes><file-name>manual.pdf</file-name></resource-attributes>
+    </resource>
+  </note>
+</en-export>"#
+        );
+        let dir = std::env::temp_dir().join("notebook-pdf-import-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = crate::db::Database::open(dir.join("test.db")).unwrap();
+        let service = crate::service::NotebookService::new(db);
+
+        let result = service
+            .import_enex(
+                enex.as_bytes(),
+                crate::models::EnexImportRequest {
+                    notebook_id: None,
+                    notebook_name: Some("Imported".into()),
+                    stack_id: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(result.imported, 1, "errors: {:?}", result.errors);
+        let note = service
+            .list_notes(Some(result.notebook_id), None, false, None, Some(false))
+            .unwrap()
+            .pop()
+            .and_then(|summary| service.get_note(summary.id).ok())
+            .unwrap();
+        let attachments = service.list_attachments(note.id).unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].filename, "manual.pdf");
+        assert_eq!(attachments[0].mime_type, "application/pdf");
+        assert_eq!(
+            service.read_attachment_data(attachments[0].id).unwrap(),
+            file_data
+        );
+        assert!(note.content.contains(&format!(
+            "notebook-attachment://{}",
+            attachments[0].id
+        )));
+        assert!(!note.content.contains("notebook-resource://"));
     }
 
     #[test]
