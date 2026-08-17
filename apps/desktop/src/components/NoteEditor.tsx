@@ -88,7 +88,9 @@ export function NoteEditor({
   useEffect(() => {
     editor?.setOptions({
       editorProps: {
+        ...editor.options.editorProps,
         attributes: {
+          ...editor.options.editorProps.attributes,
           class: "note-editor-content",
           spellcheck: spellCheck ? "true" : "false",
         },
