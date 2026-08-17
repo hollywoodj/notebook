@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
   Account,
   api,
@@ -56,6 +56,14 @@ function isBlankNote(note: Note) {
   return (!note.title || note.title === "Untitled") && text.length === 0;
 }
 
+function isTextInputFocused() {
+  const el = document.activeElement;
+  if (!el) return false;
+  const tag = el.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  return el instanceof HTMLElement && el.isContentEditable;
+}
+
 export default function App() {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,7 +74,7 @@ export default function App() {
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [templates, setTemplates] = useState<NoteSummary[]>([]);
   const [catalog, setCatalog] = useState<TemplateCatalogItem[]>([]);
-  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set());
   const [activeNote, setActiveNote] = useState<Note | null>(null);
   const [filter, setFilter] = useState<ViewFilter>({ type: "all" });
   const [searchInput, setSearchInput] = useState("");
@@ -93,6 +101,7 @@ export default function App() {
   const importRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const skipNextSave = useRef(false);
+  const lastClickedNoteId = useRef<string | null>(null);
 
   const openSettings = (section: SettingsSection = "application") => {
     setSettingsSection(section);
@@ -162,9 +171,47 @@ export default function App() {
     skipNextSave.current = true;
     const note = await api.getNote(id);
     setActiveNote(note);
-    setSelectedNoteId(id);
+    setSelectedNoteIds(new Set([id]));
+    lastClickedNoteId.current = id;
     setShowNoteMenu(false);
   }, []);
+
+  const handleNoteClick = useCallback(
+    (noteId: string, event: MouseEvent) => {
+      const meta = event.metaKey || event.ctrlKey;
+
+      if (event.shiftKey && lastClickedNoteId.current) {
+        const anchorIdx = notes.findIndex((n) => n.id === lastClickedNoteId.current);
+        const clickIdx = notes.findIndex((n) => n.id === noteId);
+        if (anchorIdx === -1 || clickIdx === -1) {
+          lastClickedNoteId.current = noteId;
+          setSelectedNoteIds(new Set([noteId]));
+          void loadNote(noteId);
+          return;
+        }
+        const start = Math.min(anchorIdx, clickIdx);
+        const end = Math.max(anchorIdx, clickIdx);
+        setSelectedNoteIds(new Set(notes.slice(start, end + 1).map((n) => n.id)));
+        return;
+      }
+
+      if (meta) {
+        setSelectedNoteIds((prev) => {
+          const next = new Set(prev);
+          if (next.has(noteId)) next.delete(noteId);
+          else next.add(noteId);
+          return next;
+        });
+        lastClickedNoteId.current = noteId;
+        return;
+      }
+
+      lastClickedNoteId.current = noteId;
+      setSelectedNoteIds(new Set([noteId]));
+      void loadNote(noteId);
+    },
+    [notes, loadNote]
+  );
 
   useEffect(() => {
     (async () => {
@@ -200,6 +247,14 @@ export default function App() {
   useEffect(() => {
     if (ready) refreshNotes().catch(console.error);
   }, [ready, filter, refreshNotes]);
+
+  useEffect(() => {
+    const noteIds = new Set(notes.map((n) => n.id));
+    setSelectedNoteIds((prev) => {
+      const pruned = new Set([...prev].filter((id) => noteIds.has(id)));
+      return pruned.size === prev.size ? prev : pruned;
+    });
+  }, [notes]);
 
   useEffect(() => {
     applyTheme(prefs.theme);
@@ -346,6 +401,9 @@ export default function App() {
       } else if (meta && e.key === "p" && activeNote) {
         e.preventDefault();
         saveNote({ ...activeNote, is_pinned: !activeNote.is_pinned });
+      } else if (meta && e.key === "a" && !isTextInputFocused()) {
+        e.preventDefault();
+        setSelectedNoteIds(new Set(notes.map((n) => n.id)));
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1204,6 +1262,9 @@ export default function App() {
           <div>
             <h2>{viewTitle}</h2>
             <span className="count">{notes.length}</span>
+            {selectedNoteIds.size > 1 && (
+              <span className="selection-count">{selectedNoteIds.size} selected</span>
+            )}
           </div>
           <div className="panel-tools">
             {filter.type === "templates" && (
@@ -1243,13 +1304,17 @@ export default function App() {
             <button
               key={note.id}
               className={
-                (selectedNoteId === note.id ? "note-card selected" : "note-card") +
+                (selectedNoteIds.has(note.id) ? "note-card selected" : "note-card") +
                 (prefs.list_density === "compact" ? " compact" : "")
               }
-              onClick={() => loadNote(note.id)}
+              onClick={(event) => handleNoteClick(note.id, event)}
               onContextMenu={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                if (!selectedNoteIds.has(note.id)) {
+                  setSelectedNoteIds(new Set([note.id]));
+                  lastClickedNoteId.current = note.id;
+                }
                 setContextMenu({
                   kind: "note",
                   x: event.clientX,

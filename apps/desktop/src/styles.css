@@ -660,6 +660,13 @@ button {
   font-size: 13px;
 }
 
+.selection-count {
+  color: var(--green);
+  font-size: 13px;
+  font-weight: 600;
+  margin-left: 8px;
+}
+
 .panel-tools {
   display: flex;
   align-items: center;
