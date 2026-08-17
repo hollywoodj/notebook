@@ -2,20 +2,76 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version tag (e.g. v0.1.0)"
-        required: true
-        default: "v0.1.0"
+        description: "Optional version tag (e.g. v0.2.0). Leave blank to auto-bump patch."
+        required: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
+      skip: ${{ steps.bump.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute release version
+        id: bump
+        run: |
+          if echo "${{ github.event.head_commit.message }}" | grep -q '\[skip release\]'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -n "${{ inputs.version }}" ]; then
+            tag="${{ inputs.version }}"
+            version="${tag#v}"
+            echo "version=${version}" >> "$GITHUB_OUTPUT"
+            echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          latest=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          if [ -z "$latest" ]; then
+            latest="v0.0.0"
+          fi
+
+          ver="${latest#v}"
+          IFS=. read -r major minor patch <<< "$ver"
+          patch=$((patch + 1))
+          tag="v${major}.${minor}.${patch}"
+          version="${major}.${minor}.${patch}"
+
+          if git tag --points-at HEAD | grep -qx "$tag"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Skip release
+        if: steps.bump.outputs.skip == 'true'
+        run: echo "No release needed for this commit."
+
   build:
+    needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -37,6 +93,10 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Set release version
+        working-directory: apps/desktop
+        run: npm version "${{ needs.prepare.outputs.version }}" --no-git-tag-version --allow-same-version
 
       - name: Build API
         run: cargo build --release -p notebook-api
@@ -72,7 +132,8 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: [prepare, build]
+    if: needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download installers
@@ -81,20 +142,12 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Resolve release version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Notebook ${{ steps.version.outputs.tag }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: Notebook ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           draft: false
           generate_release_notes: true
           fail_on_unmatched_files: true
