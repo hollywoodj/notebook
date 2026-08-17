@@ -33,4 +33,13 @@ describe("App hook order", () => {
     assert.match(editorSource, /formattingToolbarVisible\(toolbarHidden, editorFocused\)/);
     assert.match(editorSource, /note-attachments-toggle/);
   });
+
+  it("declares note tab state before the boot-screen return", () => {
+    const tabsState = appSource.indexOf("const [tabs, setTabs]");
+    const bootReturn = appSource.indexOf("if (error) {");
+    assert.ok(tabsState > 0);
+    assert.ok(tabsState < bootReturn);
+    assert.match(appSource, /Open in New Tab/);
+    assert.match(appSource, /<NoteTabBar/);
+  });
 });
