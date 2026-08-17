@@ -42,6 +42,7 @@ import {
   isPdfFile,
   titleFromFilename,
 } from "./fileAttachment";
+import { InlineCheckbox } from "./inlineCheckbox";
 
 interface Props {
   noteId: string;
@@ -176,6 +177,7 @@ export function NoteEditor({
       Highlight.configure({ multicolor: true }),
       TaskList,
       TaskItem.configure({ nested: true }),
+      InlineCheckbox,
       Placeholder.configure({ placeholder }),
       Image.configure({ allowBase64: true }),
       FileAttachment,
@@ -442,11 +444,17 @@ export function NoteEditor({
         case "taskList":
           chain.toggleTaskList().run();
           break;
+        case "inlineCheckbox":
+          chain.insertInlineCheckbox(false).run();
+          break;
         case "blockquote":
           chain.toggleBlockquote().run();
           break;
         case "codeBlock":
           chain.toggleCodeBlock().run();
+          break;
+        case "inlineCode":
+          chain.toggleCode().run();
           break;
         case "align":
           chain.setTextAlign(command.align).run();
@@ -578,9 +586,18 @@ export function NoteEditor({
     { label: "Italic", onSelect: () => editor.chain().focus().toggleItalic().run() },
     { label: "Highlight", onSelect: () => editor.chain().focus().toggleHighlight().run() },
     { type: "separator" },
+    { label: "Bulleted list", onSelect: () => editor.chain().focus().toggleBulletList().run() },
+    { label: "Numbered list", onSelect: () => editor.chain().focus().toggleOrderedList().run() },
+    { label: "Checklist", onSelect: () => editor.chain().focus().toggleTaskList().run() },
+    {
+      label: "Checkbox",
+      onSelect: () => editor.chain().focus().insertInlineCheckbox(false).run(),
+    },
+    { type: "separator" },
     { label: "Align left", onSelect: () => editor.chain().focus().setTextAlign("left").run() },
     { label: "Align center", onSelect: () => editor.chain().focus().setTextAlign("center").run() },
     { label: "Align right", onSelect: () => editor.chain().focus().setTextAlign("right").run() },
+    { label: "Justify", onSelect: () => editor.chain().focus().setTextAlign("justify").run() },
     { type: "separator" },
     {
       label: "Link…",
@@ -742,6 +759,12 @@ export function NoteEditor({
           editor.isActive("heading", { level: 2 }),
           <span className="toolbar-text">H2</span>
         )}
+        {btn(
+          "Heading 3",
+          () => editor.chain().focus().toggleHeading({ level: 3 }).run(),
+          editor.isActive("heading", { level: 3 }),
+          <span className="toolbar-text">H3</span>
+        )}
         <span className="toolbar-sep" />
         {btn(
           "Bold",
@@ -850,6 +873,12 @@ export function NoteEditor({
           <Icon.AlignRight size={16} />
         )}
         {btn(
+          "Justify",
+          () => editor.chain().focus().setTextAlign("justify").run(),
+          editor.isActive({ textAlign: "justify" }),
+          <Icon.AlignJustify size={16} />
+        )}
+        {btn(
           "Decrease indent",
           () => applyIndent(editor, -1),
           false,
@@ -875,9 +904,15 @@ export function NoteEditor({
           <Icon.Ordered size={16} />
         )}
         {btn(
-          "Checkbox",
+          "Checklist",
           () => editor.chain().focus().toggleTaskList().run(),
           editor.isActive("taskList"),
+          <Icon.Checklist size={16} />
+        )}
+        {btn(
+          "Checkbox",
+          () => editor.chain().focus().insertInlineCheckbox(false).run(),
+          false,
           <Icon.Check size={16} />
         )}
         {btn(
@@ -891,6 +926,12 @@ export function NoteEditor({
           () => editor.chain().focus().toggleCodeBlock().run(),
           editor.isActive("codeBlock"),
           <Icon.Code size={16} />
+        )}
+        {btn(
+          "Inline code",
+          () => editor.chain().focus().toggleCode().run(),
+          editor.isActive("code"),
+          <span className="toolbar-text">{"<>"}</span>
         )}
         {btn(
           "Divider",

@@ -323,7 +323,7 @@ export type EditorCommand =
   | { type: "color"; color?: string }
   | { type: "horizontalRule" | "insertDate" | "insertTable" }
   | { type: "heading"; level: 1 | 2 | 3 }
-  | { type: "bulletList" | "orderedList" | "taskList" | "blockquote" | "codeBlock" }
+  | { type: "bulletList" | "orderedList" | "taskList" | "blockquote" | "codeBlock" | "inlineCode" | "inlineCheckbox" }
   | { type: "align"; align: "left" | "center" | "right" | "justify" }
   | { type: "indent" | "outdent" }
   | { type: "link"; href?: string; text?: string }
