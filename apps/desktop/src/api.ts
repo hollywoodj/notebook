@@ -165,6 +165,16 @@ const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8799";
 export const attachmentUrl = (id: string) =>
   `${API_BASE}/api/v1/attachments/${encodeURIComponent(id)}`;
 
+function hydrateAttachmentUrls(note: Note): Note {
+  return {
+    ...note,
+    content: note.content.replace(
+      /notebook-attachment:\/\/([0-9a-f-]{36})/gi,
+      (_match, id: string) => attachmentUrl(id)
+    ),
+  };
+}
+
 function rewriteFetchError(err: unknown): Error {
   if (err instanceof TypeError) {
     return new Error(
@@ -258,7 +268,8 @@ export const api = {
     return request<NoteSummary[]>(`/api/v1/notes${query ? `?${query}` : ""}`);
   },
 
-  getNote: (id: string) => request<Note>(`/api/v1/notes/${id}`),
+  getNote: (id: string) =>
+    request<Note>(`/api/v1/notes/${id}`).then(hydrateAttachmentUrls),
 
   createNote: (
     notebookId: string,
@@ -280,7 +291,7 @@ export const api = {
         is_template: options?.is_template ?? false,
         template_category: options?.template_category ?? null,
       }),
-    }),
+    }).then(hydrateAttachmentUrls),
 
   updateNote: (
     id: string,
@@ -299,13 +310,15 @@ export const api = {
     request<Note>(`/api/v1/notes/${id}`, {
       method: "PUT",
       body: JSON.stringify(patch),
-    }),
+    }).then(hydrateAttachmentUrls),
 
   deleteNote: (id: string) =>
     request<void>(`/api/v1/notes/${id}`, { method: "DELETE" }),
 
   restoreNote: (id: string) =>
-    request<Note>(`/api/v1/notes/${id}/restore`, { method: "POST" }),
+    request<Note>(`/api/v1/notes/${id}/restore`, { method: "POST" }).then(
+      hydrateAttachmentUrls
+    ),
 
   permanentlyDeleteNote: (id: string) =>
     request<void>(`/api/v1/notes/${id}/permanent`, { method: "DELETE" }),
@@ -330,7 +343,7 @@ export const api = {
   restoreRevision: (noteId: string, revisionId: string) =>
     request<Note>(`/api/v1/notes/${noteId}/revisions/${revisionId}/restore`, {
       method: "POST",
-    }),
+    }).then(hydrateAttachmentUrls),
 
   uploadAttachment: async (noteId: string, file: File): Promise<Attachment> => {
     const form = new FormData();
@@ -434,7 +447,7 @@ export const api = {
     request<Note>(`/api/v1/templates/${id}/use`, {
       method: "POST",
       body: JSON.stringify({ notebook_id: notebookId || null }),
-    }),
+    }).then(hydrateAttachmentUrls),
 
   storageInfo: () =>
     request<{ database: string; attachments: string }>("/api/v1/storage"),
