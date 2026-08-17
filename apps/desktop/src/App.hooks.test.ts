@@ -71,26 +71,36 @@ describe("Evernote sidebar chrome", () => {
     assert.equal(appSource.includes("prefs.show_import"), false);
   });
 
-  it("pops out shortcuts and notebooks with their contents", () => {
+  it("pops out shortcuts, notebooks, and tags with their contents", () => {
     assert.match(appSource, /sidebarFlyout === "shortcuts"/);
     assert.match(appSource, /sidebarFlyout === "notebooks"/);
+    assert.match(appSource, /sidebarFlyout === "tags"/);
     assert.match(appSource, /className="sidebar-flyout"/);
     assert.match(appSource, /shortcutNotes\.map/);
+    assert.match(appSource, /visibleTags\.map/);
     assert.match(appSource, /Star a note to add it to Shortcuts/);
+    assert.match(appSource, /openSidebarFlyout\("tags"\)/);
+    assert.match(appSource, /openSidebarFlyout\("notebooks"\)/);
+    assert.match(appSource, /openSidebarFlyout\("shortcuts"\)/);
   });
 
-  it("shows an icon rail that opens over the note list on hover", () => {
+  it("keeps tags out of the nav list now that they have their own panel", () => {
+    assert.equal(appSource.includes("tagsOpen"), false);
+    assert.equal(appSource.includes("nav-section"), false);
+  });
+
+  it("holds the icon rail at its width instead of popping the sidebar open", () => {
     assert.match(appSource, /const sidebarRail = isSidebarRail\(paneLayout\)/);
-    assert.match(appSource, /sidebarHovered \|\| sidebarFocused/);
-    assert.match(appSource, /onMouseEnter=\{\(\) => setSidebarHovered\(true\)\}/);
-    assert.match(appSource, /onMouseLeave=\{\(\) => setSidebarHovered\(false\)\}/);
-    assert.match(appSource, /sidebarRailOpen \? " rail-open" : ""/);
     assert.match(appSource, /sidebarRail \? " sidebar-rail" : ""/);
+    assert.match(appSource, /className="sidebar"/);
+    assert.equal(appSource.includes("rail-open"), false);
+    assert.equal(appSource.includes("sidebarHovered"), false);
+    assert.equal(appSource.includes("sidebarFocused"), false);
 
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
     assert.match(styles, /\.app-shell\.sidebar-rail \{/);
-    assert.match(styles, /\.app-shell\.sidebar-rail \.sidebar\.rail-open \{/);
-    assert.match(styles, /\.app-shell\.sidebar-rail \.sidebar:not\(\.rail-open\) \.nav-label/);
+    assert.match(styles, /\.app-shell\.sidebar-rail \.sidebar-nav \.nav-label/);
+    assert.equal(styles.includes("rail-open"), false);
   });
 
   it("labels every rail icon so hover reveals the same nav text", () => {

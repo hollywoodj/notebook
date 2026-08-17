@@ -52,10 +52,17 @@ This log is for future sessions continuing the exact-clone work. Passes 1–4 ea
 9. Account **footer** chip (avatar, name, email) + settings gear
 10. **Find** (Ctrl/⌘ F) vs **Find and Replace** (Ctrl/⌘ H) as separate Edit items
 
-### Pass 5 (this session)
-1. **Sidebar icon rail**: the sidebar rests at 56px of icons and floats open over the note list on hover or keyboard focus, so the list and editor never reflow
+### Pass 5
+1. **Sidebar icon rail**: the sidebar rests at 56px of icons, so the list and editor never reflow
 2. Rail can be pinned open from the sidebar toggle, the View menu, or Ctrl/⌘ Alt S; the choice persists with the pane layout
 3. Sidebar splitter tracks the pointer, so one drag crosses between the rail and a pinned width in either direction
+
+### Pass 6 (this session)
+1. The rail **no longer widens under the pointer**. Evernote's collapsed sidebar keeps its width and only shows a tooltip, so hovering here does the same; the sidebar changes width only when you pin it, drag its edge, or hide it
+2. **Tags open in a panel** beside the sidebar, the way Shortcuts and Notebooks already did, instead of expanding inline and pushing Templates and Trash down
+3. Every panel shares one shape: title, filter, add button, close; the filter is named for its own section (`Filter notebooks`, `Filter tags`) and resets when you switch sections
+4. Clicking the section that is already open closes its panel; Escape and a click outside the sidebar close it too
+5. View menu gained **Notebooks** and **Tags** entries that open the matching panel
 
 ## Where to look
 

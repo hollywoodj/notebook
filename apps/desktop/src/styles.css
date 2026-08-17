@@ -429,72 +429,63 @@ button {
   position: relative;
 }
 
-/* Icon rail: the sidebar sits at rail width and floats open over the note list on hover. */
+/*
+ * Icon rail: like Evernote's collapsed sidebar, the rail keeps its width. It
+ * never widens under the pointer; hovering shows the row tooltip and clicking a
+ * section opens its panel beside the rail.
+ */
 .app-shell.sidebar-rail .sidebar {
   width: var(--sidebar-rail-width, 56px);
   z-index: 13;
-  transition: width 140ms ease;
-}
-
-.app-shell.sidebar-rail .sidebar.rail-open {
-  width: var(--sidebar-width, 248px);
-  box-shadow: var(--shadow);
 }
 
 .app-shell.sidebar-rail .sidebar-splitter {
   z-index: 15;
 }
 
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .nav-label,
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .nav-count,
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .section-actions,
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .account-copy,
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .sidebar-rail-toggle,
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .nav-item.indent,
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .empty-state.compact {
+/* Scoped to the rail's own nav so the flyout beside it keeps its labels. */
+.app-shell.sidebar-rail .sidebar-nav .nav-label,
+.app-shell.sidebar-rail .sidebar-nav .nav-count,
+.app-shell.sidebar-rail .sidebar-nav .empty-state.compact,
+.app-shell.sidebar-rail .sidebar-account .account-copy {
   display: none;
 }
 
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .sidebar-toolbar {
+.app-shell.sidebar-rail .sidebar-toolbar {
   flex-direction: column;
   gap: 4px;
   padding: 8px 0;
 }
 
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .sidebar-nav {
+.app-shell.sidebar-rail .sidebar-nav {
   padding: 4px 8px 12px;
   overflow-y: auto;
   scrollbar-gutter: auto;
   scrollbar-width: none;
 }
 
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .sidebar-nav::-webkit-scrollbar {
+.app-shell.sidebar-rail .sidebar-nav::-webkit-scrollbar {
   width: 0;
 }
 
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .nav-item,
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .nav-section-title,
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .nav-section-title span,
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .account-chip {
+.app-shell.sidebar-rail .sidebar-nav .nav-item {
   justify-content: center;
   gap: 0;
-}
-
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .nav-item,
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .nav-section-title {
   padding: 8px 0;
 }
 
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .sidebar-account {
+.app-shell.sidebar-rail .sidebar-account {
   flex-direction: column;
   justify-content: center;
   gap: 2px;
   padding: 8px 0 10px;
 }
 
-.app-shell.sidebar-rail .sidebar:not(.rail-open) .account-chip {
+.app-shell.sidebar-rail .sidebar-account .account-chip {
   flex: none;
   width: 100%;
+  justify-content: center;
+  gap: 0;
   padding: 4px 0;
 }
 
@@ -821,52 +812,6 @@ button {
 
 .sidebar-nav {
   padding: 4px 8px 16px;
-}
-
-.nav-section {
-  margin-top: 10px;
-}
-
-.nav-section-title {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 8px;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  border: none;
-  background: transparent;
-}
-
-.nav-section-title.static {
-  cursor: default;
-}
-
-.nav-section-title span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.section-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.section-actions .plus {
-  color: var(--green);
-  font-size: 16px;
-  padding: 0 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
 }
 
 .nav-item {

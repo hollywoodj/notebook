@@ -42,7 +42,10 @@ import {
   createNoteTab,
   noteTabLabel,
   nextActiveTabId,
+  nextSidebarFlyout,
   reorderById,
+  sidebarFilterLabel,
+  sidebarFlyoutTitle,
 } from "./uiChrome.ts";
 
 describe("clampPaneWidth", () => {
@@ -113,6 +116,28 @@ describe("sidebar icon rail", () => {
     assert.equal(resizeSidebarTo(hidden, 100).sidebarCollapsed, false);
     assert.equal(resizeSidebarTo(hidden, 100).sidebarRail, true);
     assert.equal(resizeSidebarTo(hidden, 260).sidebarWidth, 260);
+  });
+});
+
+describe("sidebar flyouts", () => {
+  it("opens shortcuts, notebooks, and tags the same way", () => {
+    assert.equal(nextSidebarFlyout(null, "tags"), "tags");
+    assert.equal(nextSidebarFlyout("notebooks", "tags"), "tags");
+    assert.equal(nextSidebarFlyout("shortcuts", "notebooks"), "notebooks");
+  });
+
+  it("closes the panel when its own section is clicked again", () => {
+    assert.equal(nextSidebarFlyout("tags", "tags"), null);
+    assert.equal(nextSidebarFlyout("notebooks", "notebooks"), null);
+    assert.equal(nextSidebarFlyout("shortcuts", "shortcuts"), null);
+  });
+
+  it("titles and filters each panel after its own section", () => {
+    assert.equal(sidebarFlyoutTitle("shortcuts"), "Shortcuts");
+    assert.equal(sidebarFlyoutTitle("notebooks"), "Notebooks");
+    assert.equal(sidebarFlyoutTitle("tags"), "Tags");
+    assert.equal(sidebarFilterLabel("notebooks"), "Filter notebooks");
+    assert.equal(sidebarFilterLabel("tags"), "Filter tags");
   });
 });
 
