@@ -21,6 +21,12 @@ import { TemplateGallery } from "./components/TemplateGallery";
 import { Icon } from "./components/Icons";
 import { ContextMenu, ContextMenuEntry } from "./components/ContextMenu";
 import { MenuBar, MenuBarGroup } from "./components/MenuBar";
+import {
+  batchConfirmMessage,
+  noteIdsInRange,
+  pruneNoteIds,
+  toggleNoteId,
+} from "./noteSelection";
 
 type ContextTarget =
   | { kind: "note"; x: number; y: number; note: NoteSummary }
@@ -180,28 +186,13 @@ export default function App() {
     (noteId: string, event: MouseEvent) => {
       const meta = event.metaKey || event.ctrlKey;
 
-      if (event.shiftKey && lastClickedNoteId.current) {
-        const anchorIdx = notes.findIndex((n) => n.id === lastClickedNoteId.current);
-        const clickIdx = notes.findIndex((n) => n.id === noteId);
-        if (anchorIdx === -1 || clickIdx === -1) {
-          lastClickedNoteId.current = noteId;
-          setSelectedNoteIds(new Set([noteId]));
-          void loadNote(noteId);
-          return;
-        }
-        const start = Math.min(anchorIdx, clickIdx);
-        const end = Math.max(anchorIdx, clickIdx);
-        setSelectedNoteIds(new Set(notes.slice(start, end + 1).map((n) => n.id)));
+      if (event.shiftKey) {
+        setSelectedNoteIds(new Set(noteIdsInRange(notes, lastClickedNoteId.current, noteId)));
         return;
       }
 
       if (meta) {
-        setSelectedNoteIds((prev) => {
-          const next = new Set(prev);
-          if (next.has(noteId)) next.delete(noteId);
-          else next.add(noteId);
-          return next;
-        });
+        setSelectedNoteIds((prev) => toggleNoteId(prev, noteId));
         lastClickedNoteId.current = noteId;
         return;
       }
@@ -250,10 +241,7 @@ export default function App() {
 
   useEffect(() => {
     const noteIds = new Set(notes.map((n) => n.id));
-    setSelectedNoteIds((prev) => {
-      const pruned = new Set([...prev].filter((id) => noteIds.has(id)));
-      return pruned.size === prev.size ? prev : pruned;
-    });
+    setSelectedNoteIds((prev) => pruneNoteIds(prev, noteIds));
   }, [notes]);
 
   useEffect(() => {
@@ -306,19 +294,6 @@ export default function App() {
     return updated;
   };
 
-  const duplicateNote = async (id: string) => {
-    const source = await api.getNote(id);
-    const duplicate = await api.createNote(source.notebook_id, {
-      title: `${source.title || "Untitled"} copy`,
-      content: source.content,
-      tag_ids: source.tag_ids,
-      is_template: source.is_template,
-      template_category: source.template_category || undefined,
-    });
-    await refreshNotes();
-    await loadNote(duplicate.id);
-  };
-
   useEffect(() => {
     if (!activeNote) return;
     if (skipNextSave.current) {
@@ -367,6 +342,132 @@ export default function App() {
     return window.confirm(message);
   };
 
+  const selectedNotes = useMemo(
+    () => notes.filter((note) => selectedNoteIds.has(note.id)),
+    [notes, selectedNoteIds]
+  );
+
+  const targetNoteIds = () => {
+    if (selectedNoteIds.size > 0) return [...selectedNoteIds];
+    return activeNote ? [activeNote.id] : [];
+  };
+
+  const applyToNotes = async (
+    ids: string[],
+    action: (id: string) => Promise<unknown>,
+    options?: {
+      closeActive?: boolean;
+      clearSelection?: boolean;
+      refreshMeta?: boolean;
+    }
+  ) => {
+    try {
+      for (const id of ids) {
+        await action(id);
+      }
+    } finally {
+      if (options?.closeActive && activeNote && ids.includes(activeNote.id)) {
+        setActiveNote(null);
+      }
+      if (options?.clearSelection) {
+        setSelectedNoteIds(new Set());
+        lastClickedNoteId.current = null;
+      }
+      await refreshNotes();
+      if (options?.refreshMeta) await refreshMeta();
+    }
+  };
+
+  const deleteSelectedNotes = async () => {
+    const ids = targetNoteIds();
+    if (ids.length === 0) return;
+    const inTrash = filter.type === "trash";
+    const first = notes.find((note) => note.id === ids[0]);
+    const title = first?.title || "Untitled";
+    if (inTrash) {
+      if (!confirm(batchConfirmMessage("permanent", ids.length, title))) {
+        return;
+      }
+      await applyToNotes(ids, (id) => api.permanentlyDeleteNote(id), {
+        closeActive: true,
+        clearSelection: true,
+      });
+      return;
+    }
+    if (!confirm(batchConfirmMessage("trash", ids.length, title))) {
+      return;
+    }
+    await applyToNotes(ids, (id) => api.deleteNote(id), {
+      closeActive: true,
+      clearSelection: true,
+    });
+  };
+
+  const restoreSelectedNotes = async () => {
+    const ids = targetNoteIds();
+    if (ids.length === 0) return;
+    await applyToNotes(ids, (id) => api.restoreNote(id), {
+      closeActive: true,
+      clearSelection: true,
+    });
+  };
+
+  const moveSelectedNotes = async (notebookId: string) => {
+    const ids = targetNoteIds();
+    if (ids.length === 0) return;
+    await applyToNotes(ids, async (id) => {
+      const updated = await api.updateNote(id, { notebook_id: notebookId });
+      if (activeNote?.id === id) setActiveNote(updated);
+    });
+  };
+
+  const pinSelectedNotes = async (pinned: boolean) => {
+    const ids = targetNoteIds();
+    if (ids.length === 0) return;
+    await applyToNotes(ids, async (id) => {
+      const updated = await api.updateNote(id, { is_pinned: pinned });
+      if (activeNote?.id === id) setActiveNote(updated);
+    });
+  };
+
+  const archiveSelectedNotes = async (archived: boolean) => {
+    const ids = targetNoteIds();
+    if (ids.length === 0) return;
+    await applyToNotes(ids, async (id) => {
+      const updated = await api.updateNote(id, { is_archived: archived });
+      if (activeNote?.id === id) setActiveNote(updated);
+    });
+  };
+
+  const shortcutSelectedNotes = async (add: boolean) => {
+    const ids = targetNoteIds();
+    if (ids.length === 0) return;
+    await applyToNotes(
+      ids,
+      (id) => (add ? api.addShortcut(id) : api.removeShortcut(id)),
+      { refreshMeta: true }
+    );
+  };
+
+  const duplicateSelectedNotes = async () => {
+    const ids = targetNoteIds();
+    if (ids.length === 0) return;
+    let lastId: string | null = null;
+    for (const id of ids) {
+      const source = await api.getNote(id);
+      const duplicate = await api.createNote(source.notebook_id, {
+        title: `${source.title || "Untitled"} copy`,
+        content: source.content,
+        tag_ids: source.tag_ids,
+        is_template: source.is_template,
+        template_category: source.template_category || undefined,
+      });
+      lastId = duplicate.id;
+    }
+    await refreshNotes();
+    if (lastId) await loadNote(lastId);
+  };
+
   const notebooksByStack = useMemo(() => {
     const grouped: Record<string, Notebook[]> = { uncategorized: [] };
     stacks.forEach((s) => (grouped[s.id] = []));
@@ -398,12 +499,25 @@ export default function App() {
       } else if (meta && e.key === "t" && e.shiftKey) {
         e.preventDefault();
         setFilter({ type: "templates" });
-      } else if (meta && e.key === "p" && activeNote) {
+      } else if (meta && e.key === "p" && !isTextInputFocused() && targetNoteIds().length > 0) {
         e.preventDefault();
-        saveNote({ ...activeNote, is_pinned: !activeNote.is_pinned });
+        const targets = notes.filter((note) => targetNoteIds().includes(note.id));
+        const allPinned = targets.length > 0 && targets.every((note) => note.is_pinned);
+        void pinSelectedNotes(!allPinned);
       } else if (meta && e.key === "a" && !isTextInputFocused()) {
         e.preventDefault();
         setSelectedNoteIds(new Set(notes.map((n) => n.id)));
+      } else if (e.key === "Escape" && selectedNoteIds.size > 1) {
+        if (activeNote) setSelectedNoteIds(new Set([activeNote.id]));
+        else setSelectedNoteIds(new Set());
+      } else if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        !isTextInputFocused() &&
+        !meta &&
+        targetNoteIds().length > 0
+      ) {
+        e.preventDefault();
+        void deleteSelectedNotes();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -449,6 +563,13 @@ export default function App() {
                 : `Search: ${filter.query}`;
 
   const isShortcut = activeNote ? shortcutIds.has(activeNote.id) : false;
+  const allSelectedPinned =
+    selectedNotes.length > 0 && selectedNotes.every((note) => note.is_pinned);
+  const allSelectedArchived =
+    selectedNotes.length > 0 && selectedNotes.every((note) => note.is_archived);
+  const allSelectedShortcuts =
+    selectedNotes.length > 0 &&
+    selectedNotes.every((note) => shortcutIds.has(note.id));
 
   const openRename = (target: RenameTarget) => {
     setRenameTarget(target);
@@ -488,86 +609,106 @@ export default function App() {
     }
 
     if (target.kind === "note") {
-      const { note } = target;
-      const shortcut = shortcutIds.has(note.id);
+      const targets =
+        selectedNoteIds.size > 1 && selectedNoteIds.has(target.note.id)
+          ? selectedNotes
+          : [target.note];
+      const ids = targets.map((note) => note.id);
+      const count = targets.length;
       const inTrash = filter.type === "trash";
+      const allShortcuts = targets.every((note) => shortcutIds.has(note.id));
+      const allPinned = targets.every((note) => note.is_pinned);
+      const allArchived = targets.every((note) => note.is_archived);
+      const allTemplates = targets.every((note) => note.is_template);
+      const sameNotebookId =
+        targets.every((note) => note.notebook_id === targets[0]?.notebook_id)
+          ? targets[0]?.notebook_id
+          : null;
+
       if (inTrash) {
         return [
           {
-            label: "Restore note",
-            onSelect: async () => {
-              await api.restoreNote(note.id);
-              if (activeNote?.id === note.id) setActiveNote(null);
-              await refreshNotes();
-            },
+            label: count > 1 ? `Restore ${count} notes` : "Restore note",
+            onSelect: () => void restoreSelectedNotes(),
           },
           { type: "separator" },
           {
-            label: "Delete permanently",
+            label: count > 1 ? `Delete ${count} notes permanently` : "Delete permanently",
             danger: true,
-            onSelect: async () => {
-              if (!confirm(`Delete “${note.title || "Untitled"}” forever?`)) return;
-              await api.permanentlyDeleteNote(note.id);
-              if (activeNote?.id === note.id) setActiveNote(null);
-              await refreshNotes();
-            },
+            shortcut: "Delete",
+            onSelect: () => void deleteSelectedNotes(),
           },
         ];
       }
 
       return [
-        { label: "Open note", onSelect: () => void loadNote(note.id) },
+        ...(count === 1
+          ? [{ label: "Open note", onSelect: () => void loadNote(targets[0].id) }]
+          : []),
         {
-          label: shortcut ? "Remove from shortcuts" : "Add to shortcuts",
-          onSelect: async () => {
-            if (shortcut) await api.removeShortcut(note.id);
-            else await api.addShortcut(note.id);
-            await refreshMeta();
-            if (filter.type === "shortcuts") await refreshNotes();
-          },
+          label: allShortcuts
+            ? count > 1
+              ? `Remove ${count} from shortcuts`
+              : "Remove from shortcuts"
+            : count > 1
+              ? `Add ${count} to shortcuts`
+              : "Add to shortcuts",
+          onSelect: () => void shortcutSelectedNotes(!allShortcuts),
         },
         {
-          label: note.is_pinned ? "Unpin from top" : "Pin to top",
-          onSelect: () =>
-            void updateNoteById(note.id, { is_pinned: !note.is_pinned }),
+          label: allPinned
+            ? count > 1
+              ? `Unpin ${count} notes`
+              : "Unpin from top"
+            : count > 1
+              ? `Pin ${count} notes`
+              : "Pin to top",
+          onSelect: () => void pinSelectedNotes(!allPinned),
         },
         {
           label: "Move to notebook",
           children: notebooks.map((notebook) => ({
             label: notebook.name,
-            checked: notebook.id === note.notebook_id,
-            disabled: notebook.id === note.notebook_id,
-            onSelect: () =>
-              void updateNoteById(note.id, { notebook_id: notebook.id }),
+            checked: sameNotebookId === notebook.id,
+            disabled: sameNotebookId === notebook.id,
+            onSelect: () => void moveSelectedNotes(notebook.id),
           })),
         },
-        { label: "Duplicate note", onSelect: () => void duplicateNote(note.id) },
-        { type: "separator" },
         {
-          label: note.is_template ? "Convert to note" : "Save as template",
-          onSelect: async () => {
-            await updateNoteById(note.id, {
-              is_template: !note.is_template,
-              template_category: note.is_template ? null : "My templates",
-            });
-            await refreshMeta();
-          },
-        },
-        {
-          label: note.is_archived ? "Unarchive note" : "Archive note",
-          onSelect: () =>
-            void updateNoteById(note.id, { is_archived: !note.is_archived }),
+          label: count > 1 ? `Duplicate ${count} notes` : "Duplicate note",
+          onSelect: () => void duplicateSelectedNotes(),
         },
         { type: "separator" },
+        ...(count === 1
+          ? [
+              {
+                label: allTemplates ? "Convert to note" : "Save as template",
+                onSelect: async () => {
+                  await updateNoteById(ids[0], {
+                    is_template: !allTemplates,
+                    template_category: allTemplates ? null : "My templates",
+                  });
+                  await refreshMeta();
+                },
+              },
+            ]
+          : []),
         {
-          label: "Move to trash",
+          label: allArchived
+            ? count > 1
+              ? `Unarchive ${count} notes`
+              : "Unarchive note"
+            : count > 1
+              ? `Archive ${count} notes`
+              : "Archive note",
+          onSelect: () => void archiveSelectedNotes(!allArchived),
+        },
+        { type: "separator" },
+        {
+          label: count > 1 ? `Move ${count} notes to trash` : "Move to trash",
           danger: true,
-          onSelect: async () => {
-            if (!confirm(`Move “${note.title || "Untitled"}” to Trash?`)) return;
-            await api.deleteNote(note.id);
-            if (activeNote?.id === note.id) setActiveNote(null);
-            await refreshNotes();
-          },
+          shortcut: "Delete",
+          onSelect: () => void deleteSelectedNotes(),
         },
       ];
     }
@@ -759,7 +900,13 @@ export default function App() {
         {
           label: "Select All",
           shortcut: "Ctrl/⌘ A",
-          onSelect: () => runEditorCommand("selectAll"),
+          onSelect: () => {
+            if (isTextInputFocused()) {
+              runEditorCommand("selectAll");
+              return;
+            }
+            setSelectedNoteIds(new Set(notes.map((n) => n.id)));
+          },
         },
       ],
     },
@@ -784,45 +931,85 @@ export default function App() {
       label: "Note",
       items: [
         {
-          label: activeNote?.is_pinned ? "Unpin Note" : "Pin Note",
-          disabled: !activeNote,
-          onSelect: () =>
-            activeNote &&
-            void saveNote({ ...activeNote, is_pinned: !activeNote.is_pinned }),
-        },
-        {
-          label: isShortcut ? "Remove from Shortcuts" : "Add to Shortcuts",
-          disabled: !activeNote,
+          label:
+            selectedNoteIds.size > 1
+              ? allSelectedPinned
+                ? `Unpin ${selectedNoteIds.size} Notes`
+                : `Pin ${selectedNoteIds.size} Notes`
+              : activeNote?.is_pinned
+                ? "Unpin Note"
+                : "Pin Note",
+          disabled: targetNoteIds().length === 0,
           onSelect: () => {
-            if (!activeNote) return;
-            void (isShortcut
-              ? api.removeShortcut(activeNote.id)
-              : api.addShortcut(activeNote.id)
-            ).then(refreshMeta);
+            void pinSelectedNotes(
+              selectedNoteIds.size > 1 ? !allSelectedPinned : !activeNote?.is_pinned
+            );
           },
         },
         {
-          label: activeNote?.is_archived ? "Unarchive Note" : "Archive Note",
-          disabled: !activeNote,
-          onSelect: () =>
-            activeNote &&
-            void saveNote({
-              ...activeNote,
-              is_archived: !activeNote.is_archived,
-            }),
+          label:
+            selectedNoteIds.size > 1
+              ? allSelectedShortcuts
+                ? `Remove ${selectedNoteIds.size} from Shortcuts`
+                : `Add ${selectedNoteIds.size} to Shortcuts`
+              : isShortcut
+                ? "Remove from Shortcuts"
+                : "Add to Shortcuts",
+          disabled: targetNoteIds().length === 0,
+          onSelect: () => {
+            void shortcutSelectedNotes(
+              selectedNoteIds.size > 1 ? !allSelectedShortcuts : !isShortcut
+            );
+          },
+        },
+        {
+          label:
+            selectedNoteIds.size > 1
+              ? allSelectedArchived
+                ? `Unarchive ${selectedNoteIds.size} Notes`
+                : `Archive ${selectedNoteIds.size} Notes`
+              : activeNote?.is_archived
+                ? "Unarchive Note"
+                : "Archive Note",
+          disabled: targetNoteIds().length === 0,
+          onSelect: () => {
+            void archiveSelectedNotes(
+              selectedNoteIds.size > 1
+                ? !allSelectedArchived
+                : !activeNote?.is_archived
+            );
+          },
         },
         { type: "separator" },
-        {
-          label: "Move Note to Trash",
-          disabled: !activeNote || filter.type === "trash",
-          onSelect: () => {
-            if (!activeNote || !confirm("Move this note to Trash?")) return;
-            void api.deleteNote(activeNote.id).then(async () => {
-              setActiveNote(null);
-              await refreshNotes();
-            });
-          },
-        },
+        ...(filter.type === "trash"
+          ? [
+              {
+                label:
+                  selectedNoteIds.size > 1
+                    ? `Restore ${selectedNoteIds.size} Notes`
+                    : "Restore Note",
+                disabled: targetNoteIds().length === 0,
+                onSelect: () => void restoreSelectedNotes(),
+              },
+              {
+                label:
+                  selectedNoteIds.size > 1
+                    ? `Delete ${selectedNoteIds.size} Notes Permanently`
+                    : "Delete Note Permanently",
+                disabled: targetNoteIds().length === 0,
+                onSelect: () => void deleteSelectedNotes(),
+              },
+            ]
+          : [
+              {
+                label:
+                  selectedNoteIds.size > 1
+                    ? `Move ${selectedNoteIds.size} Notes to Trash`
+                    : "Move Note to Trash",
+                disabled: targetNoteIds().length === 0,
+                onSelect: () => void deleteSelectedNotes(),
+              },
+            ]),
       ],
     },
     {
@@ -1267,36 +1454,94 @@ export default function App() {
             )}
           </div>
           <div className="panel-tools">
-            {filter.type === "templates" && (
-              <button className="ghost-btn small" onClick={() => setShowGallery(true)}>
-                Gallery
-              </button>
+            {selectedNoteIds.size > 1 ? (
+              <>
+                {filter.type === "trash" ? (
+                  <>
+                    <button className="ghost-btn small" onClick={() => void restoreSelectedNotes()}>
+                      Restore
+                    </button>
+                    <button
+                      className="ghost-btn small danger-text"
+                      onClick={() => void deleteSelectedNotes()}
+                    >
+                      Delete
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <select
+                      aria-label="Move selected notes to notebook"
+                      value=""
+                      onChange={(e) => {
+                        const notebookId = e.target.value;
+                        if (notebookId) void moveSelectedNotes(notebookId);
+                      }}
+                    >
+                      <option value="" disabled>
+                        Move to…
+                      </option>
+                      {notebooks.map((notebook) => (
+                        <option key={notebook.id} value={notebook.id}>
+                          {notebook.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="ghost-btn small"
+                      onClick={() => void pinSelectedNotes(!allSelectedPinned)}
+                    >
+                      {allSelectedPinned ? "Unpin" : "Pin"}
+                    </button>
+                    <button
+                      className="ghost-btn small"
+                      onClick={() => void archiveSelectedNotes(!allSelectedArchived)}
+                    >
+                      {allSelectedArchived ? "Unarchive" : "Archive"}
+                    </button>
+                    <button
+                      className="ghost-btn small danger-text"
+                      onClick={() => void deleteSelectedNotes()}
+                    >
+                      Trash
+                    </button>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                {filter.type === "templates" && (
+                  <button className="ghost-btn small" onClick={() => setShowGallery(true)}>
+                    Gallery
+                  </button>
+                )}
+                {filter.type === "trash" && notes.length > 0 && (
+                  <button
+                    className="ghost-btn small"
+                    onClick={async () => {
+                      if (!confirm("Permanently delete all notes in Trash?")) return;
+                      await api.emptyTrash();
+                      setActiveNote(null);
+                      await refreshNotes();
+                    }}
+                  >
+                    Empty
+                  </button>
+                )}
+                <select
+                  value={prefs.sort_by}
+                  onChange={(e) => {
+                    const sort_by = e.target.value as Preferences["sort_by"];
+                    setPrefs((p) => ({ ...p, sort_by }));
+                    api.updateSettings({ sort_by }).catch(console.error);
+                  }}
+                >
+                  <option value="updated">Updated</option>
+                  <option value="created">Created</option>
+                  <option value="title">Title</option>
+                </select>
+              </>
             )}
-            {filter.type === "trash" && notes.length > 0 && (
-              <button
-                className="ghost-btn small"
-                onClick={async () => {
-                  if (!confirm("Permanently delete all notes in Trash?")) return;
-                  await api.emptyTrash();
-                  setActiveNote(null);
-                  await refreshNotes();
-                }}
-              >
-                Empty
-              </button>
-            )}
-            <select
-              value={prefs.sort_by}
-              onChange={(e) => {
-                const sort_by = e.target.value as Preferences["sort_by"];
-                setPrefs((p) => ({ ...p, sort_by }));
-                api.updateSettings({ sort_by }).catch(console.error);
-              }}
-            >
-              <option value="updated">Updated</option>
-              <option value="created">Created</option>
-              <option value="title">Title</option>
-            </select>
           </div>
         </div>
         <div className="note-list scroll-pane">
@@ -1307,6 +1552,7 @@ export default function App() {
                 (selectedNoteIds.has(note.id) ? "note-card selected" : "note-card") +
                 (prefs.list_density === "compact" ? " compact" : "")
               }
+              aria-pressed={selectedNoteIds.has(note.id)}
               onClick={(event) => handleNoteClick(note.id, event)}
               onContextMenu={(event) => {
                 event.preventDefault();

@@ -671,6 +671,8 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .panel-tools select,
@@ -699,6 +701,7 @@ button {
   background: transparent;
   padding: 14px 12px;
   border-radius: 0;
+  user-select: none;
 }
 
 .note-card.compact {
@@ -1081,6 +1084,10 @@ button {
 
 .ghost-btn:hover {
   background: var(--sidebar-hover);
+}
+
+.ghost-btn.danger-text:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 .chip {

@@ -8,6 +8,7 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
+    "test": "node --experimental-strip-types --test src/noteSelection.test.ts",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
