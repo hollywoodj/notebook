@@ -2,16 +2,19 @@ import { useRef } from "react";
 
 export function PaneSplitter({
   label,
+  className,
   onDrag,
 }: {
   label: string;
-  onDrag: (delta: number) => void;
+  className?: string;
+  /** `position` is the pointer offset from the left edge of the pane grid. */
+  onDrag: (delta: number, position: number) => void;
 }) {
   const lastX = useRef<number | null>(null);
 
   return (
     <div
-      className="pane-splitter"
+      className={className ? `pane-splitter ${className}` : "pane-splitter"}
       role="separator"
       aria-orientation="vertical"
       aria-label={label}
@@ -26,7 +29,8 @@ export function PaneSplitter({
         }
         const delta = event.clientX - lastX.current;
         lastX.current = event.clientX;
-        if (delta) onDrag(delta);
+        const gridLeft = event.currentTarget.parentElement?.getBoundingClientRect().left ?? 0;
+        if (delta) onDrag(delta, event.clientX - gridLeft);
       }}
       onPointerUp={(event) => {
         lastX.current = null;

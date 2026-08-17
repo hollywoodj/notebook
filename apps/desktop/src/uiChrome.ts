@@ -4,6 +4,9 @@ export const LIST_MIN = 220;
 export const LIST_MAX = 560;
 export const DEFAULT_SIDEBAR_WIDTH = 248;
 export const DEFAULT_LIST_WIDTH = 320;
+export const SIDEBAR_RAIL_WIDTH = 56;
+/** Dragging the sidebar edge inside this width snaps it back to the icon rail. */
+export const SIDEBAR_RAIL_SNAP = 140;
 export const PANE_LAYOUT_KEY = "notebook.paneLayout";
 export const NOTE_DRAG_TYPE = "application/x-notebook-notes";
 export const NOTE_TAB_DRAG_TYPE = "application/x-notebook-tab";
@@ -67,6 +70,7 @@ export interface PaneLayout {
   listWidth: number;
   sidebarCollapsed: boolean;
   listCollapsed: boolean;
+  sidebarRail: boolean;
 }
 
 export function clampPaneWidth(value: number, min: number, max: number): number {
@@ -80,6 +84,7 @@ export function defaultPaneLayout(): PaneLayout {
     listWidth: DEFAULT_LIST_WIDTH,
     sidebarCollapsed: false,
     listCollapsed: false,
+    sidebarRail: true,
   };
 }
 
@@ -97,6 +102,7 @@ export function parsePaneLayout(raw: string | null): PaneLayout {
       listWidth: clampPaneWidth(Number(parsed.listWidth), LIST_MIN, LIST_MAX),
       sidebarCollapsed: Boolean(parsed.sidebarCollapsed),
       listCollapsed: Boolean(parsed.listCollapsed),
+      sidebarRail: parsed.sidebarRail !== false,
     };
   } catch {
     return fallback;
@@ -119,6 +125,32 @@ export function toggleNoteExpanded(layout: PaneLayout): PaneLayout {
     return { ...layout, sidebarCollapsed: false, listCollapsed: false };
   }
   return { ...layout, sidebarCollapsed: true, listCollapsed: true };
+}
+
+/** The sidebar shows the icon rail only when it is in rail mode and not fully hidden. */
+export function isSidebarRail(layout: PaneLayout): boolean {
+  return layout.sidebarRail && !layout.sidebarCollapsed;
+}
+
+export function toggleSidebarRail(layout: PaneLayout): PaneLayout {
+  return { ...layout, sidebarCollapsed: false, sidebarRail: !layout.sidebarRail };
+}
+
+/**
+ * Resizes the sidebar to the dragged edge position. Tracking the pointer rather
+ * than accumulating deltas is what lets a drag cross between the rail and a
+ * pinned sidebar, since the pinned width clamps at `SIDEBAR_MIN`.
+ */
+export function resizeSidebarTo(layout: PaneLayout, edge: number): PaneLayout {
+  if (edge < SIDEBAR_RAIL_SNAP) {
+    return { ...layout, sidebarCollapsed: false, sidebarRail: true };
+  }
+  return {
+    ...layout,
+    sidebarCollapsed: false,
+    sidebarRail: false,
+    sidebarWidth: clampPaneWidth(edge, SIDEBAR_MIN, SIDEBAR_MAX),
+  };
 }
 
 export function countWords(text: string): number {

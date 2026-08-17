@@ -179,8 +179,16 @@ button {
   display: none;
 }
 
+.app-shell.sidebar-rail {
+  grid-template-columns: var(--sidebar-rail-width, 56px) 5px var(--list-width, 320px) 5px minmax(0, 1fr);
+}
+
 .app-shell.list-collapsed {
   grid-template-columns: var(--sidebar-width, 248px) 5px 0 0 minmax(0, 1fr);
+}
+
+.app-shell.sidebar-rail.list-collapsed {
+  grid-template-columns: var(--sidebar-rail-width, 56px) 5px 0 0 minmax(0, 1fr);
 }
 
 .app-shell.list-collapsed .note-list-panel {
@@ -192,7 +200,9 @@ button {
   grid-template-columns: 0 0 0 0 minmax(0, 1fr);
 }
 
-.app-shell.focus-mode {
+.app-shell.focus-mode,
+.app-shell.focus-mode.sidebar-rail,
+.app-shell.focus-mode.sidebar-rail.list-collapsed {
   grid-template-columns: minmax(0, 1fr);
 }
 
@@ -417,6 +427,75 @@ button {
   flex-direction: column;
   min-height: 0;
   position: relative;
+}
+
+/* Icon rail: the sidebar sits at rail width and floats open over the note list on hover. */
+.app-shell.sidebar-rail .sidebar {
+  width: var(--sidebar-rail-width, 56px);
+  z-index: 13;
+  transition: width 140ms ease;
+}
+
+.app-shell.sidebar-rail .sidebar.rail-open {
+  width: var(--sidebar-width, 248px);
+  box-shadow: var(--shadow);
+}
+
+.app-shell.sidebar-rail .sidebar-splitter {
+  z-index: 15;
+}
+
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .nav-label,
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .nav-count,
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .section-actions,
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .account-copy,
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .sidebar-rail-toggle,
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .nav-item.indent,
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .empty-state.compact {
+  display: none;
+}
+
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .sidebar-toolbar {
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .sidebar-nav {
+  padding: 4px 8px 12px;
+  overflow-y: auto;
+  scrollbar-gutter: auto;
+  scrollbar-width: none;
+}
+
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .sidebar-nav::-webkit-scrollbar {
+  width: 0;
+}
+
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .nav-item,
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .nav-section-title,
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .nav-section-title span,
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .account-chip {
+  justify-content: center;
+  gap: 0;
+}
+
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .nav-item,
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .nav-section-title {
+  padding: 8px 0;
+}
+
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .sidebar-account {
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 0 10px;
+}
+
+.app-shell.sidebar-rail .sidebar:not(.rail-open) .account-chip {
+  flex: none;
+  width: 100%;
+  padding: 4px 0;
 }
 
 .sidebar-account {
@@ -801,6 +880,18 @@ button {
   padding: 7px 10px;
   border-radius: 6px;
   color: var(--text);
+}
+
+.nav-item > svg {
+  flex-shrink: 0;
+}
+
+.nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-item-text {

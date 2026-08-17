@@ -42,8 +42,7 @@ import {
   LIST_MIN,
   NOTE_DRAG_TYPE,
   PANE_LAYOUT_KEY,
-  SIDEBAR_MAX,
-  SIDEBAR_MIN,
+  SIDEBAR_RAIL_WIDTH,
   adjacentNoteId,
   clampPaneWidth,
   countWords,
@@ -59,6 +58,7 @@ import {
   HIGHLIGHT_COLORS,
   isReminderOverdue,
   isNoteExpanded,
+  isSidebarRail,
   hasVisibleSidebarNotebooks,
   matchesSidebarFilter,
   mergeNoteBodies,
@@ -73,6 +73,7 @@ import {
   parsePaneLayout,
   reminderFromPreset,
   reorderById,
+  resizeSidebarTo,
   resolveListView,
   safeFilename,
   snippetParts,
@@ -80,6 +81,7 @@ import {
   toDatetimeLocalValue,
   toggleNoteExpanded,
   toggleNoteListHidden,
+  toggleSidebarRail,
   windowTitleForNote,
   type ListView,
   type ReminderPreset,
@@ -208,6 +210,8 @@ export default function App() {
       typeof localStorage === "undefined" ? null : localStorage.getItem(PANE_LAYOUT_KEY)
     )
   );
+  const [sidebarHovered, setSidebarHovered] = useState(false);
+  const [sidebarFocused, setSidebarFocused] = useState(false);
   const [counts, setCounts] = useState<SidebarCounts>({
     notes: 0,
     reminders: 0,
@@ -1129,6 +1133,9 @@ export default function App() {
             ? toggleNoteListHidden(paneLayout)
             : toggleNoteExpanded(paneLayout)
         );
+      } else if (e.altKey && meta && (e.key === "s" || e.key === "S")) {
+        e.preventDefault();
+        persistPaneLayout(toggleSidebarRail(paneLayout));
       } else if (e.key === "Escape" && focusMode) {
         e.preventDefault();
         setFocusMode(false);
@@ -1745,6 +1752,11 @@ export default function App() {
             }),
         },
         {
+          label: paneLayout.sidebarRail ? "Pin Sidebar Open" : "Collapse Sidebar to Icons",
+          shortcut: "Ctrl/⌘ Alt S",
+          onSelect: () => persistPaneLayout(toggleSidebarRail(paneLayout)),
+        },
+        {
           label: paneLayout.listCollapsed ? "Show Note List" : "Hide Note List",
           shortcut: "Ctrl/⌘ Alt ←",
           onSelect: () => persistPaneLayout(toggleNoteListHidden(paneLayout)),
@@ -2152,11 +2164,17 @@ export default function App() {
     },
   ];
 
+  const sidebarRail = isSidebarRail(paneLayout);
+  const sidebarRailOpen =
+    sidebarRail &&
+    (sidebarHovered || sidebarFocused || Boolean(sidebarFlyout) || showNewMenu);
+
   return (
     <div
       className={
         "app-shell" +
         (paneLayout.sidebarCollapsed ? " sidebar-collapsed" : "") +
+        (sidebarRail ? " sidebar-rail" : "") +
         (paneLayout.listCollapsed ? " list-collapsed" : "") +
         (focusMode ? " focus-mode" : "") +
         (showInfo && activeNote ? " info-open" : "")
@@ -2166,6 +2184,7 @@ export default function App() {
           "--sidebar-width": paneLayout.sidebarCollapsed
             ? "0px"
             : `${paneLayout.sidebarWidth}px`,
+          "--sidebar-rail-width": `${SIDEBAR_RAIL_WIDTH}px`,
           "--list-width": `${paneLayout.listWidth}px`,
         } as CSSProperties
       }
@@ -2195,7 +2214,15 @@ export default function App() {
         }}
       />
       <aside
-        className="sidebar"
+        className={"sidebar" + (sidebarRailOpen ? " rail-open" : "")}
+        onMouseEnter={() => setSidebarHovered(true)}
+        onMouseLeave={() => setSidebarHovered(false)}
+        onFocus={() => setSidebarFocused(true)}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            setSidebarFocused(false);
+          }
+        }}
         onContextMenu={(event) => {
           event.preventDefault();
           setContextMenu({
@@ -2206,6 +2233,15 @@ export default function App() {
         }}
       >
         <div className="sidebar-toolbar" onMouseDown={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            className="icon-btn sidebar-rail-toggle"
+            title={sidebarRail ? "Pin sidebar open" : "Collapse sidebar to icons"}
+            aria-pressed={!sidebarRail}
+            onClick={() => persistPaneLayout(toggleSidebarRail(paneLayout))}
+          >
+            <Icon.Sidebar size={18} />
+          </button>
           <button
             type="button"
             className={searchOpen || filter.type === "search" ? "icon-btn active" : "icon-btn"}
@@ -2295,7 +2331,7 @@ export default function App() {
             }}
           >
             <Icon.Notes size={16} />
-            Notes
+            <span className="nav-label">Notes</span>
             <span className="nav-count">{counts.notes}</span>
           </button>
           {prefs.show_shortcuts && (
@@ -2313,7 +2349,7 @@ export default function App() {
               }}
             >
               <Icon.Shortcuts size={16} />
-              Shortcuts
+              <span className="nav-label">Shortcuts</span>
               <span className="nav-count">{shortcutNotes.length}</span>
             </button>
           )}
@@ -2326,7 +2362,7 @@ export default function App() {
               }}
             >
               <Icon.Reminder size={16} />
-              Reminders
+              <span className="nav-label">Reminders</span>
               <span className="nav-count">{counts.reminders}</span>
             </button>
           )}
@@ -2345,7 +2381,7 @@ export default function App() {
               }
             >
               <Icon.Notebooks size={16} />
-              Notebooks
+              <span className="nav-label">Notebooks</span>
               <span className="nav-count">{notebooks.length}</span>
             </button>
           )}
@@ -2357,8 +2393,8 @@ export default function App() {
                 onClick={() => setTagsOpen((v) => !v)}
               >
                 <span>
-                  <Icon.Tags size={14} />
-                  Tags
+                  <Icon.Tags size={16} />
+                  <span className="nav-label">Tags</span>
                 </span>
                 <span className="section-actions">
                   <span
@@ -2409,7 +2445,7 @@ export default function App() {
                       });
                     }}
                   >
-                    #{tag.name}
+                    <span className="nav-label">#{tag.name}</span>
                     <span className="nav-count">{tag.note_count ?? 0}</span>
                   </button>
                 ))}
@@ -2428,7 +2464,7 @@ export default function App() {
               }}
             >
               <Icon.Templates size={16} />
-              Templates
+              <span className="nav-label">Templates</span>
               <span className="nav-count">{counts.templates}</span>
             </button>
           )}
@@ -2442,7 +2478,7 @@ export default function App() {
               }}
             >
               <Icon.Trash size={16} />
-              Trash
+              <span className="nav-label">Trash</span>
               <span className="nav-count">{counts.trash}</span>
             </button>
           )}
@@ -2731,18 +2767,9 @@ export default function App() {
         />
       </aside>
       <PaneSplitter
+        className="sidebar-splitter"
         label="Resize sidebar"
-        onDrag={(delta) =>
-          persistPaneLayout({
-            ...paneLayout,
-            sidebarCollapsed: false,
-            sidebarWidth: clampPaneWidth(
-              (paneLayout.sidebarCollapsed ? SIDEBAR_MIN : paneLayout.sidebarWidth) + delta,
-              SIDEBAR_MIN,
-              SIDEBAR_MAX
-            ),
-          })
-        }
+        onDrag={(_delta, position) => persistPaneLayout(resizeSidebarTo(paneLayout, position))}
       />
 
       <section className="note-list-panel">

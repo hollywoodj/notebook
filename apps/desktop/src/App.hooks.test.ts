@@ -79,6 +79,28 @@ describe("Evernote sidebar chrome", () => {
     assert.match(appSource, /Star a note to add it to Shortcuts/);
   });
 
+  it("shows an icon rail that opens over the note list on hover", () => {
+    assert.match(appSource, /const sidebarRail = isSidebarRail\(paneLayout\)/);
+    assert.match(appSource, /sidebarHovered \|\| sidebarFocused/);
+    assert.match(appSource, /onMouseEnter=\{\(\) => setSidebarHovered\(true\)\}/);
+    assert.match(appSource, /onMouseLeave=\{\(\) => setSidebarHovered\(false\)\}/);
+    assert.match(appSource, /sidebarRailOpen \? " rail-open" : ""/);
+    assert.match(appSource, /sidebarRail \? " sidebar-rail" : ""/);
+
+    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    assert.match(styles, /\.app-shell\.sidebar-rail \{/);
+    assert.match(styles, /\.app-shell\.sidebar-rail \.sidebar\.rail-open \{/);
+    assert.match(styles, /\.app-shell\.sidebar-rail \.sidebar:not\(\.rail-open\) \.nav-label/);
+  });
+
+  it("labels every rail icon so hover reveals the same nav text", () => {
+    for (const label of ["Notes", "Shortcuts", "Reminders", "Notebooks", "Tags", "Templates", "Trash"]) {
+      assert.match(appSource, new RegExp(`<span className="nav-label">${label}</span>`));
+    }
+    assert.match(appSource, /title=\{sidebarRail \? "Pin sidebar open" : "Collapse sidebar to icons"\}/);
+    assert.match(appSource, /label: paneLayout\.sidebarRail \? "Pin Sidebar Open" : "Collapse Sidebar to Icons"/);
+  });
+
   it("counts the current view rather than repeating the all-notes total", () => {
     assert.match(appSource, /title="Notes in this view"/);
     assert.match(appSource, /\{notes\.length\}/);
