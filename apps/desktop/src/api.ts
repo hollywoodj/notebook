@@ -76,6 +76,18 @@ export interface NoteRevision {
   created_at: string;
 }
 
+export interface Attachment {
+  id: string;
+  note_id: string;
+  filename: string;
+  mime_type: string;
+  size: number;
+  width: number | null;
+  height: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export type ViewFilter =
   | { type: "all" }
   | { type: "notebook"; id: string; name: string }
@@ -149,6 +161,9 @@ export interface TemplateCatalogItem {
 }
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8799";
+
+export const attachmentUrl = (id: string) =>
+  `${API_BASE}/api/v1/attachments/${encodeURIComponent(id)}`;
 
 function rewriteFetchError(err: unknown): Error {
   if (err instanceof TypeError) {
@@ -317,7 +332,7 @@ export const api = {
       method: "POST",
     }),
 
-  uploadAttachment: async (noteId: string, file: File) => {
+  uploadAttachment: async (noteId: string, file: File): Promise<Attachment> => {
     const form = new FormData();
     form.append("file", file);
     let res: Response;
@@ -329,7 +344,10 @@ export const api = {
     } catch (err) {
       throw rewriteFetchError(err);
     }
-    if (!res.ok) throw new Error("Upload failed");
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Could not upload ${file.name}`);
+    }
     return res.json();
   },
 

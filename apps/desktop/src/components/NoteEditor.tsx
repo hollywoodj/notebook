@@ -7,13 +7,15 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Placeholder from "@tiptap/extension-placeholder";
 import Image from "@tiptap/extension-image";
-import { ReactNode, useEffect, useRef } from "react";
+import type { JSONContent } from "@tiptap/core";
+import { ReactNode, useEffect, useRef, useState } from "react";
+import { Attachment, attachmentUrl } from "../api";
 import { Icon } from "./Icons";
 
 interface Props {
   content: string;
   onChange: (html: string) => void;
-  onAttach: (file: File) => void;
+  onAttach: (file: File) => Promise<Attachment>;
   spellCheck: boolean;
   fontFamily: "default" | "serif" | "mono";
   fontSize: number;
@@ -32,6 +34,10 @@ export function NoteEditor({
   placeholder = "Start writing, or pick a template…",
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const queueFilesRef = useRef<(files: File[], position?: number) => void>(() => {});
+  const [dragActive, setDragActive] = useState(false);
+  const [uploading, setUploading] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const editor = useEditor({
     extensions: [
@@ -51,6 +57,25 @@ export function NoteEditor({
         class: "note-editor-content",
         spellcheck: spellCheck ? "true" : "false",
       },
+      handleDrop: (view, event) => {
+        const files = Array.from(event.dataTransfer?.files ?? []);
+        if (!files.length) return false;
+        event.preventDefault();
+        setDragActive(false);
+        const position = view.posAtCoords({
+          left: event.clientX,
+          top: event.clientY,
+        })?.pos;
+        queueFilesRef.current(files, position);
+        return true;
+      },
+      handlePaste: (_view, event) => {
+        const files = Array.from(event.clipboardData?.files ?? []);
+        if (!files.length) return false;
+        event.preventDefault();
+        queueFilesRef.current(files);
+        return true;
+      },
     },
   });
 
@@ -63,7 +88,9 @@ export function NoteEditor({
   useEffect(() => {
     editor?.setOptions({
       editorProps: {
+        ...editor.options.editorProps,
         attributes: {
+          ...editor.options.editorProps.attributes,
           class: "note-editor-content",
           spellcheck: spellCheck ? "true" : "false",
         },
@@ -72,6 +99,60 @@ export function NoteEditor({
   }, [spellCheck, editor]);
 
   if (!editor) return null;
+
+  queueFilesRef.current = (files, position) => {
+    if (!files.length) return;
+    const insertionPosition = position ?? editor.state.selection.from;
+    setUploading((count) => count + files.length);
+    setUploadError(null);
+
+    void Promise.all(files.map((file) => onAttach(file)))
+      .then((attachments) => {
+        const nodes: JSONContent[] = [];
+        attachments.forEach((attachment) => {
+          const url = attachmentUrl(attachment.id);
+          if (attachment.mime_type.startsWith("image/")) {
+            nodes.push({
+              type: "image",
+              attrs: {
+                src: url,
+                alt: attachment.filename,
+                title: attachment.filename,
+              },
+            });
+            return;
+          }
+
+          nodes.push({
+            type: "paragraph",
+            content: [
+              {
+                type: "text",
+                text: `📎 ${attachment.filename}`,
+                marks: [
+                  {
+                    type: "link",
+                    attrs: {
+                      href: url,
+                      target: "_blank",
+                      rel: "noopener noreferrer",
+                    },
+                  },
+                ],
+              },
+            ],
+          });
+        });
+
+        nodes.push({ type: "paragraph" });
+        const safePosition = Math.min(insertionPosition, editor.state.doc.content.size);
+        editor.chain().focus().insertContentAt(safePosition, nodes).run();
+      })
+      .catch((error) => {
+        setUploadError(error instanceof Error ? error.message : "Media upload failed");
+      })
+      .finally(() => setUploading((count) => Math.max(0, count - files.length)));
+  };
 
   const btn = (
     label: string,
@@ -101,7 +182,24 @@ export function NoteEditor({
         : "font-sans";
 
   return (
-    <div className="note-editor">
+    <div
+      className={dragActive ? "note-editor is-dragging" : "note-editor"}
+      onDragEnter={(event) => {
+        if (event.dataTransfer.types.includes("Files")) setDragActive(true);
+      }}
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes("Files")) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+        }
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setDragActive(false);
+        }
+      }}
+      onDrop={() => setDragActive(false)}
+    >
       <div className="editor-toolbar">
         {btn(
           "Heading 1",
@@ -186,18 +284,39 @@ export function NoteEditor({
           editor.isActive("link"),
           <Icon.Link size={16} />
         )}
-        {btn("Attach", () => fileRef.current?.click(), false, <Icon.Attach size={16} />)}
+        {btn("Insert media or file", () => fileRef.current?.click(), false, <Icon.Attach size={16} />)}
+        {uploading > 0 && (
+          <span className="upload-status">
+            Uploading {uploading} {uploading === 1 ? "item" : "items"}…
+          </span>
+        )}
       </div>
       <input
         ref={fileRef}
         type="file"
+        multiple
         hidden
         onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) onAttach(file);
+          const files = Array.from(e.target.files ?? []);
+          if (files.length) queueFilesRef.current(files);
           e.target.value = "";
         }}
       />
+      {uploadError && (
+        <div className="upload-error" role="alert">
+          {uploadError}
+          <button type="button" onClick={() => setUploadError(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+      {dragActive && (
+        <div className="media-drop-overlay">
+          <Icon.Attach size={28} />
+          <strong>Drop files into this note</strong>
+          <span>Images appear inline; other files become attachments.</span>
+        </div>
+      )}
       <div className="editor-scroll">
         <div
           className={`editor-page ${fontClass} ${noteWidth === "readable" ? "readable" : "full"}`}

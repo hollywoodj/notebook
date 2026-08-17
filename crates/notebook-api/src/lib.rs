@@ -432,6 +432,9 @@ async fn upload_attachment(
         if name == "filename" {
             filename = field.text().await.unwrap_or_default();
         } else if name == "file" {
+            if let Some(uploaded_name) = field.file_name() {
+                filename = uploaded_name.to_string();
+            }
             if let Some(ct) = field.content_type() {
                 mime = ct.to_string();
             }
@@ -465,10 +468,7 @@ async fn download_attachment(
     Ok((
         [
             (header::CONTENT_TYPE, att.mime_type),
-            (
-                header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{}\"", att.filename),
-            ),
+            (header::CONTENT_DISPOSITION, "inline".to_string()),
         ],
         data,
     )
