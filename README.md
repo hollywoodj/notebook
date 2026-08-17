@@ -137,18 +137,13 @@ Installers are written to `apps/desktop/release/`.
 
 ### Download a release
 
-Pre-built installers are published on [GitHub Releases](https://github.com/hollywoodj/notebook/releases) when a version tag is pushed.
+Pre-built installers are published on [GitHub Releases](https://github.com/hollywoodj/notebook/releases).
 
-To cut a new release:
+**Every push to `main` automatically cuts a new patch release** (e.g. `v0.1.1` → `v0.1.2`). GitHub Actions builds Windows (`.exe` installer) and macOS (`.dmg`) artifacts and attaches them to the release.
 
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+To skip a release for a specific commit, include `[skip release]` in the commit message.
 
-GitHub Actions builds Windows (`.exe` installer) and macOS (`.dmg`) artifacts and attaches them to the release. You can also trigger a release manually from the **Actions → Release** workflow.
-
-CI on every push only runs Rust tests — desktop installers are built for releases, not on every commit.
+You can also trigger a release manually from **Actions → Release → Run workflow**, with an optional version override.
 
 ## REST API reference
 
