@@ -144,6 +144,7 @@ fn build_router(state: AppState) -> Router {
         .route("/api/v1/templates/restore", post(restore_templates))
         .route("/api/v1/templates/:id/use", post(use_template))
         .route("/api/v1/storage", get(storage_info))
+        .route("/api/v1/counts", get(sidebar_counts))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .layer(
             CorsLayer::new()
@@ -694,6 +695,13 @@ async fn storage_info(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.storage_info()))
+}
+
+async fn sidebar_counts(
+    State(state): State<AppState>,
+) -> Result<Json<notebook_core::SidebarCounts>, AppError> {
+    let svc = state.service.lock().await;
+    Ok(Json(svc.sidebar_counts()?))
 }
 
 struct AppError(notebook_core::NotebookError);

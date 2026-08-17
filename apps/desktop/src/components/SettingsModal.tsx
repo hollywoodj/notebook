@@ -28,10 +28,12 @@ const SECTIONS: { id: SettingsSection; label: string; icon: typeof Icon.Applicat
 const SHORTCUTS = [
   ["New note", "Ctrl/⌘ N"],
   ["New note from template", "Ctrl/⌘ Shift N"],
-  ["Search notes", "Ctrl/⌘ F"],
+  ["Find in note", "Ctrl/⌘ F"],
+  ["Search all notes", "Ctrl/⌘ Shift F"],
+  ["Print note", "Ctrl/⌘ P"],
+  ["Note info", "Ctrl/⌘ Shift I"],
   ["Settings", "Ctrl/⌘ ,"],
   ["Templates", "Ctrl/⌘ Shift T"],
-  ["Pin or unpin selected notes", "Ctrl/⌘ P"],
   ["Select all notes", "Ctrl/⌘ A"],
   ["Range select notes", "Shift+click"],
   ["Drag-select notes", "Click and drag"],
@@ -347,6 +349,7 @@ export function SettingsModal({
                 {(
                   [
                     ["show_shortcuts", "Shortcuts"],
+                    ["show_reminders", "Reminders"],
                     ["show_notebooks", "Notebooks"],
                     ["show_tags", "Tags"],
                     ["show_templates", "Templates"],

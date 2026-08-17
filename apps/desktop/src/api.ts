@@ -8,6 +8,7 @@ export interface Notebook {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  note_count?: number;
 }
 
 export interface Stack {
@@ -25,6 +26,7 @@ export interface Tag {
   name: string;
   created_at: string;
   updated_at: string;
+  note_count?: number;
 }
 
 export interface NoteSummary {
@@ -93,6 +95,7 @@ export type ViewFilter =
   | { type: "notebook"; id: string; name: string }
   | { type: "tag"; id: string; name: string }
   | { type: "shortcuts" }
+  | { type: "reminders" }
   | { type: "templates" }
   | { type: "trash" }
   | { type: "search"; query: string };
@@ -126,6 +129,7 @@ export interface Preferences {
   show_templates: boolean;
   show_trash: boolean;
   show_import: boolean;
+  show_reminders: boolean;
   default_notebook_id: string | null;
   pdf_view: "expanded" | "title";
 }
@@ -151,9 +155,18 @@ export const defaultPreferences: Preferences = {
   show_templates: true,
   show_trash: true,
   show_import: true,
+  show_reminders: true,
   default_notebook_id: null,
   pdf_view: "expanded",
 };
+
+export interface SidebarCounts {
+  notes: number;
+  reminders: number;
+  trash: number;
+  templates: number;
+  shortcuts: number;
+}
 
 export interface TemplateCatalogItem {
   key: string;
@@ -305,6 +318,7 @@ export const api = {
       is_archived: boolean;
       tag_ids: string[];
       reminder_at: string | null;
+      source_url: string | null;
       is_template: boolean;
       template_category: string | null;
     }>
@@ -456,4 +470,6 @@ export const api = {
 
   storageInfo: () =>
     request<{ database: string; attachments: string }>("/api/v1/storage"),
+
+  sidebarCounts: () => request<SidebarCounts>("/api/v1/counts"),
 };

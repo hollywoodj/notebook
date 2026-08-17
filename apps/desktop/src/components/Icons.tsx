@@ -89,6 +89,29 @@ export const Icon = {
       <path d="M9 4h6l-1 7h3l-5 8-5-8h3z" />
     </I>
   ),
+  Reminder: (p: IconProps) => (
+    <I {...p}>
+      <circle cx="12" cy="13" r="7" />
+      <path d="M12 9v4l2.5 1.5M9 4h6M5 6l1.5 2M19 6l-1.5 2" />
+    </I>
+  ),
+  Paperclip: (p: IconProps) => (
+    <I {...p}>
+      <path d="M8.5 12.5l7-7a3.2 3.2 0 1 1 4.5 4.5l-8.2 8.2a4.5 4.5 0 0 1-6.4-6.4l7.5-7.5" />
+    </I>
+  ),
+  Sidebar: (p: IconProps) => (
+    <I {...p}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16" />
+    </I>
+  ),
+  Print: (p: IconProps) => (
+    <I {...p}>
+      <path d="M7 8V4h10v4M7 16H5a2 2 0 0 1-2-2v-4h18v4a2 2 0 0 1-2 2h-2" />
+      <rect x="7" y="12" width="10" height="8" rx="1" />
+    </I>
+  ),
   Close: (p: IconProps) => (
     <I {...p}>
       <path d="M6 6l12 12M18 6L6 18" />

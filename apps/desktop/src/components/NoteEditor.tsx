@@ -11,6 +11,7 @@ import type { JSONContent } from "@tiptap/core";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { api, Attachment, attachmentUrl } from "../api";
 import { Icon } from "./Icons";
+import { findMatchOffsets, nextMatchIndex } from "../uiChrome";
 import {
   FileAttachment,
   USE_FILE_AS_TITLE,
@@ -34,10 +35,25 @@ interface Props {
   pdfView?: "expanded" | "title";
   placeholder?: string;
   onUseAsTitle?: (filename: string) => void;
+  findTick?: number;
 }
 
 function formatSize(bytes: number) {
   return formatFileSize(bytes);
+}
+
+function textOffsetToPos(doc: { descendants: (fn: (node: { isText?: boolean; text?: string }, pos: number) => boolean | void) => void }, offset: number) {
+  let remaining = offset;
+  let found = 1;
+  doc.descendants((node, pos) => {
+    if (!node.isText || !node.text) return;
+    if (remaining <= node.text.length) {
+      found = pos + remaining;
+      return false;
+    }
+    remaining -= node.text.length;
+  });
+  return found;
 }
 
 export function NoteEditor({
@@ -52,12 +68,18 @@ export function NoteEditor({
   pdfView = "expanded",
   placeholder = "Start writing, or pick a template…",
   onUseAsTitle,
+  findTick = 0,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const queueFilesRef = useRef<(files: File[], position?: number) => void>(() => {});
+  const findInputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [showFind, setShowFind] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findIndex, setFindIndex] = useState(0);
+  const [findCount, setFindCount] = useState(0);
 
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const restoredFilesRef = useRef(false);
@@ -192,6 +214,29 @@ export function NoteEditor({
     };
   }, [editor]);
 
+  useEffect(() => {
+    if (!findTick) return;
+    setShowFind(true);
+    window.setTimeout(() => findInputRef.current?.select(), 0);
+  }, [findTick]);
+
+  useEffect(() => {
+    if (!editor || !showFind) return;
+    const text = editor.state.doc.textBetween(0, editor.state.doc.content.size, "", "");
+    const offsets = findMatchOffsets(text, findQuery);
+    setFindCount(offsets.length);
+    if (!offsets.length) {
+      setFindIndex(0);
+      return;
+    }
+    const index = Math.min(findIndex, offsets.length - 1);
+    if (index !== findIndex) setFindIndex(index);
+    const from = textOffsetToPos(editor.state.doc, offsets[index]);
+    const to = from + findQuery.trim().length;
+    editor.commands.setTextSelection({ from, to });
+    editor.commands.scrollIntoView();
+  }, [editor, findQuery, findIndex, showFind]);
+
   if (!editor) return null;
 
   queueFilesRef.current = (files, position) => {
@@ -299,6 +344,66 @@ export function NoteEditor({
         queueFilesRef.current(files, position);
       }}
     >
+      {showFind && (
+        <div className="find-in-note" onMouseDown={(event) => event.stopPropagation()}>
+          <Icon.Search size={14} />
+          <input
+            ref={findInputRef}
+            value={findQuery}
+            placeholder="Find in note"
+            onChange={(event) => {
+              setFindQuery(event.target.value);
+              setFindIndex(0);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                setFindIndex((current) =>
+                  nextMatchIndex(findCount, current, event.shiftKey ? -1 : 1)
+                );
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                setShowFind(false);
+                editor.commands.focus();
+              }
+            }}
+          />
+          <span className="find-count">
+            {findQuery.trim()
+              ? findCount
+                ? `${findIndex + 1} of ${findCount}`
+                : "No matches"
+              : ""}
+          </span>
+          <button
+            type="button"
+            className="icon-btn"
+            title="Previous"
+            onClick={() => setFindIndex((current) => nextMatchIndex(findCount, current, -1))}
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            title="Next"
+            onClick={() => setFindIndex((current) => nextMatchIndex(findCount, current, 1))}
+          >
+            ↓
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            title="Close"
+            onClick={() => {
+              setShowFind(false);
+              editor.commands.focus();
+            }}
+          >
+            <Icon.Close size={14} />
+          </button>
+        </div>
+      )}
       <div className="editor-toolbar">
         {btn(
           "Heading 1",
