@@ -122,7 +122,7 @@ impl NotebookService {
         let created = self.create_note(CreateNoteRequest {
             notebook_id,
             title: Some(note.title),
-            content: Some(html),
+            content: Some(html.clone()),
             tag_ids: Some(tag_ids),
             is_pinned: None,
             reminder_at: note.reminder_at,
