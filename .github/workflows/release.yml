@@ -49,11 +49,26 @@ jobs:
         working-directory: apps/desktop
         run: ${{ matrix.build }}
 
+      - name: Collect installer artifacts
+        shell: bash
+        run: |
+          mkdir -p installers
+          shopt -s nullglob
+          for file in apps/desktop/release/*.dmg apps/desktop/release/*.exe apps/desktop/release/*.blockmap; do
+            cp "$file" installers/
+          done
+          ls -la installers/
+          if [ -z "$(ls -A installers)" ]; then
+            echo "No installer artifacts found in apps/desktop/release"
+            ls -la apps/desktop/release || true
+            exit 1
+          fi
+
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: apps/desktop/release/
+          path: installers/
           if-no-files-found: error
 
   publish:
@@ -80,5 +95,10 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Notebook ${{ steps.version.outputs.tag }}
+          draft: false
           generate_release_notes: true
-          files: artifacts/**/*
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.exe
+            artifacts/**/*.blockmap
