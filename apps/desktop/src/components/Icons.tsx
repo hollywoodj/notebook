@@ -106,6 +106,17 @@ export const Icon = {
       <path d="M9 4v16" />
     </I>
   ),
+  HideList: (p: IconProps) => (
+    <I {...p}>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M10 5v14" />
+    </I>
+  ),
+  ExpandNote: (p: IconProps) => (
+    <I {...p}>
+      <path d="M9 4H4v5M15 4h5v5M4 15v5h5M20 15v5h-5" />
+    </I>
+  ),
   Print: (p: IconProps) => (
     <I {...p}>
       <path d="M7 8V4h10v4M7 16H5a2 2 0 0 1-2-2v-4h18v4a2 2 0 0 1-2 2h-2" />
@@ -156,6 +167,14 @@ export const Icon = {
     <I {...p}>
       <rect x="4" y="4" width="16" height="16" rx="2" />
       <path d="M8 12l3 3 5-6" />
+    </I>
+  ),
+  Checklist: (p: IconProps) => (
+    <I {...p}>
+      <rect x="3" y="4" width="6" height="6" rx="1" />
+      <path d="M4.5 7l1.2 1.2 2-2" />
+      <path d="M12 7h8M12 17h8" />
+      <rect x="3" y="14" width="6" height="6" rx="1" />
     </I>
   ),
   Quote: (p: IconProps) => (
@@ -234,6 +253,11 @@ export const Icon = {
   AlignRight: (p: IconProps) => (
     <I {...p}>
       <path d="M4 6h16M10 12h10M6 18h14" />
+    </I>
+  ),
+  AlignJustify: (p: IconProps) => (
+    <I {...p}>
+      <path d="M4 6h16M4 12h16M4 18h16" />
     </I>
   ),
   Indent: (p: IconProps) => (

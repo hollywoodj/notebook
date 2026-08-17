@@ -6,6 +6,61 @@ export const DEFAULT_SIDEBAR_WIDTH = 248;
 export const DEFAULT_LIST_WIDTH = 320;
 export const PANE_LAYOUT_KEY = "notebook.paneLayout";
 export const NOTE_DRAG_TYPE = "application/x-notebook-notes";
+export const NOTE_TAB_DRAG_TYPE = "application/x-notebook-tab";
+
+export function newNoteTabId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `tab-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+export function createNoteTab(init?: { noteId?: string | null; title?: string }): {
+  id: string;
+  noteId: string | null;
+  title: string;
+} {
+  const noteId = init?.noteId ?? null;
+  return {
+    id: newNoteTabId(),
+    noteId,
+    title: noteTabLabel(init?.title, Boolean(noteId)),
+  };
+}
+
+export function noteTabLabel(title: string | null | undefined, hasNote: boolean): string {
+  if (!hasNote) return "Notes";
+  const cleaned = (title || "").trim();
+  return cleaned || "Untitled";
+}
+
+export function nextActiveTabId(
+  tabIds: string[],
+  closingId: string,
+  activeId: string
+): string | null {
+  if (tabIds.length <= 1) return tabIds[0] ?? null;
+  const remaining = tabIds.filter((id) => id !== closingId);
+  if (!remaining.length) return null;
+  if (activeId !== closingId && remaining.includes(activeId)) return activeId;
+  const index = tabIds.indexOf(closingId);
+  const fallback = Math.min(Math.max(index, 0), remaining.length - 1);
+  return remaining[fallback] ?? remaining[0];
+}
+
+export function reorderById<T extends { id: string }>(
+  items: T[],
+  fromId: string,
+  toId: string
+): T[] {
+  const from = items.findIndex((item) => item.id === fromId);
+  const to = items.findIndex((item) => item.id === toId);
+  if (from < 0 || to < 0 || from === to) return items;
+  const next = [...items];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
 
 export interface PaneLayout {
   sidebarWidth: number;
@@ -46,6 +101,24 @@ export function parsePaneLayout(raw: string | null): PaneLayout {
   } catch {
     return fallback;
   }
+}
+
+export function isNoteExpanded(layout: PaneLayout): boolean {
+  return layout.sidebarCollapsed && layout.listCollapsed;
+}
+
+export function toggleNoteListHidden(layout: PaneLayout): PaneLayout {
+  if (isNoteExpanded(layout)) {
+    return { ...layout, sidebarCollapsed: false, listCollapsed: false };
+  }
+  return { ...layout, listCollapsed: !layout.listCollapsed };
+}
+
+export function toggleNoteExpanded(layout: PaneLayout): PaneLayout {
+  if (isNoteExpanded(layout)) {
+    return { ...layout, sidebarCollapsed: false, listCollapsed: false };
+  }
+  return { ...layout, sidebarCollapsed: true, listCollapsed: true };
 }
 
 export function countWords(text: string): number {
@@ -268,7 +341,7 @@ export type EditorCommand =
   | { type: "color"; color?: string }
   | { type: "horizontalRule" | "insertDate" | "insertTable" }
   | { type: "heading"; level: 1 | 2 | 3 }
-  | { type: "bulletList" | "orderedList" | "taskList" | "blockquote" | "codeBlock" }
+  | { type: "bulletList" | "orderedList" | "taskList" | "blockquote" | "codeBlock" | "inlineCode" | "inlineCheckbox" }
   | { type: "align"; align: "left" | "center" | "right" | "justify" }
   | { type: "indent" | "outdent" }
   | { type: "link"; href?: string; text?: string }

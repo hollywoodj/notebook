@@ -42,13 +42,13 @@ impl NotebookService {
     pub fn list_notebooks(&self, include_deleted: bool) -> Result<Vec<Notebook>> {
         let user_id = self.db.default_user_id()?;
         let sql = if include_deleted {
-            "SELECT id, user_id, stack_id, name, is_default, sort_order, created_at, updated_at, deleted_at,
-             (SELECT COUNT(*) FROM notes n WHERE n.notebook_id = notebooks.id AND n.deleted_at IS NULL AND IFNULL(n.is_template, 0) = 0) as note_count
-             FROM notebooks WHERE user_id = ?1 ORDER BY sort_order, name"
+            "SELECT nb.id, nb.user_id, nb.stack_id, nb.name, nb.is_default, nb.sort_order, nb.created_at, nb.updated_at, nb.deleted_at,
+             (SELECT COUNT(*) FROM notes n WHERE n.notebook_id = nb.id AND n.deleted_at IS NULL AND COALESCE(n.is_template, 0) = 0) as note_count
+             FROM notebooks nb WHERE nb.user_id = ?1 ORDER BY nb.sort_order, nb.name"
         } else {
-            "SELECT id, user_id, stack_id, name, is_default, sort_order, created_at, updated_at, deleted_at,
-             (SELECT COUNT(*) FROM notes n WHERE n.notebook_id = notebooks.id AND n.deleted_at IS NULL AND IFNULL(n.is_template, 0) = 0) as note_count
-             FROM notebooks WHERE user_id = ?1 AND deleted_at IS NULL ORDER BY sort_order, name"
+            "SELECT nb.id, nb.user_id, nb.stack_id, nb.name, nb.is_default, nb.sort_order, nb.created_at, nb.updated_at, nb.deleted_at,
+             (SELECT COUNT(*) FROM notes n WHERE n.notebook_id = nb.id AND n.deleted_at IS NULL AND COALESCE(n.is_template, 0) = 0) as note_count
+             FROM notebooks nb WHERE nb.user_id = ?1 AND nb.deleted_at IS NULL ORDER BY nb.sort_order, nb.name"
         };
         let conn = self.db.connection();
         let mut stmt = conn.prepare(sql)?;
@@ -100,9 +100,9 @@ impl NotebookService {
     pub fn get_notebook(&self, id: Uuid) -> Result<Notebook> {
         let conn = self.db.connection();
         conn.query_row(
-            "SELECT id, user_id, stack_id, name, is_default, sort_order, created_at, updated_at, deleted_at,
-             (SELECT COUNT(*) FROM notes n WHERE n.notebook_id = notebooks.id AND n.deleted_at IS NULL AND IFNULL(n.is_template, 0) = 0) as note_count
-             FROM notebooks WHERE id = ?1",
+            "SELECT nb.id, nb.user_id, nb.stack_id, nb.name, nb.is_default, nb.sort_order, nb.created_at, nb.updated_at, nb.deleted_at,
+             (SELECT COUNT(*) FROM notes n WHERE n.notebook_id = nb.id AND n.deleted_at IS NULL AND COALESCE(n.is_template, 0) = 0) as note_count
+             FROM notebooks nb WHERE nb.id = ?1",
             params![id.to_string()],
             |row| {
                 Ok(Notebook {
@@ -283,9 +283,9 @@ impl NotebookService {
         let user_id = self.db.default_user_id()?;
         let conn = self.db.connection();
         let mut stmt = conn.prepare(
-            "SELECT id, user_id, name, created_at, updated_at,
-             (SELECT COUNT(*) FROM note_tags nt JOIN notes n ON n.id = nt.note_id WHERE nt.tag_id = tags.id AND n.deleted_at IS NULL AND IFNULL(n.is_template, 0) = 0) as note_count
-             FROM tags WHERE user_id = ?1 ORDER BY name",
+            "SELECT t.id, t.user_id, t.name, t.created_at, t.updated_at,
+             (SELECT COUNT(*) FROM note_tags nt JOIN notes n ON n.id = nt.note_id WHERE nt.tag_id = t.id AND n.deleted_at IS NULL AND COALESCE(n.is_template, 0) = 0) as note_count
+             FROM tags t WHERE t.user_id = ?1 ORDER BY t.name",
         )?;
         let rows = stmt.query_map(params![user_id.to_string()], |row| {
             Ok(Tag {
@@ -316,9 +316,9 @@ impl NotebookService {
         self.db
             .connection()
             .query_row(
-                "SELECT id, user_id, name, created_at, updated_at,
-                 (SELECT COUNT(*) FROM note_tags nt JOIN notes n ON n.id = nt.note_id WHERE nt.tag_id = tags.id AND n.deleted_at IS NULL AND IFNULL(n.is_template, 0) = 0) as note_count
-                 FROM tags WHERE id = ?1",
+                "SELECT t.id, t.user_id, t.name, t.created_at, t.updated_at,
+                 (SELECT COUNT(*) FROM note_tags nt JOIN notes n ON n.id = nt.note_id WHERE nt.tag_id = t.id AND n.deleted_at IS NULL AND COALESCE(n.is_template, 0) = 0) as note_count
+                 FROM tags t WHERE t.id = ?1",
                 params![id.to_string()],
                 |row| {
                     Ok(Tag {
@@ -411,11 +411,15 @@ impl NotebookService {
         if let Some(arch) = archived {
             conditions.push(format!("n.is_archived = {}", if arch { 1 } else { 0 }));
         }
-        if let Some(is_template) = templates {
-            conditions.push(format!(
-                "n.is_template = {}",
+        match templates {
+            Some(is_template) => conditions.push(format!(
+                "COALESCE(n.is_template, 0) = {}",
                 if is_template { 1 } else { 0 }
-            ));
+            )),
+            None if !trash => {
+                conditions.push("COALESCE(n.is_template, 0) = 0".to_string());
+            }
+            None => {}
         }
         sql.push_str(" WHERE ");
         sql.push_str(&conditions.join(" AND "));
@@ -885,12 +889,16 @@ impl NotebookService {
                 created_at: Self::parse_dt(&row.get::<_, String>(4)?).unwrap(),
             })
         })?;
+        let notes = self.list_notes(None, None, false, None, Some(false))?;
+        let mut by_id = std::collections::HashMap::new();
+        for note in notes {
+            by_id.insert(note.id, note);
+        }
         let mut result = Vec::new();
         for row in rows {
             let shortcut = row?;
-            let notes = self.list_notes(None, None, false, None, None)?;
-            if let Some(summary) = notes.into_iter().find(|n| n.id == shortcut.note_id) {
-                result.push((shortcut, summary));
+            if let Some(summary) = by_id.get(&shortcut.note_id) {
+                result.push((shortcut, summary.clone()));
             }
         }
         Ok(result)
@@ -1147,7 +1155,7 @@ impl Default for UpdateNoteRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{CreateNoteRequest, UpdateNoteRequest};
+    use crate::models::{CreateNotebookRequest, CreateNoteRequest, UpdateNoteRequest};
 
     fn temp_service(name: &str) -> NotebookService {
         let dir = std::env::temp_dir().join(format!("notebook-ui-gap-{name}"));
@@ -1180,6 +1188,54 @@ mod tests {
         assert_eq!(counts.trash, 0);
         let listed = service.list_notebooks(false).unwrap();
         assert!(listed.iter().any(|nb| nb.id == notebook_id && nb.note_count >= 1));
+    }
+
+    fn sample_note(notebook_id: Uuid, title: &str) -> CreateNoteRequest {
+        CreateNoteRequest {
+            notebook_id,
+            title: Some(title.into()),
+            content: Some("<p>x</p>".into()),
+            tag_ids: None,
+            is_pinned: None,
+            reminder_at: None,
+            source_url: None,
+            is_template: None,
+            template_category: None,
+        }
+    }
+
+    #[test]
+    fn notebook_counts_are_per_notebook_not_the_global_total() {
+        let service = temp_service("per-notebook-counts");
+        let first = service.list_notebooks(false).unwrap()[0].id;
+        let second = service
+            .create_notebook(CreateNotebookRequest {
+                name: "Work".into(),
+                stack_id: None,
+                is_default: None,
+            })
+            .unwrap()
+            .id;
+        service.create_note(sample_note(first, "One")).unwrap();
+        service.create_note(sample_note(first, "Two")).unwrap();
+        service.create_note(sample_note(second, "Solo")).unwrap();
+
+        let listed = service.list_notebooks(false).unwrap();
+        let first_count = listed.iter().find(|nb| nb.id == first).unwrap().note_count;
+        let second_count = listed.iter().find(|nb| nb.id == second).unwrap().note_count;
+        assert_eq!(second_count, 1);
+        assert!(first_count >= 2);
+        assert_ne!(first_count, second_count);
+
+        let in_first = service
+            .list_notes(Some(first), None, false, None, None)
+            .unwrap();
+        let in_second = service
+            .list_notes(Some(second), None, false, None, None)
+            .unwrap();
+        assert_eq!(in_first.len() as i32, first_count);
+        assert_eq!(in_second.len() as i32, second_count);
+        assert_eq!(in_second.len(), 1);
     }
 
     #[test]

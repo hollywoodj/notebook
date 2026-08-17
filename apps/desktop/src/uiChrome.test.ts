@@ -6,6 +6,7 @@ import {
   clampZoom,
   countWords,
   decodeNoteDrag,
+  defaultPaneLayout,
   emptyStateCopy,
   encodeNoteDrag,
   findMatchOffsets,
@@ -14,6 +15,7 @@ import {
   isReminderOverdue,
   jumpToMatches,
   hasVisibleSidebarNotebooks,
+  isNoteExpanded,
   matchesSidebarFilter,
   mergeNoteBodies,
   nextMatchIndex,
@@ -31,7 +33,13 @@ import {
   suggestedTags,
   toDatetimeLocalValue,
   toEnexTimestamp,
+  toggleNoteExpanded,
+  toggleNoteListHidden,
   windowTitleForNote,
+  createNoteTab,
+  noteTabLabel,
+  nextActiveTabId,
+  reorderById,
 } from "./uiChrome.ts";
 
 describe("clampPaneWidth", () => {
@@ -56,6 +64,30 @@ describe("parsePaneLayout", () => {
     assert.equal(layout.listWidth, 400);
     assert.equal(layout.sidebarCollapsed, true);
     assert.equal(layout.listCollapsed, true);
+  });
+});
+
+describe("note chrome layout", () => {
+  it("hides the note list without collapsing the sidebar", () => {
+    const next = toggleNoteListHidden(defaultPaneLayout());
+    assert.equal(next.listCollapsed, true);
+    assert.equal(next.sidebarCollapsed, false);
+    assert.equal(toggleNoteListHidden(next).listCollapsed, false);
+  });
+
+  it("expands the note by hiding sidebar and list, then restores both", () => {
+    const expanded = toggleNoteExpanded(defaultPaneLayout());
+    assert.equal(isNoteExpanded(expanded), true);
+    const restored = toggleNoteExpanded(expanded);
+    assert.equal(restored.sidebarCollapsed, false);
+    assert.equal(restored.listCollapsed, false);
+  });
+
+  it("restores the three-pane layout from expand via show note list", () => {
+    const expanded = toggleNoteExpanded(defaultPaneLayout());
+    const shown = toggleNoteListHidden(expanded);
+    assert.equal(shown.sidebarCollapsed, false);
+    assert.equal(shown.listCollapsed, false);
   });
 });
 
@@ -266,6 +298,40 @@ describe("editor chrome", () => {
     assert.equal(attachmentsLabel(0), "0 attachments");
     assert.equal(attachmentsLabel(1), "1 attachment");
     assert.equal(attachmentsLabel(4), "4 attachments");
+  });
+});
+
+describe("note tabs", () => {
+  it("labels empty tabs as Notes and filled tabs as Untitled when needed", () => {
+    assert.equal(noteTabLabel("", false), "Notes");
+    assert.equal(noteTabLabel("  ", true), "Untitled");
+    assert.equal(noteTabLabel(" Meeting ", true), "Meeting");
+  });
+
+  it("creates a tab with a stable identity", () => {
+    const tab = createNoteTab({ title: "Invoice" });
+    assert.equal(tab.noteId, null);
+    assert.equal(tab.title, "Notes");
+    const noteTab = createNoteTab({ noteId: "n1", title: "Invoice" });
+    assert.equal(noteTab.noteId, "n1");
+    assert.equal(noteTab.title, "Invoice");
+    assert.notEqual(tab.id, noteTab.id);
+  });
+
+  it("selects a neighbor after closing the active tab", () => {
+    assert.equal(nextActiveTabId(["a", "b", "c"], "b", "b"), "c");
+    assert.equal(nextActiveTabId(["a", "b", "c"], "c", "c"), "b");
+    assert.equal(nextActiveTabId(["a", "b", "c"], "a", "c"), "c");
+    assert.equal(nextActiveTabId(["a"], "a", "a"), "a");
+  });
+
+  it("reorders tabs by dragging", () => {
+    const tabs = [{ id: "a" }, { id: "b" }, { id: "c" }];
+    assert.deepEqual(
+      reorderById(tabs, "a", "c").map((tab) => tab.id),
+      ["b", "c", "a"]
+    );
+    assert.equal(reorderById(tabs, "a", "a"), tabs);
   });
 });
 

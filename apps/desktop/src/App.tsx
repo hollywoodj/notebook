@@ -24,6 +24,7 @@ import { ContextMenu, ContextMenuEntry } from "./components/ContextMenu";
 import { MenuBar, MenuBarGroup } from "./components/MenuBar";
 import { NoteInfoPanel } from "./components/NoteInfoPanel";
 import { NoteTagBar } from "./components/NoteTagBar";
+import { NoteTabBar } from "./components/NoteTabBar";
 import { PaneSplitter } from "./components/PaneSplitter";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { JumpToDialog } from "./components/JumpToDialog";
@@ -46,6 +47,7 @@ import {
   adjacentNoteId,
   clampPaneWidth,
   countWords,
+  createNoteTab,
   decodeNoteDrag,
   dispatchEditorCommand,
   downloadTextFile,
@@ -56,22 +58,28 @@ import {
   groupNotesForList,
   HIGHLIGHT_COLORS,
   isReminderOverdue,
+  isNoteExpanded,
   hasVisibleSidebarNotebooks,
   matchesSidebarFilter,
   mergeNoteBodies,
+  nextActiveTabId,
   nextZoom,
   noteAppLink,
+  noteTabLabel,
   notebooksMatchingFilter,
   notesToEnex,
   notesToHtmlDocument,
   parseEditorChrome,
   parsePaneLayout,
   reminderFromPreset,
+  reorderById,
   resolveListView,
   safeFilename,
   snippetParts,
   TEXT_COLORS,
   toDatetimeLocalValue,
+  toggleNoteExpanded,
+  toggleNoteListHidden,
   windowTitleForNote,
   type ListView,
   type ReminderPreset,
@@ -88,6 +96,20 @@ type RenameTarget =
   | { kind: "notebook"; id: string; name: string }
   | { kind: "stack"; id: string; name: string }
   | { kind: "tag"; id: string; name: string };
+
+type NoteTab = {
+  id: string;
+  noteId: string | null;
+  title: string;
+  filter: ViewFilter;
+};
+
+function makeNoteTab(init?: Partial<NoteTab>): NoteTab {
+  return {
+    ...createNoteTab(init),
+    filter: init?.filter ?? { type: "all" },
+  };
+}
 
 type PendingConfirm = {
   message: string;
@@ -139,7 +161,10 @@ export default function App() {
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set());
   const [activeNote, setActiveNote] = useState<Note | null>(null);
   const [filter, setFilter] = useState<ViewFilter>({ type: "all" });
+  const [tabs, setTabs] = useState<NoteTab[]>(() => [makeNoteTab()]);
+  const [activeTabId, setActiveTabId] = useState(() => tabs[0].id);
   const [searchInput, setSearchInput] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [showNewNotebook, setShowNewNotebook] = useState(false);
   const [showNewStack, setShowNewStack] = useState(false);
@@ -150,6 +175,7 @@ export default function App() {
   const [notebookPicker, setNotebookPicker] = useState<"move" | "copy" | null>(null);
   const [showReminderMenu, setShowReminderMenu] = useState(false);
   const [sidebarFilter, setSidebarFilter] = useState("");
+  const [sidebarFilterOpen, setSidebarFilterOpen] = useState(false);
   const [editorChrome, setEditorChrome] = useState(() =>
     parseEditorChrome(
       typeof localStorage === "undefined" ? null : localStorage.getItem(EDITOR_CHROME_KEY)
@@ -171,7 +197,8 @@ export default function App() {
   const [account, setAccount] = useState<Account | null>(null);
   const [storage, setStorage] = useState({ database: "", attachments: "" });
   const [shortcutIds, setShortcutIds] = useState<Set<string>>(new Set());
-  const [notebooksOpen, setNotebooksOpen] = useState(true);
+  const [shortcutNotes, setShortcutNotes] = useState<NoteSummary[]>([]);
+  const [sidebarFlyout, setSidebarFlyout] = useState<"shortcuts" | "notebooks" | null>(null);
   const [tagsOpen, setTagsOpen] = useState(true);
   const [showInfo, setShowInfo] = useState(false);
   const [findTick, setFindTick] = useState(0);
@@ -191,6 +218,7 @@ export default function App() {
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const sidebarFilterRef = useRef<HTMLInputElement>(null);
   const skipNextSave = useRef(false);
   const lastClickedNoteId = useRef<string | null>(null);
   const noteListRef = useRef<HTMLDivElement>(null);
@@ -199,6 +227,14 @@ export default function App() {
     dragging: boolean;
   }>({ anchorId: null, dragging: false });
   const skipNoteClickRef = useRef(false);
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const activeTabIdRef = useRef(activeTabId);
+  activeTabIdRef.current = activeTabId;
+  const activeNoteRef = useRef(activeNote);
+  activeNoteRef.current = activeNote;
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
 
   const openSettings = (section: SettingsSection = "application") => {
     setSettingsSection(section);
@@ -232,6 +268,7 @@ export default function App() {
     setStacks(st);
     setTags(tg);
     setShortcutIds(new Set(sc.map((n) => n.id)));
+    setShortcutNotes(sc);
     setTemplates(tm);
     setCounts(sidebarCounts);
   }, []);
@@ -246,6 +283,20 @@ export default function App() {
     localStorage.setItem(EDITOR_CHROME_KEY, JSON.stringify(next));
   };
 
+  const openGlobalSearch = () => {
+    setSearchOpen(true);
+    if (paneLayout.listCollapsed) {
+      persistPaneLayout({ ...paneLayout, listCollapsed: false });
+    }
+  };
+
+  const openSidebarFilter = () => {
+    setSidebarFilterOpen(true);
+    setSidebarFlyout("notebooks");
+    setTagsOpen(true);
+    window.setTimeout(() => sidebarFilterRef.current?.focus(), 0);
+  };
+
   const refreshNotes = useCallback(async () => {
     let list: NoteSummary[] = [];
     switch (filter.type) {
@@ -253,10 +304,10 @@ export default function App() {
         list = await api.listNotes({ templates: false });
         break;
       case "notebook":
-        list = await api.listNotes({ notebookId: filter.id });
+        list = await api.listNotes({ notebookId: filter.id, templates: false });
         break;
       case "tag":
-        list = await api.listNotes({ tagId: filter.id });
+        list = await api.listNotes({ tagId: filter.id, templates: false });
         break;
       case "shortcuts":
         list = await api.listShortcuts();
@@ -290,14 +341,145 @@ export default function App() {
     setNotes(sorted);
   }, [filter, prefs.sort_by]);
 
-  const loadNote = useCallback(async (id: string) => {
+  const loadNote = useCallback(async (id: string, tabId?: string) => {
     skipNextSave.current = true;
     const note = await api.getNote(id);
+    const targetTabId = tabId ?? activeTabIdRef.current;
     setActiveNote(note);
     setSelectedNoteIds(new Set([id]));
     lastClickedNoteId.current = id;
     setShowNoteMenu(false);
+    setTabs((current) =>
+      current.map((tab) =>
+        tab.id === targetTabId
+          ? {
+              ...tab,
+              noteId: note.id,
+              title: noteTabLabel(note.title, true),
+              filter: filterRef.current,
+            }
+          : tab
+      )
+    );
   }, []);
+
+  const rememberCurrentTab = () => {
+    const currentId = activeTabIdRef.current;
+    const note = activeNoteRef.current;
+    const currentFilter = filterRef.current;
+    setTabs((current) =>
+      current.map((tab) =>
+        tab.id === currentId
+          ? {
+              ...tab,
+              filter: currentFilter,
+              noteId: note?.id ?? null,
+              title: noteTabLabel(note?.title, Boolean(note)),
+            }
+          : tab
+      )
+    );
+  };
+
+  const switchToTab = useCallback(async (tabId: string) => {
+    if (tabId === activeTabIdRef.current) return;
+    rememberCurrentTab();
+    const next = tabsRef.current.find((tab) => tab.id === tabId);
+    if (!next) return;
+    activeTabIdRef.current = tabId;
+    setActiveTabId(tabId);
+    setFilter(next.filter);
+    if (next.noteId) {
+      await loadNote(next.noteId, tabId);
+      return;
+    }
+    skipNextSave.current = true;
+    setActiveNote(null);
+    setSelectedNoteIds(new Set());
+    lastClickedNoteId.current = null;
+  }, [loadNote]);
+
+  const openNewTab = useCallback(() => {
+    rememberCurrentTab();
+    const tab = makeNoteTab({ filter: { type: "all" } });
+    setTabs((current) => [...current, tab]);
+    activeTabIdRef.current = tab.id;
+    setActiveTabId(tab.id);
+    setFilter({ type: "all" });
+    skipNextSave.current = true;
+    setActiveNote(null);
+    setSelectedNoteIds(new Set());
+    lastClickedNoteId.current = null;
+  }, []);
+
+  const closeTab = useCallback(
+    (tabId: string) => {
+      const currentTabs = tabsRef.current;
+      const closing = currentTabs.find((tab) => tab.id === tabId);
+      if (!closing) return;
+
+      if (currentTabs.length === 1) {
+        skipNextSave.current = true;
+        setActiveNote(null);
+        setSelectedNoteIds(new Set());
+        lastClickedNoteId.current = null;
+        const emptied = {
+          ...closing,
+          noteId: null,
+          title: noteTabLabel(null, false),
+        };
+        tabsRef.current = [emptied];
+        setTabs([emptied]);
+        return;
+      }
+
+      const remaining = currentTabs.filter((tab) => tab.id !== tabId);
+      const nextId = nextActiveTabId(
+        currentTabs.map((tab) => tab.id),
+        tabId,
+        activeTabIdRef.current
+      );
+      tabsRef.current = remaining;
+      setTabs(remaining);
+      if (!nextId || nextId === activeTabIdRef.current) return;
+      const next = remaining.find((tab) => tab.id === nextId);
+      if (!next) return;
+      activeTabIdRef.current = next.id;
+      setActiveTabId(next.id);
+      setFilter(next.filter);
+      if (next.noteId) {
+        void loadNote(next.noteId, next.id);
+        return;
+      }
+      skipNextSave.current = true;
+      setActiveNote(null);
+      setSelectedNoteIds(new Set());
+      lastClickedNoteId.current = null;
+    },
+    [loadNote]
+  );
+
+  const openInNewTab = useCallback(
+    async (noteId: string) => {
+      const existing = tabsRef.current.find((tab) => tab.noteId === noteId);
+      if (existing) {
+        await switchToTab(existing.id);
+        return;
+      }
+      rememberCurrentTab();
+      const summary = notes.find((note) => note.id === noteId);
+      const tab = makeNoteTab({
+        noteId,
+        title: summary?.title || activeNoteRef.current?.title,
+        filter: filterRef.current,
+      });
+      setTabs((current) => [...current, tab]);
+      activeTabIdRef.current = tab.id;
+      setActiveTabId(tab.id);
+      await loadNote(noteId, tab.id);
+    },
+    [loadNote, notes, switchToTab]
+  );
 
   const handleNoteClick = useCallback(
     (noteId: string, event: MouseEvent) => {
@@ -428,6 +610,33 @@ export default function App() {
     const noteIds = new Set(notes.map((n) => n.id));
     setSelectedNoteIds((prev) => pruneNoteIds(prev, noteIds));
   }, [notes]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const noteIds = new Set(notes.map((note) => note.id));
+    setTabs((current) => {
+      const next = current.map((tab) =>
+        tab.noteId && !noteIds.has(tab.noteId)
+          ? { ...tab, noteId: null, title: noteTabLabel(null, false) }
+          : tab
+      );
+      const changed = next.some((tab, index) => tab !== current[index]);
+      if (!changed) return current;
+      tabsRef.current = next;
+      return next;
+    });
+  }, [notes, ready]);
+
+  useEffect(() => {
+    if (!activeNote) return;
+    setTabs((current) =>
+      current.map((tab) =>
+        tab.id === activeTabIdRef.current && tab.noteId === activeNote.id
+          ? { ...tab, title: noteTabLabel(activeNote.title, true) }
+          : tab
+      )
+    );
+  }, [activeNote?.id, activeNote?.title]);
 
   useEffect(() => {
     if (!activeNote) setShowInfo(false);
@@ -868,6 +1077,12 @@ export default function App() {
   }, [activeNote]);
 
   useEffect(() => {
+    if (searchOpen || filter.type === "search") {
+      searchRef.current?.focus();
+    }
+  }, [searchOpen, filter]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
       if (meta && e.key === "n" && e.shiftKey) {
@@ -878,11 +1093,11 @@ export default function App() {
         createNote();
       } else if (meta && e.key === "f" && e.shiftKey) {
         e.preventDefault();
-        searchRef.current?.focus();
+        openGlobalSearch();
       } else if (meta && e.key === "f") {
         e.preventDefault();
         if (activeNote) setFindTick((tick) => tick + 1);
-        else searchRef.current?.focus();
+        else openGlobalSearch();
       } else if (meta && e.key === "h") {
         e.preventDefault();
         if (activeNote) setReplaceTick((tick) => tick + 1);
@@ -907,9 +1122,23 @@ export default function App() {
       } else if (e.key === "F11") {
         e.preventDefault();
         setFocusMode((open) => !open);
+      } else if (e.altKey && meta && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        persistPaneLayout(
+          e.key === "ArrowLeft"
+            ? toggleNoteListHidden(paneLayout)
+            : toggleNoteExpanded(paneLayout)
+        );
       } else if (e.key === "Escape" && focusMode) {
         e.preventDefault();
         setFocusMode(false);
+      } else if (e.key === "Escape" && sidebarFlyout) {
+        e.preventDefault();
+        setSidebarFlyout(null);
+      } else if (e.key === "Escape" && searchOpen) {
+        e.preventDefault();
+        setSearchOpen(false);
+        if (filter.type === "search") setFilter({ type: "all" });
       } else if (meta && e.key === "j") {
         e.preventDefault();
         setShowJump(true);
@@ -949,7 +1178,31 @@ export default function App() {
         openSettings("shortcuts");
       } else if (meta && e.key === "t" && e.shiftKey) {
         e.preventDefault();
-        setFilter({ type: "templates" });
+        openNewTab();
+      } else if (meta && e.key === "w") {
+        e.preventDefault();
+        closeTab(activeTabIdRef.current);
+      } else if (meta && e.key === "Tab") {
+        e.preventDefault();
+        const ids = tabsRef.current.map((tab) => tab.id);
+        const index = ids.indexOf(activeTabIdRef.current);
+        if (index < 0 || ids.length < 2) return;
+        const nextIndex = e.shiftKey
+          ? (index - 1 + ids.length) % ids.length
+          : (index + 1) % ids.length;
+        void switchToTab(ids[nextIndex]);
+      } else if (meta && e.key === "o" && e.altKey && activeNote) {
+        e.preventDefault();
+        void openInNewTab(activeNote.id);
+      } else if (meta && e.shiftKey && (e.key === "l" || e.key === "L") && activeNote) {
+        e.preventDefault();
+        dispatchEditorCommand({ type: "bulletList" });
+      } else if (meta && e.shiftKey && (e.key === "o" || e.key === "O") && activeNote) {
+        e.preventDefault();
+        dispatchEditorCommand({ type: "orderedList" });
+      } else if (meta && e.shiftKey && (e.key === "c" || e.key === "C") && activeNote) {
+        e.preventDefault();
+        dispatchEditorCommand({ type: "taskList" });
       } else if (meta && e.key === "a" && !isTextInputFocused()) {
         e.preventDefault();
         setSelectedNoteIds(new Set(notes.map((n) => n.id)));
@@ -1098,7 +1351,13 @@ export default function App() {
 
       return [
         ...(count === 1
-          ? [{ label: "Open note", onSelect: () => void loadNote(targets[0].id) }]
+          ? [
+              { label: "Open note", onSelect: () => void loadNote(targets[0].id) },
+              {
+                label: "Open in New Tab",
+                onSelect: () => void openInNewTab(targets[0].id),
+              },
+            ]
           : []),
         {
           label: allShortcuts
@@ -1366,6 +1625,25 @@ export default function App() {
           onSelect: () => setShowGallery(true),
         },
         {
+          label: "New Tab",
+          shortcut: "Ctrl/⌘ ⇧ T",
+          onSelect: () => openNewTab(),
+        },
+        {
+          label: "Open in New Tab",
+          shortcut: "Ctrl/⌘ Alt O",
+          disabled: !activeNote,
+          onSelect: () => {
+            if (activeNote) void openInNewTab(activeNote.id);
+          },
+        },
+        {
+          label: "Close Tab",
+          shortcut: "Ctrl/⌘ W",
+          onSelect: () => closeTab(activeTabId),
+        },
+        { type: "separator" },
+        {
           label: "New Notebook…",
           onSelect: () => {
             setNewNotebookStackId(null);
@@ -1453,8 +1731,8 @@ export default function App() {
     {
       label: "View",
       items: [
-        { label: "All Notes", onSelect: () => setFilter({ type: "all" }) },
-        { label: "Shortcuts", onSelect: () => setFilter({ type: "shortcuts" }) },
+        { label: "All Notes", onSelect: () => { setSidebarFlyout(null); setFilter({ type: "all" }); } },
+        { label: "Shortcuts", onSelect: () => { setSidebarFlyout("shortcuts"); setFilter({ type: "shortcuts" }); } },
         { label: "Reminders", onSelect: () => setFilter({ type: "reminders" }) },
         { label: "Templates", onSelect: () => setFilter({ type: "templates" }) },
         { type: "separator" },
@@ -1468,11 +1746,13 @@ export default function App() {
         },
         {
           label: paneLayout.listCollapsed ? "Show Note List" : "Hide Note List",
-          onSelect: () =>
-            persistPaneLayout({
-              ...paneLayout,
-              listCollapsed: !paneLayout.listCollapsed,
-            }),
+          shortcut: "Ctrl/⌘ Alt ←",
+          onSelect: () => persistPaneLayout(toggleNoteListHidden(paneLayout)),
+        },
+        {
+          label: isNoteExpanded(paneLayout) ? "Restore Panes" : "Expand Note",
+          shortcut: "Ctrl/⌘ Alt →",
+          onSelect: () => persistPaneLayout(toggleNoteExpanded(paneLayout)),
         },
         {
           label: editorChrome.toolbarHidden
@@ -1758,6 +2038,11 @@ export default function App() {
           onSelect: () => runEditorCommand({ type: "align", align: "right" }),
         },
         {
+          label: "Justify",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "align", align: "justify" }),
+        },
+        {
           label: "Increase Indent",
           shortcut: "Tab",
           disabled: !activeNote,
@@ -1783,18 +2068,42 @@ export default function App() {
         { type: "separator" },
         {
           label: "Bulleted List",
+          shortcut: "Ctrl/⌘ ⇧ L",
           disabled: !activeNote,
           onSelect: () => runEditorCommand({ type: "bulletList" }),
         },
         {
           label: "Numbered List",
+          shortcut: "Ctrl/⌘ ⇧ O",
           disabled: !activeNote,
           onSelect: () => runEditorCommand({ type: "orderedList" }),
         },
         {
-          label: "Checkbox List",
+          label: "Checklist",
+          shortcut: "Ctrl/⌘ ⇧ C",
           disabled: !activeNote,
           onSelect: () => runEditorCommand({ type: "taskList" }),
+        },
+        {
+          label: "Insert Checkbox",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "inlineCheckbox" }),
+        },
+        { type: "separator" },
+        {
+          label: "Quote",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "blockquote" }),
+        },
+        {
+          label: "Code Block",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "codeBlock" }),
+        },
+        {
+          label: "Inline Code",
+          disabled: !activeNote,
+          onSelect: () => runEditorCommand({ type: "inlineCode" }),
         },
         {
           label: "Horizontal Rule",
@@ -1860,14 +2169,31 @@ export default function App() {
           "--list-width": `${paneLayout.listWidth}px`,
         } as CSSProperties
       }
-      onMouseDown={() => {
+      onMouseDown={(event) => {
         setShowNewMenu(false);
         setShowNoteMenu(false);
         setShowReminderMenu(false);
         setContextMenu(null);
+        if (!(event.target as HTMLElement).closest(".sidebar")) {
+          setSidebarFlyout(null);
+        }
       }}
     >
       <MenuBar groups={menuGroups} />
+      <NoteTabBar
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onSelect={(id) => void switchToTab(id)}
+        onClose={closeTab}
+        onNewTab={openNewTab}
+        onReorder={(fromId, toId) => {
+          setTabs((current) => {
+            const next = reorderById(current, fromId, toId);
+            tabsRef.current = next;
+            return next;
+          });
+        }}
+      />
       <aside
         className="sidebar"
         onContextMenu={(event) => {
@@ -1879,87 +2205,94 @@ export default function App() {
           });
         }}
       >
-        <div className="new-note-wrap" onMouseDown={(e) => e.stopPropagation()}>
-          <button className="new-note-btn" onClick={createNote}>
-            <Icon.Plus size={16} />
-            New note
+        <div className="sidebar-toolbar" onMouseDown={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            className={searchOpen || filter.type === "search" ? "icon-btn active" : "icon-btn"}
+            title="Search"
+            onClick={() => {
+              if (searchOpen || filter.type === "search") {
+                setSearchOpen(false);
+                if (filter.type === "search") setFilter({ type: "all" });
+                return;
+              }
+              openGlobalSearch();
+            }}
+          >
+            <Icon.Search size={18} />
           </button>
           <button
-            className="new-note-more"
-            title="More"
-            onClick={() => setShowNewMenu((v) => !v)}
+            type="button"
+            className="sidebar-new-note"
+            title="New note"
+            onClick={() => void createNote()}
           >
-            <Icon.Chevron size={16} />
+            <Icon.Plus size={18} />
           </button>
-          {showNewMenu && (
-            <div className="menu-popover">
-              <button
-                onClick={() => {
-                  setShowNewMenu(false);
-                  createBlankNote();
-                }}
-              >
-                Blank note
-              </button>
-              <button
-                onClick={() => {
-                  setShowNewMenu(false);
-                  setShowGallery(true);
-                }}
-              >
-                From template
-              </button>
-              <button
-                onClick={() => {
-                  setShowNewMenu(false);
-                  setNewNotebookStackId(null);
-                  setShowNewNotebook(true);
-                }}
-              >
-                New notebook
-              </button>
-            </div>
-          )}
-        </div>
-
-        <div className="sidebar-search">
-          <Icon.Search size={15} />
-          <input
-            ref={searchRef}
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && searchInput.trim()) {
-                setFilter({ type: "search", query: searchInput.trim() });
-              }
-            }}
-            placeholder="Search"
-          />
-        </div>
-        <div className="sidebar-search sidebar-filter">
-          <Icon.Notebooks size={15} />
-          <input
-            value={sidebarFilter}
-            onChange={(e) => setSidebarFilter(e.target.value)}
-            placeholder="Filter notebooks & tags"
-            aria-label="Filter notebooks and tags"
-          />
-          {sidebarFilter && (
+          <div className="menu-anchor">
             <button
               type="button"
-              className="icon-btn"
-              title="Clear filter"
-              onClick={() => setSidebarFilter("")}
+              className={showNewMenu ? "icon-btn active" : "icon-btn"}
+              title="More actions"
+              onClick={() => setShowNewMenu((v) => !v)}
             >
-              <Icon.Close size={14} />
+              <Icon.More size={18} />
             </button>
-          )}
+            {showNewMenu && (
+              <div className="menu-popover right">
+                <button
+                  onClick={() => {
+                    setShowNewMenu(false);
+                    void createBlankNote();
+                  }}
+                >
+                  Blank note
+                </button>
+                <button
+                  onClick={() => {
+                    setShowNewMenu(false);
+                    setShowGallery(true);
+                  }}
+                >
+                  From template
+                </button>
+                <button
+                  onClick={() => {
+                    setShowNewMenu(false);
+                    setNewNotebookStackId(null);
+                    setShowNewNotebook(true);
+                  }}
+                >
+                  New notebook
+                </button>
+                <button
+                  onClick={() => {
+                    setShowNewMenu(false);
+                    setShowNewTag(true);
+                  }}
+                >
+                  New tag
+                </button>
+                <button
+                  onClick={() => {
+                    setShowNewMenu(false);
+                    openSidebarFilter();
+                  }}
+                >
+                  Filter notebooks & tags
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         <nav className="sidebar-nav scroll-pane">
           <button
             className={filter.type === "all" ? "nav-item active" : "nav-item"}
-            onClick={() => setFilter({ type: "all" })}
+            onClick={() => {
+              setSidebarFlyout(null);
+              setFilter({ type: "all" });
+            }}
           >
             <Icon.Notes size={16} />
             Notes
@@ -1967,18 +2300,30 @@ export default function App() {
           </button>
           {prefs.show_shortcuts && (
             <button
-              className={filter.type === "shortcuts" ? "nav-item active" : "nav-item"}
-              onClick={() => setFilter({ type: "shortcuts" })}
+              className={
+                (filter.type === "shortcuts" || sidebarFlyout === "shortcuts"
+                  ? "nav-item active"
+                  : "nav-item")
+              }
+              onClick={() => {
+                setSidebarFlyout((current) =>
+                  current === "shortcuts" ? null : "shortcuts"
+                );
+                setFilter({ type: "shortcuts" });
+              }}
             >
               <Icon.Shortcuts size={16} />
               Shortcuts
-              <span className="nav-count">{counts.shortcuts}</span>
+              <span className="nav-count">{shortcutNotes.length}</span>
             </button>
           )}
           {prefs.show_reminders && (
             <button
               className={filter.type === "reminders" ? "nav-item active" : "nav-item"}
-              onClick={() => setFilter({ type: "reminders" })}
+              onClick={() => {
+                setSidebarFlyout(null);
+                setFilter({ type: "reminders" });
+              }}
             >
               <Icon.Reminder size={16} />
               Reminders
@@ -1987,125 +2332,22 @@ export default function App() {
           )}
 
           {prefs.show_notebooks && (
-            <div className="nav-section">
-              <button
-                className="nav-section-title"
-                onClick={() => setNotebooksOpen((v) => !v)}
-              >
-                <span>
-                  <Icon.Notebooks size={14} />
-                  Notebooks
-                </span>
-                <span className="section-actions">
-                  <span
-                    className="plus"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setNewNotebookStackId(null);
-                      setShowNewNotebook(true);
-                    }}
-                  >
-                    +
-                  </span>
-                  <Icon.Chevron
-                    size={14}
-                    style={{
-                      transform:
-                        notebooksOpen || sidebarFilter.trim()
-                          ? "rotate(0deg)"
-                          : "rotate(-90deg)",
-                    }}
-                  />
-                </span>
-              </button>
-              { (notebooksOpen || Boolean(sidebarFilter.trim())) && (
-                <>
-                  {stacks.map((stack) => {
-                    const stacked = notebooksMatchingFilter(
-                      notebooksByStack[stack.id] || [],
-                      stack.name,
-                      sidebarFilter
-                    );
-                    if (!stacked.length) return null;
-                    return (
-                    <div key={stack.id} className="stack-group">
-                      <button
-                        className="stack-name"
-                        onContextMenu={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setContextMenu({
-                            kind: "stack",
-                            x: event.clientX,
-                            y: event.clientY,
-                            stack,
-                          });
-                        }}
-                      >
-                        {stack.name}
-                      </button>
-                      {stacked.map((nb) => (
-                        <NotebookNavItem
-                          key={nb.id}
-                          notebook={nb}
-                          active={filter.type === "notebook" && filter.id === nb.id}
-                          isDropTarget={dropTarget === `notebook:${nb.id}`}
-                          onSelect={() =>
-                            setFilter({ type: "notebook", id: nb.id, name: nb.name })
-                          }
-                          onDragOver={(event) => allowNoteDrop(event, `notebook:${nb.id}`)}
-                          onDragLeave={() => setDropTarget(null)}
-                          onDrop={(event) => void moveDroppedNotes(nb.id, event)}
-                          onContextMenu={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            setContextMenu({
-                              kind: "notebook",
-                              x: event.clientX,
-                              y: event.clientY,
-                              notebook: nb,
-                            });
-                          }}
-                        />
-                      ))}
-                    </div>
-                    );
-                  })}
-                  {notebooksMatchingFilter(
-                    notebooksByStack.uncategorized,
-                    null,
-                    sidebarFilter
-                  ).map((nb) => (
-                    <NotebookNavItem
-                      key={nb.id}
-                      notebook={nb}
-                      active={filter.type === "notebook" && filter.id === nb.id}
-                      isDropTarget={dropTarget === `notebook:${nb.id}`}
-                      onSelect={() =>
-                        setFilter({ type: "notebook", id: nb.id, name: nb.name })
-                      }
-                      onDragOver={(event) => allowNoteDrop(event, `notebook:${nb.id}`)}
-                      onDragLeave={() => setDropTarget(null)}
-                      onDrop={(event) => void moveDroppedNotes(nb.id, event)}
-                      onContextMenu={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setContextMenu({
-                          kind: "notebook",
-                          x: event.clientX,
-                          y: event.clientY,
-                          notebook: nb,
-                        });
-                      }}
-                    />
-                  ))}
-                  {sidebarFilter.trim() &&
-                    !hasVisibleSidebarNotebooks(notebooks, stacks, sidebarFilter) && (
-                      <div className="empty-state compact">No matching notebooks</div>
-                    )}
-                </>
-              )}
-            </div>
+            <button
+              className={
+                (filter.type === "notebook" || sidebarFlyout === "notebooks"
+                  ? "nav-item active"
+                  : "nav-item")
+              }
+              onClick={() =>
+                setSidebarFlyout((current) =>
+                  current === "notebooks" ? null : "notebooks"
+                )
+              }
+            >
+              <Icon.Notebooks size={16} />
+              Notebooks
+              <span className="nav-count">{notebooks.length}</span>
+            </button>
           )}
 
           {prefs.show_tags && (
@@ -2149,9 +2391,10 @@ export default function App() {
                         : "nav-item indent") +
                       (dropTarget === `tag:${tag.id}` ? " drop-target" : "")
                     }
-                    onClick={() =>
-                      setFilter({ type: "tag", id: tag.id, name: tag.name })
-                    }
+                    onClick={() => {
+                      setSidebarFlyout(null);
+                      setFilter({ type: "tag", id: tag.id, name: tag.name });
+                    }}
                     onDragOver={(event) => allowNoteDrop(event, `tag:${tag.id}`)}
                     onDragLeave={() => setDropTarget(null)}
                     onDrop={(event) => void tagDroppedNotes(tag.id, event)}
@@ -2179,7 +2422,10 @@ export default function App() {
           {prefs.show_templates && (
             <button
               className={filter.type === "templates" ? "nav-item active" : "nav-item"}
-              onClick={() => setFilter({ type: "templates" })}
+              onClick={() => {
+                setSidebarFlyout(null);
+                setFilter({ type: "templates" });
+              }}
             >
               <Icon.Templates size={16} />
               Templates
@@ -2190,32 +2436,218 @@ export default function App() {
           {prefs.show_trash && (
             <button
               className={filter.type === "trash" ? "nav-item active" : "nav-item"}
-              onClick={() => setFilter({ type: "trash" })}
+              onClick={() => {
+                setSidebarFlyout(null);
+                setFilter({ type: "trash" });
+              }}
             >
               <Icon.Trash size={16} />
               Trash
               <span className="nav-count">{counts.trash}</span>
             </button>
           )}
-
-          {prefs.show_import && (
-            <div className="nav-section">
-              <div className="nav-section-title static">
-                <span>
-                  <Icon.Import size={14} />
-                  Import
-                </span>
-              </div>
-              <button
-                className="nav-item indent"
-                onClick={() => importRef.current?.click()}
-              >
-                Evernote (.enex)
-              </button>
-              {importStatus && <div className="import-status">{importStatus}</div>}
-            </div>
-          )}
         </nav>
+        {sidebarFlyout && (
+          <div className="sidebar-flyout" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="sidebar-flyout-header">
+              <h3>{sidebarFlyout === "shortcuts" ? "Shortcuts" : "Notebooks"}</h3>
+              {sidebarFlyout === "notebooks" && (
+                <div className="sidebar-flyout-actions">
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="Filter notebooks & tags"
+                    onClick={() => {
+                      if (sidebarFilterOpen || sidebarFilter.trim()) {
+                        setSidebarFilter("");
+                        setSidebarFilterOpen(false);
+                      } else {
+                        setSidebarFilterOpen(true);
+                        window.setTimeout(() => sidebarFilterRef.current?.focus(), 0);
+                      }
+                    }}
+                  >
+                    <Icon.Search size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="New notebook"
+                    onClick={() => {
+                      setNewNotebookStackId(null);
+                      setShowNewNotebook(true);
+                    }}
+                  >
+                    <Icon.Plus size={14} />
+                  </button>
+                </div>
+              )}
+              <button
+                type="button"
+                className="icon-btn"
+                title="Close"
+                onClick={() => setSidebarFlyout(null)}
+              >
+                <Icon.Close size={14} />
+              </button>
+            </div>
+            {sidebarFlyout === "notebooks" && (sidebarFilterOpen || Boolean(sidebarFilter.trim())) && (
+              <div className="sidebar-search sidebar-filter">
+                <Icon.Notebooks size={15} />
+                <input
+                  ref={sidebarFilterRef}
+                  value={sidebarFilter}
+                  onChange={(e) => setSidebarFilter(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setSidebarFilter("");
+                      setSidebarFilterOpen(false);
+                    }
+                  }}
+                  placeholder="Filter notebooks & tags"
+                  aria-label="Filter notebooks and tags"
+                />
+                <button
+                  type="button"
+                  className="icon-btn"
+                  title="Close filter"
+                  onClick={() => {
+                    setSidebarFilter("");
+                    setSidebarFilterOpen(false);
+                  }}
+                >
+                  <Icon.Close size={14} />
+                </button>
+              </div>
+            )}
+            <div className="sidebar-flyout-body scroll-pane">
+              {sidebarFlyout === "shortcuts" &&
+                (shortcutNotes.length === 0 ? (
+                  <div className="empty-state compact">
+                    Star a note to add it to Shortcuts.
+                  </div>
+                ) : (
+                  shortcutNotes.map((note) => (
+                    <button
+                      key={note.id}
+                      type="button"
+                      className={
+                        activeNote?.id === note.id
+                          ? "flyout-item active"
+                          : "flyout-item"
+                      }
+                      onClick={() => {
+                        setFilter({ type: "shortcuts" });
+                        void loadNote(note.id);
+                      }}
+                    >
+                      <span className="flyout-item-title">
+                        {note.title || "Untitled"}
+                      </span>
+                      <span className="flyout-item-meta">
+                        {note.notebook_name}
+                      </span>
+                    </button>
+                  ))
+                ))}
+              {sidebarFlyout === "notebooks" && (
+                <>
+                  {stacks.map((stack) => {
+                    const stacked = notebooksMatchingFilter(
+                      notebooksByStack[stack.id] || [],
+                      stack.name,
+                      sidebarFilter
+                    );
+                    if (!stacked.length) return null;
+                    return (
+                      <div key={stack.id} className="stack-group">
+                        <button
+                          className="stack-name"
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setContextMenu({
+                              kind: "stack",
+                              x: event.clientX,
+                              y: event.clientY,
+                              stack,
+                            });
+                          }}
+                        >
+                          {stack.name}
+                        </button>
+                        {stacked.map((nb) => (
+                          <NotebookNavItem
+                            key={nb.id}
+                            notebook={nb}
+                            active={filter.type === "notebook" && filter.id === nb.id}
+                            isDropTarget={dropTarget === `notebook:${nb.id}`}
+                            onSelect={() =>
+                              setFilter({
+                                type: "notebook",
+                                id: nb.id,
+                                name: nb.name,
+                              })
+                            }
+                            onDragOver={(event) =>
+                              allowNoteDrop(event, `notebook:${nb.id}`)
+                            }
+                            onDragLeave={() => setDropTarget(null)}
+                            onDrop={(event) => void moveDroppedNotes(nb.id, event)}
+                            onContextMenu={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setContextMenu({
+                                kind: "notebook",
+                                x: event.clientX,
+                                y: event.clientY,
+                                notebook: nb,
+                              });
+                            }}
+                          />
+                        ))}
+                      </div>
+                    );
+                  })}
+                  {notebooksMatchingFilter(
+                    notebooksByStack.uncategorized,
+                    null,
+                    sidebarFilter
+                  ).map((nb) => (
+                    <NotebookNavItem
+                      key={nb.id}
+                      notebook={nb}
+                      active={filter.type === "notebook" && filter.id === nb.id}
+                      isDropTarget={dropTarget === `notebook:${nb.id}`}
+                      onSelect={() =>
+                        setFilter({ type: "notebook", id: nb.id, name: nb.name })
+                      }
+                      onDragOver={(event) =>
+                        allowNoteDrop(event, `notebook:${nb.id}`)
+                      }
+                      onDragLeave={() => setDropTarget(null)}
+                      onDrop={(event) => void moveDroppedNotes(nb.id, event)}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setContextMenu({
+                          kind: "notebook",
+                          x: event.clientX,
+                          y: event.clientY,
+                          notebook: nb,
+                        });
+                      }}
+                    />
+                  ))}
+                  {sidebarFilter.trim() &&
+                    !hasVisibleSidebarNotebooks(notebooks, stacks, sidebarFilter) && (
+                      <div className="empty-state compact">No matching notebooks</div>
+                    )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
         <div className="sidebar-account">
           <button
             type="button"
@@ -2314,10 +2746,45 @@ export default function App() {
       />
 
       <section className="note-list-panel">
+        {(searchOpen || filter.type === "search") && (
+          <div className="list-search">
+            <Icon.Search size={15} />
+            <input
+              ref={searchRef}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && searchInput.trim()) {
+                  setFilter({ type: "search", query: searchInput.trim() });
+                }
+                if (e.key === "Escape") {
+                  setSearchOpen(false);
+                  if (filter.type === "search") setFilter({ type: "all" });
+                }
+              }}
+              placeholder="Search notes"
+              aria-label="Search notes"
+            />
+            <button
+              type="button"
+              className="icon-btn"
+              title="Close search"
+              onClick={() => {
+                setSearchOpen(false);
+                setSearchInput("");
+                if (filter.type === "search") setFilter({ type: "all" });
+              }}
+            >
+              <Icon.Close size={14} />
+            </button>
+          </div>
+        )}
         <div className="panel-header">
           <div>
             <h2>{viewTitle}</h2>
-            <span className="count">{notes.length}</span>
+            <span className="count" title="Notes in this view">
+              {notes.length}
+            </span>
           </div>
           <div className="panel-tools">
             {filter.type === "templates" && (
@@ -2385,6 +2852,7 @@ export default function App() {
             </div>
           </div>
         </div>
+        {importStatus && <div className="import-status">{importStatus}</div>}
         {selectedNoteIds.size > 1 && (
           <div className="bulk-bar">
             <span className="selection-count">{selectedNoteIds.size} selected</span>
@@ -2541,6 +3009,24 @@ export default function App() {
       />
 
       <main className="editor-panel">
+        <div className="note-chrome">
+          <button
+            type="button"
+            className={paneLayout.listCollapsed ? "icon-btn active" : "icon-btn"}
+            title={paneLayout.listCollapsed ? "Show note list" : "Hide note list"}
+            onClick={() => persistPaneLayout(toggleNoteListHidden(paneLayout))}
+          >
+            <Icon.HideList size={16} />
+          </button>
+          <button
+            type="button"
+            className={isNoteExpanded(paneLayout) ? "icon-btn active" : "icon-btn"}
+            title={isNoteExpanded(paneLayout) ? "Restore panes" : "Expand note"}
+            onClick={() => persistPaneLayout(toggleNoteExpanded(paneLayout))}
+          >
+            <Icon.ExpandNote size={16} />
+          </button>
+        </div>
         {activeNote ? (
           <div className="editor-body">
           <div className="editor-main">
@@ -2646,6 +3132,14 @@ export default function App() {
                     </button>
                     {showNoteMenu && (
                       <div className="menu-popover right">
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            void openInNewTab(activeNote.id);
+                          }}
+                        >
+                          Open in New Tab
+                        </button>
                         {!activeNote.is_template && (
                           <button
                             onClick={() => {

@@ -31,6 +31,8 @@ const SHORTCUTS = [
   ["Find in note", "Ctrl/⌘ F"],
   ["Find and replace", "Ctrl/⌘ H"],
   ["Search all notes", "Ctrl/⌘ Shift F"],
+  ["Hide / show note list", "Ctrl/⌘ Alt ←"],
+  ["Expand / restore note", "Ctrl/⌘ Alt →"],
   ["Jump to note, notebook, or tag", "Ctrl/⌘ J"],
   ["Print note", "Ctrl/⌘ P"],
   ["Note info", "Ctrl/⌘ Shift I"],
@@ -39,7 +41,9 @@ const SHORTCUTS = [
   ["Actual size", "Ctrl/⌘ 0"],
   ["Settings", "Ctrl/⌘ ,"],
   ["Keyboard shortcuts", "Ctrl/⌘ /"],
-  ["Templates", "Ctrl/⌘ Shift T"],
+  ["New tab", "Ctrl/⌘ Shift T"],
+  ["Open in new tab", "Ctrl/⌘ Alt O"],
+  ["Close tab", "Ctrl/⌘ W"],
   ["Select all notes", "Ctrl/⌘ A"],
   ["Range select notes", "Shift+click"],
   ["Drag-select notes", "Click and drag"],
@@ -48,6 +52,9 @@ const SHORTCUTS = [
   ["Bold", "Ctrl/⌘ B"],
   ["Italic", "Ctrl/⌘ I"],
   ["Underline", "Ctrl/⌘ U"],
+  ["Bulleted list", "Ctrl/⌘ Shift L"],
+  ["Numbered list", "Ctrl/⌘ Shift O"],
+  ["Checklist", "Ctrl/⌘ Shift C"],
   ["Increase indent", "Tab"],
   ["Decrease indent", "Shift+Tab"],
   ["Focus mode", "F11"],
@@ -387,7 +394,6 @@ export function SettingsModal({
                     ["show_tags", "Tags"],
                     ["show_templates", "Templates"],
                     ["show_trash", "Trash"],
-                    ["show_import", "Import"],
                   ] as const
                 ).map(([key, label]) => (
                   <SettingsRow
