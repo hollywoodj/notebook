@@ -16,6 +16,19 @@ import { NoteEditor } from "./components/NoteEditor";
 import { SettingsModal } from "./components/SettingsModal";
 import { TemplateGallery } from "./components/TemplateGallery";
 import { Icon } from "./components/Icons";
+import { ContextMenu, ContextMenuEntry } from "./components/ContextMenu";
+
+type ContextTarget =
+  | { kind: "note"; x: number; y: number; note: NoteSummary }
+  | { kind: "notebook"; x: number; y: number; notebook: Notebook }
+  | { kind: "stack"; x: number; y: number; stack: Stack }
+  | { kind: "tag"; x: number; y: number; tag: Tag }
+  | { kind: "sidebar"; x: number; y: number };
+
+type RenameTarget =
+  | { kind: "notebook"; id: string; name: string }
+  | { kind: "stack"; id: string; name: string }
+  | { kind: "tag"; id: string; name: string };
 
 function formatDate(iso: string, format: Preferences["date_format"]) {
   const options: Intl.DateTimeFormatOptions =
@@ -62,6 +75,9 @@ export default function App() {
   const [showGallery, setShowGallery] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showNoteMenu, setShowNoteMenu] = useState(false);
+  const [contextMenu, setContextMenu] = useState<ContextTarget | null>(null);
+  const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null);
+  const [newNotebookStackId, setNewNotebookStackId] = useState<string | null>(null);
   const [prefs, setPrefs] = useState<Preferences>(defaultPreferences);
   const [account, setAccount] = useState<Account | null>(null);
   const [storage, setStorage] = useState({ database: "", attachments: "" });
@@ -208,6 +224,35 @@ export default function App() {
     [activeNote, refreshNotes, refreshMeta]
   );
 
+  const updateNoteById = async (id: string, patch: Partial<Note>) => {
+    const updated = await api.updateNote(id, {
+      title: patch.title,
+      content: patch.content,
+      notebook_id: patch.notebook_id,
+      is_pinned: patch.is_pinned,
+      is_archived: patch.is_archived,
+      is_template: patch.is_template,
+      template_category: patch.template_category,
+      tag_ids: patch.tag_ids,
+    });
+    if (activeNote?.id === id) setActiveNote(updated);
+    await refreshNotes();
+    return updated;
+  };
+
+  const duplicateNote = async (id: string) => {
+    const source = await api.getNote(id);
+    const duplicate = await api.createNote(source.notebook_id, {
+      title: `${source.title || "Untitled"} copy`,
+      content: source.content,
+      tag_ids: source.tag_ids,
+      is_template: source.is_template,
+      template_category: source.template_category || undefined,
+    });
+    await refreshNotes();
+    await loadNote(duplicate.id);
+  };
+
   useEffect(() => {
     if (!activeNote) return;
     if (skipNextSave.current) {
@@ -223,9 +268,9 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [activeNote?.title, activeNote?.content, prefs.auto_save_ms]);
 
-  const createBlankNote = async () => {
+  const createBlankNote = async (notebookId?: string) => {
     const nbId =
-      filter.type === "notebook" ? filter.id : defaultNotebook?.id;
+      notebookId || (filter.type === "notebook" ? filter.id : defaultNotebook?.id);
     if (!nbId) return;
     const note = await api.createNote(nbId);
     await refreshNotes();
@@ -336,15 +381,289 @@ export default function App() {
 
   const isShortcut = activeNote ? shortcutIds.has(activeNote.id) : false;
 
+  const openRename = (target: RenameTarget) => {
+    setRenameTarget(target);
+    setNewName(target.name);
+  };
+
+  const contextMenuItems = (target: ContextTarget): ContextMenuEntry[] => {
+    if (target.kind === "sidebar") {
+      return [
+        {
+          label: "New note",
+          shortcut: "Ctrl/⌘ N",
+          onSelect: () => void createNote(),
+        },
+        {
+          label: "New notebook…",
+          onSelect: () => {
+            setNewNotebookStackId(null);
+            setNewName("");
+            setShowNewNotebook(true);
+          },
+        },
+        {
+          label: "New tag…",
+          onSelect: () => {
+            setNewName("");
+            setShowNewTag(true);
+          },
+        },
+        { type: "separator" },
+        {
+          label: "Settings…",
+          shortcut: "Ctrl/⌘ ,",
+          onSelect: () => setShowSettings(true),
+        },
+      ];
+    }
+
+    if (target.kind === "note") {
+      const { note } = target;
+      const shortcut = shortcutIds.has(note.id);
+      const inTrash = filter.type === "trash";
+      if (inTrash) {
+        return [
+          {
+            label: "Restore note",
+            onSelect: async () => {
+              await api.restoreNote(note.id);
+              if (activeNote?.id === note.id) setActiveNote(null);
+              await refreshNotes();
+            },
+          },
+          { type: "separator" },
+          {
+            label: "Delete permanently",
+            danger: true,
+            onSelect: async () => {
+              if (!confirm(`Delete “${note.title || "Untitled"}” forever?`)) return;
+              await api.permanentlyDeleteNote(note.id);
+              if (activeNote?.id === note.id) setActiveNote(null);
+              await refreshNotes();
+            },
+          },
+        ];
+      }
+
+      return [
+        { label: "Open note", onSelect: () => void loadNote(note.id) },
+        {
+          label: shortcut ? "Remove from shortcuts" : "Add to shortcuts",
+          onSelect: async () => {
+            if (shortcut) await api.removeShortcut(note.id);
+            else await api.addShortcut(note.id);
+            await refreshMeta();
+            if (filter.type === "shortcuts") await refreshNotes();
+          },
+        },
+        {
+          label: note.is_pinned ? "Unpin from top" : "Pin to top",
+          onSelect: () =>
+            void updateNoteById(note.id, { is_pinned: !note.is_pinned }),
+        },
+        {
+          label: "Move to notebook",
+          children: notebooks.map((notebook) => ({
+            label: notebook.name,
+            checked: notebook.id === note.notebook_id,
+            disabled: notebook.id === note.notebook_id,
+            onSelect: () =>
+              void updateNoteById(note.id, { notebook_id: notebook.id }),
+          })),
+        },
+        { label: "Duplicate note", onSelect: () => void duplicateNote(note.id) },
+        { type: "separator" },
+        {
+          label: note.is_template ? "Convert to note" : "Save as template",
+          onSelect: async () => {
+            await updateNoteById(note.id, {
+              is_template: !note.is_template,
+              template_category: note.is_template ? null : "My templates",
+            });
+            await refreshMeta();
+          },
+        },
+        {
+          label: note.is_archived ? "Unarchive note" : "Archive note",
+          onSelect: () =>
+            void updateNoteById(note.id, { is_archived: !note.is_archived }),
+        },
+        { type: "separator" },
+        {
+          label: "Move to trash",
+          danger: true,
+          onSelect: async () => {
+            if (!confirm(`Move “${note.title || "Untitled"}” to Trash?`)) return;
+            await api.deleteNote(note.id);
+            if (activeNote?.id === note.id) setActiveNote(null);
+            await refreshNotes();
+          },
+        },
+      ];
+    }
+
+    if (target.kind === "notebook") {
+      const { notebook } = target;
+      return [
+        {
+          label: "New note in this notebook",
+          onSelect: () => void createBlankNote(notebook.id),
+        },
+        {
+          label: "Rename notebook…",
+          onSelect: () =>
+            openRename({
+              kind: "notebook",
+              id: notebook.id,
+              name: notebook.name,
+            }),
+        },
+        {
+          label: "Set as default notebook",
+          checked: notebook.is_default,
+          disabled: notebook.is_default,
+          onSelect: async () => {
+            await api.updateNotebook(notebook.id, { is_default: true });
+            const next = await api.updateSettings({
+              default_notebook_id: notebook.id,
+            });
+            setPrefs({ ...defaultPreferences, ...next });
+            await refreshMeta();
+          },
+        },
+        {
+          label: "Move to stack",
+          children: [
+            {
+              label: "No stack",
+              checked: notebook.stack_id === null,
+              disabled: notebook.stack_id === null,
+              onSelect: () =>
+                void api
+                  .updateNotebook(notebook.id, { stack_id: null })
+                  .then(refreshMeta),
+            },
+            { type: "separator" },
+            ...stacks.map((stack) => ({
+              label: stack.name,
+              checked: notebook.stack_id === stack.id,
+              disabled: notebook.stack_id === stack.id,
+              onSelect: () =>
+                void api
+                  .updateNotebook(notebook.id, { stack_id: stack.id })
+                  .then(refreshMeta),
+            })),
+          ],
+        },
+        { type: "separator" },
+        {
+          label: "Delete notebook",
+          danger: true,
+          disabled: notebook.is_default,
+          onSelect: async () => {
+            if (
+              !confirm(
+                `Delete “${notebook.name}”? Notes in this notebook will move to Trash.`
+              )
+            ) {
+              return;
+            }
+            await api.deleteNotebook(notebook.id);
+            if (filter.type === "notebook" && filter.id === notebook.id) {
+              setFilter({ type: "all" });
+            }
+            setActiveNote(null);
+            await refreshMeta();
+            await refreshNotes();
+          },
+        },
+      ];
+    }
+
+    if (target.kind === "stack") {
+      const { stack } = target;
+      return [
+        {
+          label: "New notebook in this stack…",
+          onSelect: () => {
+            setNewNotebookStackId(stack.id);
+            setNewName("");
+            setShowNewNotebook(true);
+          },
+        },
+        {
+          label: "Rename stack…",
+          onSelect: () =>
+            openRename({ kind: "stack", id: stack.id, name: stack.name }),
+        },
+        { type: "separator" },
+        {
+          label: "Delete stack",
+          danger: true,
+          onSelect: async () => {
+            if (
+              !confirm(
+                `Delete “${stack.name}”? Its notebooks and notes will be kept.`
+              )
+            ) {
+              return;
+            }
+            await api.deleteStack(stack.id);
+            await refreshMeta();
+          },
+        },
+      ];
+    }
+
+    const { tag } = target;
+    return [
+      {
+        label: "Show notes with this tag",
+        onSelect: () => setFilter({ type: "tag", id: tag.id, name: tag.name }),
+      },
+      {
+        label: "Rename tag…",
+        onSelect: () =>
+          openRename({ kind: "tag", id: tag.id, name: tag.name }),
+      },
+      { type: "separator" },
+      {
+        label: "Delete tag",
+        danger: true,
+        onSelect: async () => {
+          if (!confirm(`Delete the tag “${tag.name}”?`)) return;
+          await api.deleteTag(tag.id);
+          if (filter.type === "tag" && filter.id === tag.id) {
+            setFilter({ type: "all" });
+          }
+          await refreshMeta();
+          await refreshNotes();
+        },
+      },
+    ];
+  };
+
   return (
     <div
       className="app-shell"
       onMouseDown={() => {
         setShowNewMenu(false);
         setShowNoteMenu(false);
+        setContextMenu(null);
       }}
     >
-      <aside className="sidebar">
+      <aside
+        className="sidebar"
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setContextMenu({
+            kind: "sidebar",
+            x: event.clientX,
+            y: event.clientY,
+          });
+        }}
+      >
         <div className="sidebar-account">
           <div className="account-chip">
             <span className="avatar">{account.display_name.slice(0, 1).toUpperCase()}</span>
@@ -392,6 +711,7 @@ export default function App() {
               <button
                 onClick={() => {
                   setShowNewMenu(false);
+                  setNewNotebookStackId(null);
                   setShowNewNotebook(true);
                 }}
               >
@@ -449,6 +769,7 @@ export default function App() {
                     className="plus"
                     onClick={(e) => {
                       e.stopPropagation();
+                      setNewNotebookStackId(null);
                       setShowNewNotebook(true);
                     }}
                   >
@@ -466,7 +787,21 @@ export default function App() {
                 <>
                   {stacks.map((stack) => (
                     <div key={stack.id} className="stack-group">
-                      <div className="stack-name">{stack.name}</div>
+                      <button
+                        className="stack-name"
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setContextMenu({
+                            kind: "stack",
+                            x: event.clientX,
+                            y: event.clientY,
+                            stack,
+                          });
+                        }}
+                      >
+                        {stack.name}
+                      </button>
                       {(notebooksByStack[stack.id] || []).map((nb) => (
                         <button
                           key={nb.id}
@@ -478,6 +813,16 @@ export default function App() {
                           onClick={() =>
                             setFilter({ type: "notebook", id: nb.id, name: nb.name })
                           }
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setContextMenu({
+                              kind: "notebook",
+                              x: event.clientX,
+                              y: event.clientY,
+                              notebook: nb,
+                            });
+                          }}
                         >
                           {nb.name}
                         </button>
@@ -495,6 +840,16 @@ export default function App() {
                       onClick={() =>
                         setFilter({ type: "notebook", id: nb.id, name: nb.name })
                       }
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setContextMenu({
+                          kind: "notebook",
+                          x: event.clientX,
+                          y: event.clientY,
+                          notebook: nb,
+                        });
+                      }}
                     >
                       {nb.name}
                     </button>
@@ -544,6 +899,16 @@ export default function App() {
                     onClick={() =>
                       setFilter({ type: "tag", id: tag.id, name: tag.name })
                     }
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setContextMenu({
+                        kind: "tag",
+                        x: event.clientX,
+                        y: event.clientY,
+                        tag,
+                      });
+                    }}
                   >
                     #{tag.name}
                   </button>
@@ -698,6 +1063,16 @@ export default function App() {
                 (prefs.list_density === "compact" ? " compact" : "")
               }
               onClick={() => loadNote(note.id)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setContextMenu({
+                  kind: "note",
+                  x: event.clientX,
+                  y: event.clientY,
+                  note,
+                });
+              }}
             >
               <div className="note-card-title">
                 {note.is_pinned && <Icon.Pin size={13} />}
@@ -918,12 +1293,17 @@ export default function App() {
           onChange={setNewName}
           onCancel={() => {
             setShowNewNotebook(false);
+            setNewNotebookStackId(null);
             setNewName("");
           }}
           onSubmit={async () => {
-            await api.createNotebook(newName);
+            await api.createNotebook(
+              newName.trim(),
+              newNotebookStackId || undefined
+            );
             await refreshMeta();
             setShowNewNotebook(false);
+            setNewNotebookStackId(null);
             setNewName("");
           }}
         />
@@ -942,6 +1322,41 @@ export default function App() {
             await api.createTag(newName);
             await refreshMeta();
             setShowNewTag(false);
+            setNewName("");
+          }}
+        />
+      )}
+
+      {renameTarget && (
+        <PromptModal
+          title={`Rename ${renameTarget.kind}`}
+          submitLabel="Save"
+          value={newName}
+          onChange={setNewName}
+          onCancel={() => {
+            setRenameTarget(null);
+            setNewName("");
+          }}
+          onSubmit={async () => {
+            const name = newName.trim();
+            if (renameTarget.kind === "notebook") {
+              await api.updateNotebook(renameTarget.id, { name });
+              if (
+                filter.type === "notebook" &&
+                filter.id === renameTarget.id
+              ) {
+                setFilter({ type: "notebook", id: renameTarget.id, name });
+              }
+            } else if (renameTarget.kind === "stack") {
+              await api.updateStack(renameTarget.id, { name });
+            } else {
+              await api.updateTag(renameTarget.id, { name });
+              if (filter.type === "tag" && filter.id === renameTarget.id) {
+                setFilter({ type: "tag", id: renameTarget.id, name });
+              }
+            }
+            await refreshMeta();
+            setRenameTarget(null);
             setNewName("");
           }}
         />
@@ -1006,18 +1421,29 @@ export default function App() {
           }}
         />
       )}
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenuItems(contextMenu)}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   );
 }
 
 function PromptModal({
   title,
+  submitLabel = "Create",
   value,
   onChange,
   onCancel,
   onSubmit,
 }: {
   title: string;
+  submitLabel?: string;
   value: string;
   onChange: (v: string) => void;
   onCancel: () => void;
@@ -1036,7 +1462,7 @@ function PromptModal({
         <div className="modal-actions">
           <button onClick={onCancel}>Cancel</button>
           <button className="primary-btn" disabled={!value.trim()} onClick={onSubmit}>
-            Create
+            {submitLabel}
           </button>
         </div>
       </div>

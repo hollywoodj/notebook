@@ -163,6 +163,10 @@ impl NotebookService {
         if affected == 0 {
             return Err(NotebookError::NotFound(format!("notebook {id}")));
         }
+        self.db.connection().execute(
+            "UPDATE notes SET deleted_at = ?1, updated_at = ?1 WHERE notebook_id = ?2 AND deleted_at IS NULL",
+            params![now, id.to_string()],
+        )?;
         Ok(())
     }
 
@@ -227,6 +231,27 @@ impl NotebookService {
             )
             .optional()?
             .ok_or_else(|| NotebookError::NotFound(format!("stack {id}")))
+    }
+
+    pub fn update_stack(&self, id: Uuid, req: UpdateStackRequest) -> Result<Stack> {
+        let mut stack = self.get_stack(id)?;
+        if let Some(name) = req.name {
+            stack.name = name;
+        }
+        if let Some(sort_order) = req.sort_order {
+            stack.sort_order = sort_order;
+        }
+        stack.updated_at = Utc::now();
+        self.db.connection().execute(
+            "UPDATE stacks SET name = ?1, sort_order = ?2, updated_at = ?3 WHERE id = ?4",
+            params![
+                stack.name,
+                stack.sort_order,
+                stack.updated_at.to_rfc3339(),
+                id.to_string()
+            ],
+        )?;
+        Ok(stack)
     }
 
     pub fn delete_stack(&self, id: Uuid) -> Result<()> {
@@ -294,6 +319,19 @@ impl NotebookService {
             )
             .optional()?
             .ok_or_else(|| NotebookError::NotFound(format!("tag {id}")))
+    }
+
+    pub fn update_tag(&self, id: Uuid, req: UpdateTagRequest) -> Result<Tag> {
+        let mut tag = self.get_tag(id)?;
+        if let Some(name) = req.name {
+            tag.name = name;
+        }
+        tag.updated_at = Utc::now();
+        self.db.connection().execute(
+            "UPDATE tags SET name = ?1, updated_at = ?2 WHERE id = ?3",
+            params![tag.name, tag.updated_at.to_rfc3339(), id.to_string()],
+        )?;
+        Ok(tag)
     }
 
     pub fn delete_tag(&self, id: Uuid) -> Result<()> {

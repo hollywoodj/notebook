@@ -13,7 +13,8 @@ use axum::{
 use notebook_core::{
     CreateNotebookRequest, CreateNoteRequest, CreateStackRequest, CreateTagRequest, Database,
     EnexImportRequest, HealthResponse, NotebookService, SearchQuery, UpdateNoteRequest,
-    UpdateNotebookRequest, UpdateUserRequest, UseTemplateRequest,
+    UpdateNotebookRequest, UpdateStackRequest, UpdateTagRequest, UpdateUserRequest,
+    UseTemplateRequest,
 };
 use serde::Deserialize;
 use tokio::sync::Mutex;
@@ -95,9 +96,15 @@ fn build_router(state: AppState) -> Router {
         )
         .route("/api/v1/notebooks/:id/restore", post(restore_notebook))
         .route("/api/v1/stacks", get(list_stacks).post(create_stack))
-        .route("/api/v1/stacks/:id", get(get_stack).delete(delete_stack))
+        .route(
+            "/api/v1/stacks/:id",
+            get(get_stack).put(update_stack).delete(delete_stack),
+        )
         .route("/api/v1/tags", get(list_tags).post(create_tag))
-        .route("/api/v1/tags/:id", get(get_tag).delete(delete_tag))
+        .route(
+            "/api/v1/tags/:id",
+            get(get_tag).put(update_tag).delete(delete_tag),
+        )
         .route("/api/v1/notes", get(list_notes).post(create_note))
         .route(
             "/api/v1/notes/:id",
@@ -259,6 +266,15 @@ async fn get_stack(
     Ok(Json(svc.get_stack(id)?))
 }
 
+async fn update_stack(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<UpdateStackRequest>,
+) -> Result<Json<notebook_core::Stack>, AppError> {
+    let svc = state.service.lock().await;
+    Ok(Json(svc.update_stack(id, req)?))
+}
+
 async fn delete_stack(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -289,6 +305,15 @@ async fn get_tag(
 ) -> Result<Json<notebook_core::Tag>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.get_tag(id)?))
+}
+
+async fn update_tag(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<UpdateTagRequest>,
+) -> Result<Json<notebook_core::Tag>, AppError> {
+    let svc = state.service.lock().await;
+    Ok(Json(svc.update_tag(id, req)?))
 }
 
 async fn delete_tag(
@@ -920,5 +945,149 @@ mod tests {
             .unwrap();
         let account: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(account["display_name"], "Jordan");
+    }
+
+    #[tokio::test]
+    async fn manages_context_menu_resources() {
+        let app = test_app("context-menu-resources");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/stacks")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"name":"Projects"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let stack: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/api/v1/stacks/{}", stack["id"].as_str().unwrap()))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"name":"Renamed projects"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let stack: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(stack["name"], "Renamed projects");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/tags")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"name":"todo"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let tag: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/api/v1/tags/{}", tag["id"].as_str().unwrap()))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"name":"next"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let tag: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(tag["name"], "next");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/notebooks")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"name":"Disposable"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let notebook: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let notebook_id = notebook["id"].as_str().unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/notes")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "notebook_id": notebook_id,
+                            "title": "Trash with notebook"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/api/v1/notebooks/{notebook_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/notes?trash=true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let notes: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
+        assert!(notes.iter().any(|note| note["title"] == "Trash with notebook"));
     }
 }
