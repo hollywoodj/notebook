@@ -58,9 +58,8 @@ impl NotebookService {
             }
         }
 
-        let notebook_id = primary_notebook_id.ok_or_else(|| {
-            NotebookError::Other("ENEX file contains no notes".to_string())
-        })?;
+        let notebook_id = primary_notebook_id
+            .ok_or_else(|| NotebookError::Other("ENEX file contains no notes".to_string()))?;
         let notebook_count = notebook_ids.len() as u32;
         let notebook_name = if notebook_count > 1 {
             format!("{} notebooks", notebook_count)
@@ -78,7 +77,11 @@ impl NotebookService {
         })
     }
 
-    pub fn import_enex_file(&self, path: &Path, options: EnexImportRequest) -> Result<EnexImportResult> {
+    pub fn import_enex_file(
+        &self,
+        path: &Path,
+        options: EnexImportRequest,
+    ) -> Result<EnexImportResult> {
         let data = std::fs::read(path).map_err(NotebookError::from)?;
         let mut options = options;
         if options.notebook_name.is_none() {
@@ -89,11 +92,7 @@ impl NotebookService {
         self.import_enex(&data, options)
     }
 
-    fn resolve_import_notebook_by_name(
-        &self,
-        name: &str,
-        stack_id: Option<Uuid>,
-    ) -> Result<Uuid> {
+    fn resolve_import_notebook_by_name(&self, name: &str, stack_id: Option<Uuid>) -> Result<Uuid> {
         let notebooks = self.list_notebooks(false)?;
         if let Some(existing) = notebooks.into_iter().find(|nb| nb.name == name) {
             return Ok(existing.id);
@@ -132,22 +131,31 @@ impl NotebookService {
         })?;
 
         for resource in note.resources {
-            if resource.mime.starts_with("image/") {
+            if enex::is_inline_image(&resource) {
                 continue;
             }
+            let filename = resource
+                .filename
+                .clone()
+                .unwrap_or_else(|| default_attachment_name(&resource.mime));
             let resource_marker = format!("notebook-resource://{}", resource.hash);
+            let was_referenced = html.contains(&resource_marker);
             let attachment = self.add_attachment(
                 created.id,
-                resource
-                    .filename
-                    .unwrap_or_else(|| "attachment".to_string()),
-                resource.mime,
+                filename.clone(),
+                resource.mime.clone(),
                 &resource.data,
             )?;
-            html = html.replace(
-                &resource_marker,
-                &format!("notebook-attachment://{}", attachment.id),
-            );
+            let attachment_href = format!("notebook-attachment://{}", attachment.id);
+            if was_referenced {
+                html = html.replace(&resource_marker, &attachment_href);
+            } else {
+                html.push_str(&enex::file_attachment_html(
+                    &attachment_href,
+                    &filename,
+                    &resource.mime,
+                ));
+            }
         }
 
         if html != created.content {
@@ -167,11 +175,28 @@ impl NotebookService {
         Ok(())
     }
 
-    fn set_note_timestamps(&self, id: Uuid, created_at: DateTime<Utc>, updated_at: DateTime<Utc>) -> Result<()> {
+    fn set_note_timestamps(
+        &self,
+        id: Uuid,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<()> {
         self.db().connection().execute(
             "UPDATE notes SET created_at = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![created_at.to_rfc3339(), updated_at.to_rfc3339(), id.to_string()],
+            rusqlite::params![
+                created_at.to_rfc3339(),
+                updated_at.to_rfc3339(),
+                id.to_string()
+            ],
         )?;
         Ok(())
+    }
+}
+
+fn default_attachment_name(mime: &str) -> String {
+    if enex::looks_like_pdf(mime, None, &[]) {
+        "document.pdf".into()
+    } else {
+        "attachment".into()
     }
 }

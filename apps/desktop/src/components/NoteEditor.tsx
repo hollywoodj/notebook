@@ -9,10 +9,18 @@ import Placeholder from "@tiptap/extension-placeholder";
 import Image from "@tiptap/extension-image";
 import type { JSONContent } from "@tiptap/core";
 import { ReactNode, useEffect, useRef, useState } from "react";
-import { Attachment, attachmentUrl } from "../api";
+import { api, Attachment, attachmentUrl } from "../api";
 import { Icon } from "./Icons";
+import {
+  FileAttachment,
+  contentReferencesAttachment,
+  fileAttachmentNode,
+  isFileAttachment,
+  isPdfFile,
+} from "./fileAttachment";
 
 interface Props {
+  noteId: string;
   content: string;
   onChange: (html: string) => void;
   onAttach: (file: File) => Promise<Attachment>;
@@ -23,7 +31,14 @@ interface Props {
   placeholder?: string;
 }
 
+function formatSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.max(0.1, bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function NoteEditor({
+  noteId,
   content,
   onChange,
   onAttach,
@@ -39,16 +54,23 @@ export function NoteEditor({
   const [uploading, setUploading] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const restoredFilesRef = useRef(false);
+
   const editor = useEditor({
     extensions: [
       StarterKit,
       Underline,
-      Link.configure({ openOnClick: false }),
+      Link.configure({
+        openOnClick: false,
+        HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" },
+      }),
       Highlight,
       TaskList,
       TaskItem.configure({ nested: true }),
       Placeholder.configure({ placeholder }),
       Image.configure({ allowBase64: true }),
+      FileAttachment,
     ],
     content,
     onUpdate: ({ editor }) => onChange(editor.getHTML()),
@@ -64,8 +86,41 @@ export function NoteEditor({
         queueFilesRef.current(files);
         return true;
       },
+      handleClick: (_view, _pos, event) => {
+        const target = event.target as HTMLElement | null;
+        const href = target?.closest("a")?.getAttribute("href");
+        if (
+          href &&
+          (href.includes("/attachments/") || href.startsWith("notebook-attachment://"))
+        ) {
+          event.preventDefault();
+          window.open(href, "_blank", "noopener,noreferrer");
+          return true;
+        }
+        return false;
+      },
     },
   });
+
+  useEffect(() => {
+    restoredFilesRef.current = false;
+    setAttachments([]);
+  }, [noteId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listAttachments(noteId)
+      .then((items) => {
+        if (!cancelled) setAttachments(items);
+      })
+      .catch(() => {
+        if (!cancelled) setAttachments([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [noteId, uploading]);
 
   useEffect(() => {
     if (editor && content !== editor.getHTML()) {
@@ -86,6 +141,25 @@ export function NoteEditor({
     });
   }, [spellCheck, editor]);
 
+  useEffect(() => {
+    if (!editor || restoredFilesRef.current) return;
+    const missing = attachments.filter(
+      (item) =>
+        isFileAttachment(item) &&
+        !contentReferencesAttachment(editor.getHTML(), item.id)
+    );
+    if (!missing.length) {
+      if (attachments.length) restoredFilesRef.current = true;
+      return;
+    }
+    restoredFilesRef.current = true;
+    const nodes: JSONContent[] = missing.map((item) =>
+      fileAttachmentNode(item, attachmentUrl(item.id))
+    );
+    nodes.push({ type: "paragraph" });
+    editor.chain().insertContentAt(editor.state.doc.content.size, nodes).run();
+  }, [attachments, editor]);
+
   if (!editor) return null;
 
   queueFilesRef.current = (files, position) => {
@@ -95,11 +169,21 @@ export function NoteEditor({
     setUploadError(null);
 
     void Promise.all(files.map((file) => onAttach(file)))
-      .then((attachments) => {
+      .then((uploaded) => {
+        setAttachments((current) => {
+          const seen = new Set(current.map((item) => item.id));
+          return [
+            ...current,
+            ...uploaded.filter((item) => !seen.has(item.id)),
+          ];
+        });
         const nodes: JSONContent[] = [];
-        attachments.forEach((attachment) => {
+        uploaded.forEach((attachment) => {
           const url = attachmentUrl(attachment.id);
-          if (attachment.mime_type.startsWith("image/")) {
+          if (
+            attachment.mime_type.startsWith("image/") &&
+            !isPdfFile(attachment.mime_type, attachment.filename)
+          ) {
             nodes.push({
               type: "image",
               attrs: {
@@ -111,25 +195,7 @@ export function NoteEditor({
             return;
           }
 
-          nodes.push({
-            type: "paragraph",
-            content: [
-              {
-                type: "text",
-                text: `📎 ${attachment.filename}`,
-                marks: [
-                  {
-                    type: "link",
-                    attrs: {
-                      href: url,
-                      target: "_blank",
-                      rel: "noopener noreferrer",
-                    },
-                  },
-                ],
-              },
-            ],
-          });
+          nodes.push(fileAttachmentNode(attachment, url));
         });
 
         nodes.push({ type: "paragraph" });
@@ -307,6 +373,28 @@ export function NoteEditor({
           <button type="button" onClick={() => setUploadError(null)}>
             Dismiss
           </button>
+        </div>
+      )}
+      {attachments.filter(isFileAttachment).length > 0 && (
+        <div className="note-attachments">
+          {attachments.filter(isFileAttachment).map((attachment) => (
+            <a
+              key={attachment.id}
+              className={
+                isPdfFile(attachment.mime_type, attachment.filename)
+                  ? "note-attachment-chip is-pdf"
+                  : "note-attachment-chip"
+              }
+              href={attachmentUrl(attachment.id)}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={attachment.filename}
+            >
+              <Icon.Attach size={14} />
+              <span className="note-attachment-name">{attachment.filename}</span>
+              <span className="note-attachment-size">{formatSize(attachment.size)}</span>
+            </a>
+          ))}
         </div>
       )}
       {dragActive && (

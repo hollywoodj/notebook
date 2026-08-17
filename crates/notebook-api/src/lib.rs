@@ -465,14 +465,46 @@ async fn download_attachment(
     let svc = state.service.lock().await;
     let att = svc.get_attachment(id)?;
     let data = svc.read_attachment_data(id)?;
+    let mut content_type = att.mime_type.clone();
+    if looks_like_pdf_attachment(&att.filename, &att.mime_type, &data) {
+        content_type = "application/pdf".to_string();
+    }
+    let disposition = content_disposition(&att.filename);
     Ok((
         [
-            (header::CONTENT_TYPE, att.mime_type),
-            (header::CONTENT_DISPOSITION, "inline".to_string()),
+            (header::CONTENT_TYPE, content_type),
+            (header::CONTENT_DISPOSITION, disposition),
         ],
         data,
     )
         .into_response())
+}
+
+fn looks_like_pdf_attachment(filename: &str, mime: &str, data: &[u8]) -> bool {
+    let mime = mime.to_ascii_lowercase();
+    mime == "application/pdf"
+        || mime == "application/x-pdf"
+        || filename.to_ascii_lowercase().ends_with(".pdf")
+        || data.starts_with(b"%PDF")
+}
+
+fn content_disposition(filename: &str) -> String {
+    let safe: String = filename
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let name = if safe.is_empty() {
+        "attachment".to_string()
+    } else {
+        safe
+    };
+    format!("inline; filename=\"{name}\"")
 }
 
 async fn delete_attachment(
