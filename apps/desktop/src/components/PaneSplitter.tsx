@@ -7,7 +7,8 @@ export function PaneSplitter({
 }: {
   label: string;
   className?: string;
-  onDrag: (delta: number) => void;
+  /** `position` is the pointer offset from the left edge of the pane grid. */
+  onDrag: (delta: number, position: number) => void;
 }) {
   const lastX = useRef<number | null>(null);
 
@@ -28,7 +29,8 @@ export function PaneSplitter({
         }
         const delta = event.clientX - lastX.current;
         lastX.current = event.clientX;
-        if (delta) onDrag(delta);
+        const gridLeft = event.currentTarget.parentElement?.getBoundingClientRect().left ?? 0;
+        if (delta) onDrag(delta, event.clientX - gridLeft);
       }}
       onPointerUp={(event) => {
         lastX.current = null;

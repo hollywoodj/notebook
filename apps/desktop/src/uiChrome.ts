@@ -5,10 +5,8 @@ export const LIST_MAX = 560;
 export const DEFAULT_SIDEBAR_WIDTH = 248;
 export const DEFAULT_LIST_WIDTH = 320;
 export const SIDEBAR_RAIL_WIDTH = 56;
-/** Dragging the splitter below this width snaps the sidebar back to the icon rail. */
+/** Dragging the sidebar edge inside this width snaps it back to the icon rail. */
 export const SIDEBAR_RAIL_SNAP = 140;
-/** Rightward drag needed on the rail before the sidebar pins itself open. */
-export const SIDEBAR_RAIL_RELEASE = 24;
 export const PANE_LAYOUT_KEY = "notebook.paneLayout";
 export const NOTE_DRAG_TYPE = "application/x-notebook-notes";
 export const NOTE_TAB_DRAG_TYPE = "application/x-notebook-tab";
@@ -138,21 +136,20 @@ export function toggleSidebarRail(layout: PaneLayout): PaneLayout {
   return { ...layout, sidebarCollapsed: false, sidebarRail: !layout.sidebarRail };
 }
 
-export function resizeSidebar(layout: PaneLayout, delta: number): PaneLayout {
-  if (isSidebarRail(layout)) {
-    if (delta < SIDEBAR_RAIL_RELEASE) return layout;
-    return { ...layout, sidebarRail: false };
-  }
-  const current = layout.sidebarCollapsed ? SIDEBAR_MIN : layout.sidebarWidth;
-  const width = current + delta;
-  // Dragging left past the narrowest pinned width drops the sidebar back to the rail.
-  if (width < SIDEBAR_RAIL_SNAP || (current <= SIDEBAR_MIN && delta < -2)) {
+/**
+ * Resizes the sidebar to the dragged edge position. Tracking the pointer rather
+ * than accumulating deltas is what lets a drag cross between the rail and a
+ * pinned sidebar, since the pinned width clamps at `SIDEBAR_MIN`.
+ */
+export function resizeSidebarTo(layout: PaneLayout, edge: number): PaneLayout {
+  if (edge < SIDEBAR_RAIL_SNAP) {
     return { ...layout, sidebarCollapsed: false, sidebarRail: true };
   }
   return {
     ...layout,
     sidebarCollapsed: false,
-    sidebarWidth: clampPaneWidth(width, SIDEBAR_MIN, SIDEBAR_MAX),
+    sidebarRail: false,
+    sidebarWidth: clampPaneWidth(edge, SIDEBAR_MIN, SIDEBAR_MAX),
   };
 }
 

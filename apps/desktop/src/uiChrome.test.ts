@@ -29,7 +29,7 @@ import {
   formattingToolbarVisible,
   attachmentsLabel,
   reminderFromPreset,
-  resizeSidebar,
+  resizeSidebarTo,
   resolveListView,
   snippetParts,
   suggestedTags,
@@ -91,28 +91,28 @@ describe("sidebar icon rail", () => {
     assert.equal(toggleSidebarRail(hidden).sidebarCollapsed, false);
   });
 
-  it("keeps the rail until the splitter is dragged clear of it", () => {
+  it("keeps the rail until the sidebar edge is dragged clear of it", () => {
     const rail = defaultPaneLayout();
-    assert.equal(resizeSidebar(rail, 8), rail);
-    assert.equal(resizeSidebar(rail, -20), rail);
-    const released = resizeSidebar(rail, 40);
+    assert.equal(resizeSidebarTo(rail, 100).sidebarRail, true);
+    const released = resizeSidebarTo(rail, 220);
     assert.equal(released.sidebarRail, false);
-    assert.equal(released.sidebarWidth, 248);
+    assert.equal(released.sidebarWidth, 220);
   });
 
   it("snaps a pinned sidebar back to the rail when dragged narrow", () => {
     const pinned = toggleSidebarRail(defaultPaneLayout());
-    assert.equal(resizeSidebar(pinned, -60).sidebarWidth, 188);
-    assert.equal(resizeSidebar(pinned, -60).sidebarRail, false);
-    assert.equal(resizeSidebar(pinned, -140).sidebarRail, true);
-    assert.equal(resizeSidebar(pinned, 400).sidebarWidth, 420);
+    assert.equal(resizeSidebarTo(pinned, 300).sidebarWidth, 300);
+    assert.equal(resizeSidebarTo(pinned, 160).sidebarWidth, 180);
+    assert.equal(resizeSidebarTo(pinned, 160).sidebarRail, false);
+    assert.equal(resizeSidebarTo(pinned, 120).sidebarRail, true);
+    assert.equal(resizeSidebarTo(pinned, 900).sidebarWidth, 420);
   });
 
-  it("snaps to the rail when a drag keeps pushing past the minimum width", () => {
-    const narrow = { ...toggleSidebarRail(defaultPaneLayout()), sidebarWidth: 180 };
-    assert.equal(resizeSidebar(narrow, -6).sidebarRail, true);
-    assert.equal(resizeSidebar(narrow, -1).sidebarRail, false);
-    assert.equal(resizeSidebar(narrow, 20).sidebarWidth, 200);
+  it("brings a hidden sidebar back when its edge is dragged", () => {
+    const hidden = { ...defaultPaneLayout(), sidebarCollapsed: true };
+    assert.equal(resizeSidebarTo(hidden, 100).sidebarCollapsed, false);
+    assert.equal(resizeSidebarTo(hidden, 100).sidebarRail, true);
+    assert.equal(resizeSidebarTo(hidden, 260).sidebarWidth, 260);
   });
 });
 

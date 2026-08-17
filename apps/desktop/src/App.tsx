@@ -73,7 +73,7 @@ import {
   parsePaneLayout,
   reminderFromPreset,
   reorderById,
-  resizeSidebar,
+  resizeSidebarTo,
   resolveListView,
   safeFilename,
   snippetParts,
@@ -2769,7 +2769,7 @@ export default function App() {
       <PaneSplitter
         className="sidebar-splitter"
         label="Resize sidebar"
-        onDrag={(delta) => persistPaneLayout(resizeSidebar(paneLayout, delta))}
+        onDrag={(_delta, position) => persistPaneLayout(resizeSidebarTo(paneLayout, position))}
       />
 
       <section className="note-list-panel">
