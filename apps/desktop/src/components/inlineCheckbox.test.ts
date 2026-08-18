@@ -30,6 +30,9 @@ describe("note list and checkbox commands", () => {
     assert.match(editorSource, /toggleTaskList/);
     assert.match(editorSource, /insertInlineCheckbox/);
     assert.match(editorSource, /InlineCheckbox/);
+    assert.match(editorSource, /toolbar-overflow/);
+    assert.match(editorSource, /setFontFamily/);
+    assert.match(editorSource, /Open link/);
   });
 
   it("exposes checklist, insert checkbox, quote, code, and justify in Format", () => {
@@ -39,6 +42,8 @@ describe("note list and checkbox commands", () => {
     assert.match(menuSource, /label: "Code Block"/);
     assert.match(menuSource, /label: "Inline Code"/);
     assert.match(menuSource, /label: "Justify"/);
+    assert.match(menuSource, /label: "Superscript"/);
+    assert.match(menuSource, /label: "Callout"/);
     assert.equal(appSource.includes("Checkbox List"), false);
   });
 });

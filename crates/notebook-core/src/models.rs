@@ -95,6 +95,12 @@ pub struct NoteSummary {
     pub tag_names: Vec<String>,
     pub attachment_count: i32,
     #[serde(default)]
+    pub thumbnail_url: Option<String>,
+    #[serde(default)]
+    pub checklist_done: i32,
+    #[serde(default)]
+    pub checklist_total: i32,
+    #[serde(default)]
     pub is_template: bool,
     pub template_category: Option<String>,
     pub notebook_name: String,

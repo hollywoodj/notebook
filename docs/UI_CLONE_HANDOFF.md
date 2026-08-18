@@ -1,6 +1,6 @@
 # Evernote UI clone handoff
 
-This log is for future sessions continuing the exact-clone work. Passes 1–4 each closed ten visible Evernote desktop gaps. The goal remains pixel-and-behavior parity with Evernote’s three-pane desktop app (no AI).
+This log is for future sessions continuing the exact-clone work. Passes 1–8 each closed visible Evernote desktop gaps. The goal remains pixel-and-behavior parity with Evernote’s three-pane desktop app (no AI).
 
 ## Closed so far
 
@@ -64,6 +64,30 @@ This log is for future sessions continuing the exact-clone work. Passes 1–4 ea
 4. Clicking the section that is already open closes its panel; Escape and a click outside the sidebar close it too
 5. View menu gained **Notebooks** and **Tags** entries that open the matching panel
 
+### Pass 7
+1. **Compact toolbar overflow** (`…`) when the formatting bar is too narrow
+2. **Font family and size** dropdowns in the toolbar (and a Format → Font menu)
+3. **Nested Format menus** for Highlight, Text Color, Align, and Table
+4. **Card thumbnails** from the first image attachment or inline image
+5. **List metadata** as its own row: reminder time, attachment count, checklist progress
+6. **Recent searches** under Search, persisted locally
+7. **Filter chips** for Has reminder and Has attachment
+8. **Link dialog** Open / Copy, and display text is always applied
+9. **Account chip popover** with a hashed avatar color, Account, Settings, and theme
+10. **Collapse / expand stacks** (click, context menu, View menu)
+
+### Pass 8 (this session)
+1. **J / K** note-list navigation when a text field is not focused (arrows still work)
+2. **Note outline / table of contents** from headings (View menu; persisted)
+3. **Superscript and subscript** in the toolbar and Format menu
+4. **Callout boxes** (info / warning / tip)
+5. **Copy as** rich text, plain text, or Markdown
+6. **Export as Markdown** (File, Note, and note context)
+7. **Export notebook as Evernote XML** from the notebook context menu
+8. **Search operators** `notebook:`, `tag:`, `intitle:`, `reminder:`, `todo:` plus search-in-this-notebook
+9. **Date range filter chips**: Today / This week / This month
+10. **Snooze reminder**: Later today (+3h) and Tomorrow morning (9am)
+
 ## Where to look
 
 - Chrome helpers and tests: `apps/desktop/src/uiChrome.ts`, `apps/desktop/src/uiChrome.test.ts`
@@ -79,54 +103,41 @@ Run desktop checks from `apps/desktop`: `npm test` and `npx tsc --noEmit`.
 Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the product scope changes.
 
 ### High-visibility chrome
-- Compact toolbar overflow (`…`) when the window is narrow
 - Always on top
-- Account chip already lives in the footer; match avatar color / popover more closely if needed
+- Account chip already lives in the footer with a popover; match Evernote’s signed-in menu more closely if needed
 
 ### Note list
-- **Thumbnails** in Cards view (first image attachment / inline image)
-- Attachment count, checklist progress, and reminder time as distinct list metadata (not only icons)
-- Saved searches / recent searches under Search
-- Filter chips: has reminder, has attachment, created/updated date range
-- Drag to reorder notebooks and tags; collapse/expand all stacks
+- Saved searches (named), not only recent searches
+- Drag to reorder notebooks and tags
 - Hover preview of a note (optional; Evernote v10 is weaker here, legacy is stronger)
 
 ### Editor
-- Table of contents / outline for headings
-- Font family and size **in the toolbar** (prefs exist only in Settings today)
-- Justify alignment, inline code, superscript/subscript
-- Callout / colored info boxes
-- Insert checkbox without converting the whole block to a task list (Evernote mixed checklists)
-- Better link dialog: display text always applied to an existing selection; open/copy link
+- Justify alignment, inline code, superscript/subscript, and callouts exist; remaining: image resize handles and captions
+- Insert checkbox without converting the whole block to a task list (inline checkbox exists)
 - Paste from Word/Google Docs with fewer extra spans
 - Spellcheck underline styling; language picker
 - Code block language label
-- Image resize handles and border; caption under images
 - Audio notes / sketches / handwritten — out of scope unless requested
 
 ### Reminders & tasks
 - Dedicated reminders calendar / agenda view
-- Snooze (later today, tomorrow morning) from the list
 - Mark reminder done without deleting the datetime
 - Evernote Tasks are a separate product surface; only add if cloning that explicitly
 
 ### Search
-- Operators in the search box: `notebook:`, `tag:`, `intitle:`, `reminder:`, `todo:`
-- Search results grouping and “search in this notebook”
+- Named saved searches
+- Search results grouping
 
 ### Import / export / files
-- Export selected notes as PDF / Markdown
-- Copy note as rich text / plain text / Markdown
+- Export selected notes as PDF
 - Email note (mailto with HTML body)
-- ENEX export of a whole notebook from the notebook context menu
 - PDF annotate / ink — not needed for a notes clone unless requested
 
 ### Keyboard & power user
 - Command palette beyond Jump to (actions: new note, merge, export, settings)
-- `J` / `K` note navigation when the list is focused
 - Go to notebook (`Ctrl/⌘ Alt J` style)
 - Customizable shortcuts
-- Menu bar nested submenus (Format → Align, Format → Table) instead of a long flat list
+- Nest remaining menus the way Format now nests Align / Table / Color / Callout
 
 ### Settings & theming
 - Note list density + view persisted together more cleanly (`list_view` now exists; `show_snippets` is derived)
@@ -144,6 +155,8 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 - Table Tab vs indent: indent yields to the table extension; re-test nested lists inside table cells
 - Jump To currently lists non-template notes only; consider templates and trash as optional groups
 - Toolbar hide + attach: media button is in the toolbar; drag-and-drop still works when hidden
+- Toolbar overflow should be re-checked in a narrow window; font dropdowns take extra width
+- Card thumbnails depend on the first image attachment or an `<img>` in the note body
 
 ## Intentionally out of scope
 

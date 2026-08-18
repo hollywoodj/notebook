@@ -9,7 +9,8 @@ use crate::models::NoteSummary;
 
 const SUMMARY_SELECT: &str = "SELECT n.id, n.notebook_id, n.title, n.content_plain, n.is_pinned, n.is_archived, n.reminder_at, n.created_at, n.updated_at,
              (SELECT COUNT(*) FROM attachments a WHERE a.note_id = n.id) as attachment_count,
-             n.is_template, n.template_category, nb.name
+             n.is_template, n.template_category, nb.name, n.content,
+             (SELECT a.id FROM attachments a WHERE a.note_id = n.id AND a.mime_type LIKE 'image/%' ORDER BY a.created_at LIMIT 1) as thumbnail_attachment_id
              FROM notes n JOIN notebooks nb ON nb.id = n.notebook_id";
 
 pub struct NoteListFilter {
@@ -35,12 +36,17 @@ struct SummaryRow {
     is_template: bool,
     template_category: Option<String>,
     notebook_name: String,
+    thumbnail_url: Option<String>,
+    checklist_done: i32,
+    checklist_total: i32,
 }
 
 impl SummaryRow {
     fn from_sql(row: &Row<'_>) -> rusqlite::Result<Self> {
         let content_plain: String = row.get(3)?;
         let snippet: String = content_plain.chars().take(200).collect();
+        let content: String = row.get(13)?;
+        let (checklist_done, checklist_total) = checklist_progress(&content);
         Ok(Self {
             id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
             notebook_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap(),
@@ -55,8 +61,58 @@ impl SummaryRow {
             is_template: row.get::<_, i32>(10)? != 0,
             template_category: row.get(11)?,
             notebook_name: row.get(12)?,
+            thumbnail_url: resolve_thumbnail(row.get::<_, Option<String>>(14)?, &content),
+            checklist_done,
+            checklist_total,
         })
     }
+}
+
+pub fn first_image_src(content: &str) -> Option<String> {
+    let lower = content.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(rel) = lower[from..].find("<img") {
+        let start = from + rel;
+        let rest = &content[start..];
+        let rest_lower = rest.to_ascii_lowercase();
+        if let Some(src_rel) = rest_lower.find("src=") {
+            let after = rest[src_rel + 4..].trim_start();
+            let quote = after.chars().next().unwrap_or('\0');
+            if quote == '"' || quote == '\'' {
+                if let Some(end) = after[1..].find(quote) {
+                    let src = after[1..1 + end].trim();
+                    if !src.is_empty() {
+                        return Some(src.to_string());
+                    }
+                }
+            }
+        }
+        from = start + 4;
+        if from >= content.len() {
+            break;
+        }
+    }
+    None
+}
+
+pub fn checklist_progress(content: &str) -> (i32, i32) {
+    let task_total = content.matches("data-type=\"taskItem\"").count()
+        + content.matches("data-type='taskItem'").count();
+    let inline_total = content.matches("data-inline-checkbox").count();
+    let total = (task_total + inline_total) as i32;
+    if total == 0 {
+        return (0, 0);
+    }
+    let done = (content.matches("data-checked=\"true\"").count()
+        + content.matches("data-checked='true'").count()) as i32;
+    (done.min(total), total)
+}
+
+fn resolve_thumbnail(attachment_id: Option<String>, content: &str) -> Option<String> {
+    if let Some(id) = attachment_id.filter(|value| !value.is_empty()) {
+        return Some(id);
+    }
+    first_image_src(content)
 }
 
 pub fn list_summaries(conn: &Connection, filter: NoteListFilter) -> Result<Vec<NoteSummary>> {
@@ -179,9 +235,46 @@ fn hydrate_summaries(conn: &Connection, rows: Vec<SummaryRow>) -> Result<Vec<Not
                 is_template: row.is_template,
                 template_category: row.template_category,
                 notebook_name: row.notebook_name,
+                thumbnail_url: row.thumbnail_url,
+                checklist_done: row.checklist_done,
+                checklist_total: row.checklist_total,
                 created_at: parse_dt(&row.created)?,
                 updated_at: parse_dt(&row.updated)?,
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{checklist_progress, first_image_src, resolve_thumbnail};
+
+    #[test]
+    fn first_image_src_reads_quoted_html() {
+        assert_eq!(
+            first_image_src(r#"<p>Hi</p><img alt="x" src="https://cdn.example/pic.png">"#)
+                .as_deref(),
+            Some("https://cdn.example/pic.png")
+        );
+        assert_eq!(first_image_src("<p>none</p>"), None);
+    }
+
+    #[test]
+    fn checklist_progress_counts_task_items_and_inline_boxes() {
+        let html = r#"<ul data-type="taskList"><li data-type="taskItem" data-checked="true">a</li><li data-type="taskItem" data-checked="false">b</li></ul><input data-inline-checkbox="true" data-checked="true">"#;
+        assert_eq!(checklist_progress(html), (2, 3));
+        assert_eq!(checklist_progress("<p>plain</p>"), (0, 0));
+    }
+
+    #[test]
+    fn resolve_thumbnail_prefers_an_image_attachment() {
+        assert_eq!(
+            resolve_thumbnail(Some("att-1".into()), r#"<img src="https://x/y.png">"#).as_deref(),
+            Some("att-1")
+        );
+        assert_eq!(
+            resolve_thumbnail(None, r#"<img src="https://x/y.png">"#).as_deref(),
+            Some("https://x/y.png")
+        );
+    }
 }

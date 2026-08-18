@@ -6,12 +6,16 @@ export function LinkDialog({
   onCancel,
   onSave,
   onRemove,
+  onOpen,
+  onCopy,
 }: {
   href?: string;
   text?: string;
   onCancel: () => void;
   onSave: (href: string, text: string) => void;
   onRemove?: () => void;
+  onOpen?: (href: string) => void;
+  onCopy?: (href: string) => void;
 }) {
   const [url, setUrl] = useState(href);
   const [label, setLabel] = useState(text);
@@ -56,10 +60,24 @@ export function LinkDialog({
           <span>Text</span>
           <input
             value={label}
-            placeholder="Optional"
+            placeholder="Display text"
             onChange={(event) => setLabel(event.target.value)}
           />
         </label>
+        {href && (onOpen || onCopy) ? (
+          <div className="modal-link-actions">
+            {onOpen ? (
+              <button type="button" className="ghost-btn small" onClick={() => onOpen(url.trim() || href)}>
+                Open
+              </button>
+            ) : null}
+            {onCopy ? (
+              <button type="button" className="ghost-btn small" onClick={() => onCopy(url.trim() || href)}>
+                Copy
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         <div className="modal-actions">
           {href && onRemove ? (
             <button type="button" className="danger-text" onClick={onRemove}>

@@ -23,6 +23,7 @@ import {
   type PaneLayout,
   type SidebarFlyout,
   type SidebarFlyoutKind,
+  type SnoozePreset,
   TEXT_COLORS,
   dispatchEditorCommand,
   isNoteExpanded,
@@ -87,8 +88,12 @@ export type AppMenuContext = {
   pinSelectedNotes: (pinned: boolean) => void;
   duplicateSelectedNotes: () => void;
   mergeSelectedNotes: () => void;
-  exportSelectedNotes: (format: "html" | "enex") => void;
+  exportSelectedNotes: (format: "html" | "enex" | "markdown") => void;
   archiveSelectedNotes: (archived: boolean) => void;
+  copyActiveNoteAs: (format: "rich" | "plain" | "markdown") => void;
+  exportNotebook: (notebookId: string, name: string) => void;
+  snoozeReminder: (kind: SnoozePreset) => void;
+  searchInNotebook: (notebook: { id: string; name: string }) => void;
   updateNoteById: (id: string, patch: Partial<Note>) => Promise<unknown>;
   refreshMeta: () => Promise<void>;
   refreshNotes: () => Promise<void>;
@@ -107,6 +112,10 @@ export type AppMenuContext = {
   deleteTag: (tag: { id: string; name: string }) => void | Promise<void>;
   restoreTemplates: () => void | Promise<void>;
   toggleTheme: () => void;
+  collapsedStacks: string[];
+  toggleStackCollapsed: (id: string) => void;
+  collapseAllStacks: () => void;
+  expandAllStacks: () => void;
 };
 
 export function runEditorCommand(command: EditorCommand) {
@@ -239,6 +248,48 @@ export function buildContextMenu(
         label: count > 1 ? "Export notes as Evernote XML" : "Export as Evernote XML",
         onSelect: () => void ctx.exportSelectedNotes("enex"),
       },
+      {
+        label: count > 1 ? "Export notes as Markdown" : "Export as Markdown",
+        onSelect: () => void ctx.exportSelectedNotes("markdown"),
+      },
+      ...(count === 1
+        ? [
+            {
+              label: "Copy as",
+              children: [
+                {
+                  label: "Rich Text",
+                  onSelect: () => void ctx.copyActiveNoteAs("rich"),
+                },
+                {
+                  label: "Plain Text",
+                  onSelect: () => void ctx.copyActiveNoteAs("plain"),
+                },
+                {
+                  label: "Markdown",
+                  onSelect: () => void ctx.copyActiveNoteAs("markdown"),
+                },
+              ],
+            },
+          ]
+        : []),
+      ...(targets.some((note) => note.reminder_at)
+        ? [
+            {
+              label: "Snooze reminder",
+              children: [
+                {
+                  label: "Later today",
+                  onSelect: () => void ctx.snoozeReminder("laterToday"),
+                },
+                {
+                  label: "Tomorrow morning",
+                  onSelect: () => void ctx.snoozeReminder("tomorrowMorning"),
+                },
+              ],
+            },
+          ]
+        : []),
       ...(count === 1
         ? [
             {
@@ -330,6 +381,14 @@ export function buildContextMenu(
           })),
         ],
       },
+      {
+        label: "Search in this notebook",
+        onSelect: () => ctx.searchInNotebook({ id: notebook.id, name: notebook.name }),
+      },
+      {
+        label: "Export notebook as Evernote XML",
+        onSelect: () => void ctx.exportNotebook(notebook.id, notebook.name),
+      },
       { type: "separator" },
       {
         label: "Delete notebook",
@@ -355,6 +414,20 @@ export function buildContextMenu(
         label: "Rename stack…",
         onSelect: () =>
           ctx.openRename({ kind: "stack", id: stack.id, name: stack.name }),
+      },
+      {
+        label: ctx.collapsedStacks.includes(stack.id) ? "Expand stack" : "Collapse stack",
+        onSelect: () => ctx.toggleStackCollapsed(stack.id),
+      },
+      {
+        label: "Collapse all stacks",
+        disabled: ctx.stacks.length === 0,
+        onSelect: ctx.collapseAllStacks,
+      },
+      {
+        label: "Expand all stacks",
+        disabled: ctx.collapsedStacks.length === 0,
+        onSelect: ctx.expandAllStacks,
       },
       { type: "separator" },
       {
@@ -440,6 +513,32 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: "Export as Evernote XML…",
           disabled: ctx.targetNoteIds().length === 0,
           onSelect: () => void ctx.exportSelectedNotes("enex"),
+        },
+        {
+          label: "Export as Markdown…",
+          disabled: ctx.targetNoteIds().length === 0,
+          onSelect: () => void ctx.exportSelectedNotes("markdown"),
+        },
+        {
+          label: "Copy as",
+          disabled: !ctx.activeNote,
+          children: [
+            {
+              label: "Rich Text",
+              disabled: !ctx.activeNote,
+              onSelect: () => void ctx.copyActiveNoteAs("rich"),
+            },
+            {
+              label: "Plain Text",
+              disabled: !ctx.activeNote,
+              onSelect: () => void ctx.copyActiveNoteAs("plain"),
+            },
+            {
+              label: "Markdown",
+              disabled: !ctx.activeNote,
+              onSelect: () => void ctx.copyActiveNoteAs("markdown"),
+            },
+          ],
         },
         {
           label: "Print…",
@@ -544,6 +643,15 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
             }),
         },
         {
+          label: ctx.editorChrome.outlineOpen ? "Hide Note Outline" : "Show Note Outline",
+          disabled: !ctx.activeNote,
+          onSelect: () =>
+            ctx.persistEditorChrome({
+              ...ctx.editorChrome,
+              outlineOpen: !ctx.editorChrome.outlineOpen,
+            }),
+        },
+        {
           label: ctx.editorChrome.attachmentsExpanded
             ? "Hide Attachments"
             : "Show Attachments",
@@ -619,6 +727,17 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: ctx.prefs.theme === "dark" ? "Use Light Theme" : "Use Dark Theme",
           onSelect: () => ctx.toggleTheme(),
         },
+        { type: "separator" },
+        {
+          label: "Collapse All Stacks",
+          disabled: ctx.stacks.length === 0,
+          onSelect: ctx.collapseAllStacks,
+        },
+        {
+          label: "Expand All Stacks",
+          disabled: ctx.collapsedStacks.length === 0,
+          onSelect: ctx.expandAllStacks,
+        },
       ],
     },
     {
@@ -676,6 +795,32 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: "Copy to Notebook…",
           disabled: ctx.targetNoteIds().length === 0 || ctx.filter.type === "trash",
           onSelect: () => ctx.setNotebookPicker("copy"),
+        },
+        {
+          label: "Copy as",
+          disabled: !ctx.activeNote,
+          children: [
+            {
+              label: "Rich Text",
+              disabled: !ctx.activeNote,
+              onSelect: () => void ctx.copyActiveNoteAs("rich"),
+            },
+            {
+              label: "Plain Text",
+              disabled: !ctx.activeNote,
+              onSelect: () => void ctx.copyActiveNoteAs("plain"),
+            },
+            {
+              label: "Markdown",
+              disabled: !ctx.activeNote,
+              onSelect: () => void ctx.copyActiveNoteAs("markdown"),
+            },
+          ],
+        },
+        {
+          label: "Export as Markdown…",
+          disabled: ctx.targetNoteIds().length === 0,
+          onSelect: () => void ctx.exportSelectedNotes("markdown"),
         },
         {
           label: "Set Reminder",
@@ -741,6 +886,23 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
       label: "Format",
       items: [
         {
+          label: "Font",
+          disabled: !ctx.activeNote,
+          children: [
+            { label: "Default", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontFamily" }) },
+            { label: "Sans Serif", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontFamily", family: "Arial, sans-serif" }) },
+            { label: "Serif", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontFamily", family: "Georgia, \"Times New Roman\", serif" }) },
+            { label: "Monospace", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontFamily", family: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" }) },
+            { type: "separator" },
+            { label: "12", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize", size: "12px" }) },
+            { label: "16", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize", size: "16px" }) },
+            { label: "18", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize", size: "18px" }) },
+            { label: "24", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize", size: "24px" }) },
+            { label: "Reset Size", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize" }) },
+          ],
+        },
+        { type: "separator" },
+        {
           label: "Heading 1",
           disabled: !ctx.activeNote,
           onSelect: () => runEditorCommand({ type: "heading", level: 1 }),
@@ -779,43 +941,75 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           disabled: !ctx.activeNote,
           onSelect: () => runEditorCommand({ type: "strike" }),
         },
-        { type: "separator" },
-        ...HIGHLIGHT_COLORS.map((swatch) => ({
-          label: `Highlight ${swatch.label}`,
-          disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "highlight", color: swatch.color }),
-        })),
-        { type: "separator" },
-        ...TEXT_COLORS.filter((swatch) => swatch.color).map((swatch) => ({
-          label: `Text ${swatch.label}`,
-          disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "color", color: swatch.color }),
-        })),
         {
-          label: "Remove Text Color",
+          label: "Superscript",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "color" }),
+          onSelect: () => runEditorCommand({ type: "superscript" }),
+        },
+        {
+          label: "Subscript",
+          disabled: !ctx.activeNote,
+          onSelect: () => runEditorCommand({ type: "subscript" }),
         },
         { type: "separator" },
         {
-          label: "Align Left",
+          label: "Highlight",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "align", align: "left" }),
+          children: [
+            ...HIGHLIGHT_COLORS.map((swatch) => ({
+              label: swatch.label,
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "highlight", color: swatch.color }),
+            })),
+            {
+              label: "Remove Highlight",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "highlight" }),
+            },
+          ],
         },
         {
-          label: "Align Center",
+          label: "Text Color",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "align", align: "center" }),
+          children: [
+            ...TEXT_COLORS.filter((swatch) => swatch.color).map((swatch) => ({
+              label: swatch.label,
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "color", color: swatch.color }),
+            })),
+            {
+              label: "Remove Text Color",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "color" }),
+            },
+          ],
         },
+        { type: "separator" },
         {
-          label: "Align Right",
+          label: "Align",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "align", align: "right" }),
-        },
-        {
-          label: "Justify",
-          disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "align", align: "justify" }),
+          children: [
+            {
+              label: "Align Left",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "align", align: "left" }),
+            },
+            {
+              label: "Align Center",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "align", align: "center" }),
+            },
+            {
+              label: "Align Right",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "align", align: "right" }),
+            },
+            {
+              label: "Justify",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "align", align: "justify" }),
+            },
+          ],
         },
         {
           label: "Increase Indent",
@@ -831,9 +1025,40 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         },
         { type: "separator" },
         {
-          label: "Insert Table",
+          label: "Table",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "insertTable" }),
+          children: [
+            {
+              label: "Insert Table",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "insertTable" }),
+            },
+            {
+              label: "Add Row Below",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "tableAction", action: "addRow" }),
+            },
+            {
+              label: "Add Column Right",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "tableAction", action: "addColumn" }),
+            },
+            {
+              label: "Delete Row",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "tableAction", action: "deleteRow" }),
+            },
+            {
+              label: "Delete Column",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "tableAction", action: "deleteColumn" }),
+            },
+            {
+              label: "Delete Table",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "tableAction", action: "deleteTable" }),
+            },
+          ],
         },
         {
           label: "Insert Link…",
@@ -869,6 +1094,27 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: "Quote",
           disabled: !ctx.activeNote,
           onSelect: () => runEditorCommand({ type: "blockquote" }),
+        },
+        {
+          label: "Callout",
+          disabled: !ctx.activeNote,
+          children: [
+            {
+              label: "Info",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "callout", kind: "info" }),
+            },
+            {
+              label: "Warning",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "callout", kind: "warning" }),
+            },
+            {
+              label: "Tip",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "callout", kind: "tip" }),
+            },
+          ],
         },
         {
           label: "Code Block",

@@ -35,6 +35,8 @@ const SHORTCUTS = [
   ["Hide / show note list", "Ctrl/⌘ Alt ←"],
   ["Expand / restore note", "Ctrl/⌘ Alt →"],
   ["Jump to note, notebook, or tag", "Ctrl/⌘ J"],
+  ["Next note", "↓ or J"],
+  ["Previous note", "↑ or K"],
   ["Print note", "Ctrl/⌘ P"],
   ["Note info", "Ctrl/⌘ Shift I"],
   ["Zoom in", "Ctrl/⌘ +"],

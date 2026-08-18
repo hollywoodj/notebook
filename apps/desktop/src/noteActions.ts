@@ -3,6 +3,7 @@ import type { Note, NoteSummary, Preferences, ViewFilter } from "./api.ts";
 import { batchConfirmMessage } from "./noteSelection.ts";
 import {
   downloadTextFile,
+  htmlToMarkdown,
   mergeNoteBodies,
   notesToEnex,
   notesToHtmlDocument,
@@ -300,7 +301,7 @@ export function createNoteActions(deps: NoteActionDeps) {
     await deps.loadNote(keep.id);
   };
 
-  const exportSelectedNotes = async (format: "html" | "enex") => {
+  const exportSelectedNotes = async (format: "html" | "enex" | "markdown") => {
     const ids = targetNoteIds();
     if (!ids.length) return;
     const full: Note[] = [];
@@ -320,6 +321,21 @@ export function createNoteActions(deps: NoteActionDeps) {
         .map((note) => notesToHtmlDocument(note.title, note.content))
         .join("\n");
       downloadTextFile("notes.html", html, "text/html");
+      return;
+    }
+    if (format === "markdown") {
+      if (full.length === 1) {
+        downloadTextFile(
+          `${safeFilename(full[0].title)}.md`,
+          htmlToMarkdown(full[0].content),
+          "text/markdown"
+        );
+        return;
+      }
+      const markdown = full
+        .map((note) => `# ${note.title || "Untitled"}\n\n${htmlToMarkdown(note.content)}`)
+        .join("\n\n---\n\n");
+      downloadTextFile("notes.md", markdown, "text/markdown");
       return;
     }
     downloadTextFile(

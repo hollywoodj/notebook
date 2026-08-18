@@ -26,18 +26,37 @@ import {
   notesToEnex,
   parseEditorChrome,
   parsePaneLayout,
+  parseRecentSearches,
+  parseCollapsedStacks,
+  parseSearchQuery,
   formattingToolbarVisible,
   attachmentsLabel,
+  attachmentCountLabel,
+  avatarColor,
+  checklistProgressLabel,
+  collapseAllIds,
+  headingsFromHtml,
+  htmlToMarkdown,
+  htmlToPlainText,
+  noteMatchesDateRange,
+  noteMatchesFacets,
+  noteMatchesSearchOperators,
+  rememberSearch,
   reminderFromPreset,
+  reminderFromSnooze,
   resizeSidebarTo,
   resolveListView,
+  resolveThumbnailUrl,
   snippetParts,
   suggestedTags,
   toDatetimeLocalValue,
   toEnexTimestamp,
+  toggleCollapsedId,
+  toggleListFacet,
   toggleNoteExpanded,
   toggleNoteListHidden,
   toggleSidebarRail,
+  visibleToolbarCount,
   windowTitleForNote,
   createNoteTab,
   noteTabLabel,
@@ -360,6 +379,11 @@ describe("editor chrome", () => {
     assert.equal(chrome.zoom, 130);
     assert.equal(parseEditorChrome("{}").attachmentsExpanded, false);
     assert.equal(parseEditorChrome("{").zoom, 100);
+    assert.equal(parseEditorChrome("{}").outlineOpen, false);
+    assert.equal(
+      parseEditorChrome(JSON.stringify({ outlineOpen: true })).outlineOpen,
+      true
+    );
   });
 
   it("hides the formatting toolbar until the note body is focused", () => {
@@ -448,5 +472,149 @@ describe("sidebar filter", () => {
       hasVisibleSidebarNotebooks([{ name: "Work" }], [{ name: "Personal" }], "zzz"),
       false
     );
+  });
+});
+
+describe("visibleToolbarCount", () => {
+  it("keeps every item when they fit, otherwise hides from the end behind overflow", () => {
+    assert.equal(visibleToolbarCount(400, [40, 40, 40, 40]), 4);
+    assert.equal(visibleToolbarCount(120, [40, 40, 40, 40], 30), 2);
+    assert.equal(visibleToolbarCount(20, [40, 40], 30), 0);
+  });
+});
+
+describe("recent searches", () => {
+  it("moves a repeated query to the front and caps the list", () => {
+    assert.deepEqual(rememberSearch(["alpha", "beta"], "Beta"), ["Beta", "alpha"]);
+    assert.deepEqual(rememberSearch(["a", "b", "c"], "d", 3), ["d", "a", "b"]);
+    assert.deepEqual(parseRecentSearches(JSON.stringify([" invoice ", ""])), ["invoice"]);
+    assert.deepEqual(parseRecentSearches("{"), []);
+  });
+});
+
+describe("note list facets", () => {
+  it("filters notes that have a reminder or attachment", () => {
+    const notes = [
+      { reminder_at: "2026-08-18T09:00:00Z", attachment_count: 0 },
+      { reminder_at: null, attachment_count: 2 },
+      { reminder_at: "2026-08-18T09:00:00Z", attachment_count: 1 },
+    ];
+    assert.deepEqual(toggleListFacet(["reminder"], "attachment"), ["reminder", "attachment"]);
+    assert.deepEqual(toggleListFacet(["reminder"], "reminder"), []);
+    assert.equal(noteMatchesFacets(notes[0], ["reminder"]), true);
+    assert.equal(noteMatchesFacets(notes[0], ["attachment"]), false);
+    assert.equal(noteMatchesFacets(notes[2], ["reminder", "attachment"]), true);
+  });
+});
+
+describe("list metadata labels", () => {
+  it("formats attachment counts and checklist progress", () => {
+    assert.equal(attachmentCountLabel(0), null);
+    assert.equal(attachmentCountLabel(1), "1 attachment");
+    assert.equal(attachmentCountLabel(3), "3 attachments");
+    assert.equal(checklistProgressLabel(1, 4), "1/4");
+    assert.equal(checklistProgressLabel(0, 0), null);
+  });
+});
+
+describe("avatarColor", () => {
+  it("picks a stable color from the display name", () => {
+    assert.equal(avatarColor("Ada"), avatarColor("Ada"));
+    assert.notEqual(avatarColor("Ada"), avatarColor("Grace"));
+  });
+});
+
+describe("collapsed stacks", () => {
+  it("toggles one stack and can collapse every stack", () => {
+    assert.deepEqual(toggleCollapsedId(["a"], "b"), ["a", "b"]);
+    assert.deepEqual(toggleCollapsedId(["a", "b"], "a"), ["b"]);
+    assert.deepEqual(collapseAllIds(["s1", "s2", "s1"]), ["s1", "s2"]);
+    assert.deepEqual(parseCollapsedStacks(JSON.stringify(["s1"])), ["s1"]);
+    assert.deepEqual(parseCollapsedStacks("nope"), []);
+  });
+});
+
+describe("resolveThumbnailUrl", () => {
+  const toUrl = (id: string) => `http://api/attachments/${id}`;
+
+  it("turns attachment ids into download URLs and leaves remote images alone", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    assert.equal(resolveThumbnailUrl(id, toUrl), `http://api/attachments/${id}`);
+    assert.equal(
+      resolveThumbnailUrl(`notebook-attachment://${id}`, toUrl),
+      `http://api/attachments/${id}`
+    );
+    assert.equal(resolveThumbnailUrl("https://cdn.example/pic.png", toUrl), "https://cdn.example/pic.png");
+    assert.equal(resolveThumbnailUrl(null, toUrl), null);
+  });
+});
+
+describe("search operators", () => {
+  it("parses Evernote-style operators and leaves free text", () => {
+    const parsed = parseSearchQuery('invoice notebook:"Work" tag:urgent intitle:Q3 reminder:true');
+    assert.equal(parsed.text, "invoice");
+    assert.equal(parsed.notebook, "Work");
+    assert.equal(parsed.tag, "urgent");
+    assert.equal(parsed.intitle, "Q3");
+    assert.equal(parsed.reminder, true);
+  });
+
+  it("filters notes by those operators", () => {
+    const note = {
+      title: "Q3 invoice",
+      notebook_name: "Work",
+      tag_names: ["urgent"],
+      reminder_at: "2026-08-18T09:00:00Z",
+      checklist_total: 2,
+    };
+    assert.equal(
+      noteMatchesSearchOperators(note, parseSearchQuery("notebook:Work todo:true")),
+      true
+    );
+    assert.equal(noteMatchesSearchOperators(note, parseSearchQuery("tag:home")), false);
+    assert.equal(noteMatchesSearchOperators(note, parseSearchQuery("intitle:missing")), false);
+  });
+});
+
+describe("date range facet", () => {
+  it("keeps notes inside today / 7 days / 30 days", () => {
+    const now = new Date("2026-08-18T15:00:00");
+    assert.equal(noteMatchesDateRange("2026-08-18T10:00:00", "today", now), true);
+    assert.equal(noteMatchesDateRange("2026-08-17T10:00:00", "today", now), false);
+    assert.equal(noteMatchesDateRange("2026-08-12T10:00:00", "week", now), true);
+    assert.equal(noteMatchesDateRange("2026-07-01T10:00:00", "week", now), false);
+    assert.equal(noteMatchesDateRange("2026-07-20T10:00:00", "month", now), true);
+  });
+});
+
+describe("html export helpers", () => {
+  it("turns simple HTML into markdown and plain text", () => {
+    const html = "<h1>Hello</h1><p>See <strong>this</strong> <a href=\"https://x\">link</a></p>";
+    assert.match(htmlToMarkdown(html), /^# Hello/m);
+    assert.match(htmlToMarkdown(html), /\*\*this\*\*/);
+    assert.match(htmlToMarkdown(html), /\[link\]\(https:\/\/x\)/);
+    assert.equal(htmlToPlainText(html).includes("Hello"), true);
+    assert.equal(htmlToPlainText(html).includes("<"), false);
+  });
+
+  it("reads heading outline entries", () => {
+    assert.deepEqual(
+      headingsFromHtml("<h1>One</h1><p>x</p><h2>Two</h2>").map((item) => [item.level, item.text]),
+      [
+        [1, "One"],
+        [2, "Two"],
+      ]
+    );
+  });
+});
+
+describe("reminder snooze", () => {
+  it("pushes later today by three hours and tomorrow morning to 9am", () => {
+    const now = new Date("2026-08-18T10:00:00");
+    const later = new Date(reminderFromSnooze("laterToday", now));
+    const morning = new Date(reminderFromSnooze("tomorrowMorning", now));
+    assert.equal(later.getHours(), 13);
+    assert.equal(morning.getDate(), 19);
+    assert.equal(morning.getHours(), 9);
   });
 });
