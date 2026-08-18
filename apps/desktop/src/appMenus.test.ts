@@ -76,6 +76,10 @@ function stubMenu(overrides: Partial<AppMenuContext> = {}): AppMenuContext {
     confirm: async () => true,
     printActiveNote: noop,
     copyActiveNoteLink: noop,
+    copyActiveNoteAs: noop,
+    exportNotebook: noop,
+    snoozeReminder: noop,
+    searchInNotebook: noop,
     setListView: noop,
     importNotes: noop,
     setNotebookDefault: noop,
@@ -127,6 +131,7 @@ describe("buildMenuBar", () => {
     const viewLabels = labels(view.items);
     assert.equal(viewLabels.includes("Pin Sidebar Open"), true);
     assert.equal(viewLabels.includes("Hide Attachments"), true);
+    assert.equal(viewLabels.includes("Show Note Outline"), true);
   });
 
   it("disables note actions when nothing is targeted", () => {
@@ -150,9 +155,15 @@ describe("buildMenuBar", () => {
     assert.equal(top.includes("Align"), true);
     assert.equal(top.includes("Table"), true);
     assert.equal(top.includes("Font"), true);
+    assert.equal(top.includes("Superscript"), true);
+    assert.equal(top.includes("Subscript"), true);
+    assert.equal(top.includes("Callout"), true);
     const align = format.items.find((item) => "label" in item && item.label === "Align");
     assert.ok(align && "children" in align && align.children);
     assert.equal(labels(align.children).includes("Justify"), true);
+    const callout = format.items.find((item) => "label" in item && item.label === "Callout");
+    assert.ok(callout && "children" in callout && callout.children);
+    assert.equal(labels(callout.children).includes("Warning"), true);
   });
 });
 
@@ -188,5 +199,52 @@ describe("buildContextMenu", () => {
     );
     assert.equal(labels(normal).includes("Open in New Tab"), true);
     assert.equal(labels(normal).includes("Move to trash"), true);
+    assert.equal(labels(normal).includes("Export as Markdown"), true);
+    assert.equal(labels(normal).includes("Copy as"), true);
+  });
+
+  it("exports a notebook and searches inside it from the notebook menu", () => {
+    const notebook = {
+      id: "nb1",
+      user_id: "u",
+      stack_id: null,
+      name: "Work",
+      is_default: false,
+      sort_order: 0,
+      created_at: "",
+      updated_at: "",
+      deleted_at: null,
+    };
+    const items = buildContextMenu(
+      { kind: "notebook", x: 0, y: 0, notebook },
+      stubMenu()
+    );
+    assert.equal(labels(items).includes("Search in this notebook"), true);
+    assert.equal(labels(items).includes("Export notebook as Evernote XML"), true);
+  });
+
+  it("offers snooze when the note has a reminder", () => {
+    const note = {
+      id: "n1",
+      notebook_id: "nb",
+      title: "Hello",
+      snippet: "",
+      is_pinned: false,
+      is_archived: false,
+      reminder_at: "2026-08-18T18:00:00.000Z",
+      tag_ids: [],
+      tag_names: [],
+      attachment_count: 0,
+      is_template: false,
+      template_category: null,
+      notebook_name: "First",
+      created_at: "",
+      updated_at: "",
+    };
+    const items = buildContextMenu({ kind: "note", x: 0, y: 0, note }, stubMenu());
+    const snooze = items.find((item) => "label" in item && item.label === "Snooze reminder");
+    assert.ok(snooze && "children" in snooze && snooze.children);
+    assert.equal(labels(snooze.children).includes("Later today"), true);
+    assert.equal(labels(snooze.children).includes("Tomorrow morning"), true);
   });
 });

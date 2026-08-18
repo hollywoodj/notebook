@@ -67,13 +67,17 @@ import {
   checklistProgressLabel,
   clampPaneWidth,
   collapseAllIds,
+  copyTextToClipboard,
   countWords,
   decodeNoteDrag,
   dispatchEditorCommand,
+  downloadTextFile,
   encodeNoteDrag,
   formatReminderLabel,
   fromDatetimeLocalValue,
   groupNotesForList,
+  htmlToMarkdown,
+  htmlToPlainText,
   isReminderOverdue,
   isNoteExpanded,
   isSidebarRail,
@@ -83,19 +87,25 @@ import {
   nextSidebarFlyout,
   nextZoom,
   noteAppLink,
+  noteMatchesDateRange,
   noteMatchesFacets,
+  noteMatchesSearchOperators,
   noteTabLabel,
   notebooksMatchingFilter,
+  notesToEnex,
   parseCollapsedStacks,
   parseEditorChrome,
   parsePaneLayout,
   parseRecentSearches,
+  parseSearchQuery,
   reminderFromPreset,
+  reminderFromSnooze,
   rememberSearch,
   reorderById,
   resizeSidebarTo,
   resolveListView,
   resolveThumbnailUrl,
+  safeFilename,
   sidebarFilterLabel,
   sidebarFlyoutTitle,
   snippetParts,
@@ -106,11 +116,13 @@ import {
   toggleNoteListHidden,
   toggleSidebarRail,
   windowTitleForNote,
+  type DateRangeFacet,
   type ListView,
   type NoteListFacet,
   type ReminderPreset,
   type SidebarFlyout,
   type SidebarFlyoutKind,
+  type SnoozePreset,
 } from "./uiChrome";
 
 export default function App() {
@@ -136,6 +148,8 @@ export default function App() {
     )
   );
   const [listFacets, setListFacets] = useState<NoteListFacet[]>([]);
+  const [listDateRange, setListDateRange] = useState<DateRangeFacet>("any");
+  const [searchScope, setSearchScope] = useState<{ id: string; name: string } | null>(null);
   const [collapsedStacks, setCollapsedStacks] = useState(() =>
     parseCollapsedStacks(
       typeof localStorage === "undefined" ? null : localStorage.getItem(COLLAPSED_STACKS_KEY)
@@ -277,8 +291,34 @@ export default function App() {
     setFilter({ type: "search", query: cleaned });
   };
 
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearchInput("");
+    if (filter.type === "search") {
+      if (searchScope) {
+        setFilter({ type: "notebook", id: searchScope.id, name: searchScope.name });
+      } else {
+        setFilter({ type: "all" });
+      }
+    }
+    setSearchScope(null);
+  };
+
+  const searchInNotebook = (notebook: { id: string; name: string }) => {
+    setSearchScope(notebook);
+    setSearchOpen(true);
+    if (paneLayout.listCollapsed) {
+      persistPaneLayout({ ...paneLayout, listCollapsed: false });
+    }
+  };
+
   const openGlobalSearch = () => {
     setSearchOpen(true);
+    if (filter.type === "notebook") {
+      setSearchScope({ id: filter.id, name: filter.name });
+    } else if (filter.type !== "search") {
+      setSearchScope(null);
+    }
     if (paneLayout.listCollapsed) {
       persistPaneLayout({ ...paneLayout, listCollapsed: false });
     }
@@ -332,9 +372,19 @@ export default function App() {
       case "trash":
         list = await api.listNotes({ trash: true });
         break;
-      case "search":
-        list = (await api.search(filter.query)).notes;
+      case "search": {
+        const parsed = parseSearchQuery(filter.query);
+        if (parsed.text) {
+          list = (await api.search(parsed.text)).notes;
+        } else {
+          list = await api.listNotes({ templates: false });
+        }
+        list = list.filter((note) => noteMatchesSearchOperators(note, parsed));
+        if (searchScope) {
+          list = list.filter((note) => note.notebook_id === searchScope.id);
+        }
         break;
+      }
     }
     const sorted = [...list].sort((a, b) => {
       if (filter.type === "reminders") {
@@ -350,7 +400,7 @@ export default function App() {
       return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
     });
     setNotes(sorted);
-  }, [filter, prefs.sort_by]);
+  }, [filter, prefs.sort_by, searchScope]);
 
   const loadNote = useCallback(async (id: string, tabId?: string) => {
     skipNextSave.current = true;
@@ -772,6 +822,60 @@ export default function App() {
     });
   };
 
+  const snoozeReminder = async (kind: SnoozePreset) => {
+    const at = reminderFromSnooze(kind);
+    setShowReminderMenu(false);
+    const ids = targetNoteIds();
+    if (ids.length && !(activeNote && ids.length === 1 && ids[0] === activeNote.id)) {
+      await applyToNotes(ids, async (id) => {
+        const updated = await api.updateNote(id, { reminder_at: at });
+        if (activeNote?.id === id) setActiveNote(updated);
+      });
+      return;
+    }
+    if (!activeNote) return;
+    await saveNote({ reminder_at: at });
+  };
+
+  const copyActiveNoteAs = async (format: "rich" | "plain" | "markdown") => {
+    const id = activeNote?.id || [...selectedNoteIds][0];
+    if (!id) return;
+    const note = activeNote?.id === id ? activeNote : await api.getNote(id);
+    const html = note.content || "";
+    const plain = note.content_plain || htmlToPlainText(html);
+    if (format === "markdown") {
+      await copyTextToClipboard(htmlToMarkdown(html));
+      return;
+    }
+    if (format === "plain") {
+      await copyTextToClipboard(plain);
+      return;
+    }
+    await copyTextToClipboard(plain, html);
+  };
+
+  const exportNotebook = async (notebookId: string, name: string) => {
+    const list = await api.listNotes({ notebookId, templates: false });
+    if (!list.length) return;
+    const full: Note[] = [];
+    for (const item of list) {
+      full.push(await api.getNote(item.id));
+    }
+    downloadTextFile(
+      `${safeFilename(name)}.enex`,
+      notesToEnex(
+        full.map((note) => ({
+          title: note.title,
+          content: note.content,
+          created_at: note.created_at,
+          updated_at: note.updated_at,
+          tag_names: note.tag_names,
+        }))
+      ),
+      "application/xml"
+    );
+  };
+
   const setListView = (list_view: ListView) => {
     const show_snippets = list_view !== "titles";
     setPrefs((current) => ({ ...current, list_view, show_snippets }));
@@ -837,8 +941,13 @@ export default function App() {
   }, [notebooks, stacks]);
 
   const visibleNotes = useMemo(
-    () => notes.filter((note) => noteMatchesFacets(note, listFacets)),
-    [notes, listFacets]
+    () =>
+      notes.filter(
+        (note) =>
+          noteMatchesFacets(note, listFacets) &&
+          noteMatchesDateRange(note.updated_at, listDateRange)
+      ),
+    [notes, listFacets, listDateRange]
   );
 
   const groupedNotes = useMemo(
@@ -925,12 +1034,12 @@ export default function App() {
       } else if (e.key === "Escape" && accountMenu) {
         e.preventDefault();
         setAccountMenu(false);
+      } else if (e.key === "Escape" && sidebarFlyout) {
         e.preventDefault();
         setSidebarFlyout(null);
       } else if (e.key === "Escape" && searchOpen) {
         e.preventDefault();
-        setSearchOpen(false);
-        if (filter.type === "search") setFilter({ type: "all" });
+        closeSearch();
       } else if (meta && e.key === "j") {
         e.preventDefault();
         setShowJump(true);
@@ -961,6 +1070,22 @@ export default function App() {
           } else {
             void loadNote(nextId);
           }
+        }
+      } else if (
+        (e.key === "j" || e.key === "k" || e.key === "J" || e.key === "K") &&
+        !meta &&
+        !e.altKey &&
+        !isTextInputFocused() &&
+        visibleNotes.length > 0
+      ) {
+        e.preventDefault();
+        const current =
+          lastClickedNoteId.current ||
+          (selectedNoteIds.size === 1 ? [...selectedNoteIds][0] : null);
+        const nextId = adjacentNoteId(visibleNotes, current, e.key === "j" || e.key === "J" ? 1 : -1);
+        if (nextId) {
+          lastClickedNoteId.current = nextId;
+          void loadNote(nextId);
         }
       } else if (meta && e.key === ",") {
         e.preventDefault();
@@ -1138,6 +1263,10 @@ export default function App() {
     confirm,
     printActiveNote,
     copyActiveNoteLink,
+    copyActiveNoteAs,
+    exportNotebook,
+    snoozeReminder,
+    searchInNotebook,
     setListView,
     importNotes: () => importRef.current?.click(),
     setNotebookDefault: async (notebook) => {
@@ -1286,8 +1415,7 @@ export default function App() {
             title="Search"
             onClick={() => {
               if (searchOpen || filter.type === "search") {
-                setSearchOpen(false);
-                if (filter.type === "search") setFilter({ type: "all" });
+                closeSearch();
                 return;
               }
               openGlobalSearch();
@@ -1890,22 +2018,28 @@ export default function App() {
                   runSearch(searchInput);
                 }
                 if (e.key === "Escape") {
-                  setSearchOpen(false);
-                  if (filter.type === "search") setFilter({ type: "all" });
+                  closeSearch();
                 }
               }}
-              placeholder="Search notes"
+              placeholder="Search notes  notebook: tag: intitle:"
               aria-label="Search notes"
             />
+            {searchScope && (
+              <button
+                type="button"
+                className="search-scope-chip"
+                title="Clear notebook scope"
+                onClick={() => setSearchScope(null)}
+              >
+                in {searchScope.name}
+                <Icon.Close size={11} />
+              </button>
+            )}
             <button
               type="button"
               className="icon-btn"
               title="Close search"
-              onClick={() => {
-                setSearchOpen(false);
-                setSearchInput("");
-                if (filter.type === "search") setFilter({ type: "all" });
-              }}
+              onClick={closeSearch}
             >
               <Icon.Close size={14} />
             </button>
@@ -1942,9 +2076,7 @@ export default function App() {
             <h2>{viewTitle}</h2>
             <span className="count" title="Notes in this view">
               {visibleNotes.length}
-              {listFacets.length && visibleNotes.length !== notes.length
-                ? ` of ${notes.length}`
-                : ""}
+              {visibleNotes.length !== notes.length ? ` of ${notes.length}` : ""}
             </span>
           </div>
           <div className="panel-tools">
@@ -2028,6 +2160,27 @@ export default function App() {
               onClick={() => setListFacets(toggleListFacet(listFacets, "attachment"))}
             >
               Has attachment
+            </button>
+            <button
+              type="button"
+              className={listDateRange === "today" ? "active" : ""}
+              onClick={() => setListDateRange(listDateRange === "today" ? "any" : "today")}
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              className={listDateRange === "week" ? "active" : ""}
+              onClick={() => setListDateRange(listDateRange === "week" ? "any" : "week")}
+            >
+              This week
+            </button>
+            <button
+              type="button"
+              className={listDateRange === "month" ? "active" : ""}
+              onClick={() => setListDateRange(listDateRange === "month" ? "any" : "month")}
+            >
+              This month
             </button>
           </div>
         )}
@@ -2307,6 +2460,16 @@ export default function App() {
                     </button>
                     {showReminderMenu && (
                       <div className="menu-popover right reminder-popover">
+                        {activeNote.reminder_at && (
+                          <>
+                            <button onClick={() => void snoozeReminder("laterToday")}>
+                              Later today
+                            </button>
+                            <button onClick={() => void snoozeReminder("tomorrowMorning")}>
+                              Tomorrow morning
+                            </button>
+                          </>
+                        )}
                         <button onClick={() => void setReminderPreset("tonight")}>Tonight</button>
                         <button onClick={() => void setReminderPreset("tomorrow")}>Tomorrow</button>
                         <button onClick={() => void setReminderPreset("nextWeek")}>Next week</button>
@@ -2410,6 +2573,58 @@ export default function App() {
                         >
                           Copy to notebook…
                         </button>
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            void copyActiveNoteAs("rich");
+                          }}
+                        >
+                          Copy as rich text
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            void copyActiveNoteAs("plain");
+                          }}
+                        >
+                          Copy as plain text
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            void copyActiveNoteAs("markdown");
+                          }}
+                        >
+                          Copy as Markdown
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            void exportSelectedNotes("markdown");
+                          }}
+                        >
+                          Export as Markdown…
+                        </button>
+                        {activeNote.reminder_at && (
+                          <>
+                            <button
+                              onClick={() => {
+                                setShowNoteMenu(false);
+                                void snoozeReminder("laterToday");
+                              }}
+                            >
+                              Snooze until later today
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowNoteMenu(false);
+                                void snoozeReminder("tomorrowMorning");
+                              }}
+                            >
+                              Snooze until tomorrow morning
+                            </button>
+                          </>
+                        )}
                         {filter.type === "trash" ? (
                           <>
                             <button
@@ -2525,6 +2740,7 @@ export default function App() {
                 })
               }
               zoom={editorChrome.zoom}
+              outlineOpen={editorChrome.outlineOpen}
               onOpenNoteLink={(id) => void loadNote(id)}
               onChange={(html) =>
                 setActiveNote({ ...activeNote, content: html })

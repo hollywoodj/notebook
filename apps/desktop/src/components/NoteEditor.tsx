@@ -36,6 +36,7 @@ import {
 import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
 import { LinkDialog } from "./LinkDialog";
 import { FontFamily, FontSize } from "./fontMarks";
+import { Callout, Subscript, Superscript } from "./editorMarks";
 import {
   FileAttachment,
   USE_FILE_AS_TITLE,
@@ -66,6 +67,7 @@ interface Props {
   attachmentsExpanded?: boolean;
   onAttachmentsExpandedChange?: (expanded: boolean) => void;
   zoom?: number;
+  outlineOpen?: boolean;
   onOpenNoteLink?: (noteId: string) => void;
 }
 
@@ -141,6 +143,7 @@ export function NoteEditor({
   attachmentsExpanded = false,
   onAttachmentsExpandedChange,
   zoom = 100,
+  outlineOpen = false,
   onOpenNoteLink,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -196,6 +199,9 @@ export function NoteEditor({
       Color,
       FontFamily,
       FontSize,
+      Superscript,
+      Subscript,
+      Callout,
     ],
     content,
     autofocus: false,
@@ -500,6 +506,23 @@ export function NoteEditor({
             chain.deleteTable().run();
           }
           break;
+        case "superscript":
+          chain.toggleSuperscript().run();
+          break;
+        case "subscript":
+          chain.toggleSubscript().run();
+          break;
+        case "callout": {
+          const kind = command.kind || "info";
+          if (editor.isActive("callout")) {
+            const current = String(editor.getAttributes("callout").kind || "info");
+            if (current === kind) chain.unsetCallout().run();
+            else chain.updateAttributes("callout", { kind }).run();
+          } else {
+            chain.setCallout(kind).run();
+          }
+          break;
+        }
         case "link": {
           if (!command.href) {
             setLinkDialog(openLinkDialog(editor));
@@ -704,6 +727,9 @@ export function NoteEditor({
     { id: "date", label: "Insert date and time", action: () => editor.chain().focus().insertContent(new Date().toLocaleString()).run() },
     { id: "link", label: "Link", action: () => setLinkDialog(openLinkDialog(editor)) },
     { id: "table", label: "Insert table", action: () => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
+    { id: "superscript", label: "Superscript", action: () => editor.chain().focus().toggleSuperscript().run() },
+    { id: "subscript", label: "Subscript", action: () => editor.chain().focus().toggleSubscript().run() },
+    { id: "callout", label: "Info box", action: () => editor.chain().focus().setCallout("info").run() },
     { id: "attach", label: "Insert media or file", action: () => fileRef.current?.click() },
   ];
 
@@ -1146,6 +1172,27 @@ export function NoteEditor({
           editor.isActive("table"),
           <Icon.Table size={16} />
         ))}
+        {wrap("superscript", btn(
+          "Superscript",
+          () => editor.chain().focus().toggleSuperscript().run(),
+          editor.isActive("superscript"),
+          <span className="toolbar-text">x²</span>
+        ))}
+        {wrap("subscript", btn(
+          "Subscript",
+          () => editor.chain().focus().toggleSubscript().run(),
+          editor.isActive("subscript"),
+          <span className="toolbar-text">x₂</span>
+        ))}
+        {wrap("callout", btn(
+          "Info box",
+          () => {
+            if (editor.isActive("callout")) editor.chain().focus().unsetCallout().run();
+            else editor.chain().focus().setCallout("info").run();
+          },
+          editor.isActive("callout"),
+          <span className="toolbar-text">i</span>
+        ))}
         {wrap("attach", btn("Insert media or file", () => fileRef.current?.click(), false, <Icon.Attach size={16} />))}
         {overflowIds.length > 0 && (
           <div className="highlight-picker toolbar-overflow">
@@ -1239,6 +1286,7 @@ export function NoteEditor({
           <span>Images appear inline; other files become attachments.</span>
         </div>
       )}
+      <div className={outlineOpen ? "editor-workspace has-outline" : "editor-workspace"}>
       <div
         className="editor-scroll"
         onMouseDown={(event) => {
@@ -1265,6 +1313,40 @@ export function NoteEditor({
         >
           <EditorContent editor={editor} />
         </div>
+      </div>
+      {outlineOpen && (
+        <aside className="note-outline" aria-label="Note outline">
+          <div className="note-outline-title">Outline</div>
+          {(() => {
+            const headings: { level: number; text: string; pos: number }[] = [];
+            editor.state.doc.descendants((node, pos) => {
+              if (node.type.name === "heading") {
+                headings.push({
+                  level: Number(node.attrs.level || 1),
+                  text: node.textContent || "Untitled heading",
+                  pos,
+                });
+              }
+            });
+            if (!headings.length) {
+              return <div className="empty-state compact">Add headings to build an outline.</div>;
+            }
+            return headings.map((heading, index) => (
+              <button
+                key={`${heading.pos}-${index}`}
+                type="button"
+                className={`outline-item level-${heading.level}`}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  editor.chain().focus().setTextSelection(heading.pos + 1).scrollIntoView().run();
+                }}
+              >
+                {heading.text}
+              </button>
+            ));
+          })()}
+        </aside>
+      )}
       </div>
       {editorMenu && (
         <ContextMenu

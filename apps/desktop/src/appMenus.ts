@@ -23,6 +23,7 @@ import {
   type PaneLayout,
   type SidebarFlyout,
   type SidebarFlyoutKind,
+  type SnoozePreset,
   TEXT_COLORS,
   dispatchEditorCommand,
   isNoteExpanded,
@@ -87,8 +88,12 @@ export type AppMenuContext = {
   pinSelectedNotes: (pinned: boolean) => void;
   duplicateSelectedNotes: () => void;
   mergeSelectedNotes: () => void;
-  exportSelectedNotes: (format: "html" | "enex") => void;
+  exportSelectedNotes: (format: "html" | "enex" | "markdown") => void;
   archiveSelectedNotes: (archived: boolean) => void;
+  copyActiveNoteAs: (format: "rich" | "plain" | "markdown") => void;
+  exportNotebook: (notebookId: string, name: string) => void;
+  snoozeReminder: (kind: SnoozePreset) => void;
+  searchInNotebook: (notebook: { id: string; name: string }) => void;
   updateNoteById: (id: string, patch: Partial<Note>) => Promise<unknown>;
   refreshMeta: () => Promise<void>;
   refreshNotes: () => Promise<void>;
@@ -243,6 +248,48 @@ export function buildContextMenu(
         label: count > 1 ? "Export notes as Evernote XML" : "Export as Evernote XML",
         onSelect: () => void ctx.exportSelectedNotes("enex"),
       },
+      {
+        label: count > 1 ? "Export notes as Markdown" : "Export as Markdown",
+        onSelect: () => void ctx.exportSelectedNotes("markdown"),
+      },
+      ...(count === 1
+        ? [
+            {
+              label: "Copy as",
+              children: [
+                {
+                  label: "Rich Text",
+                  onSelect: () => void ctx.copyActiveNoteAs("rich"),
+                },
+                {
+                  label: "Plain Text",
+                  onSelect: () => void ctx.copyActiveNoteAs("plain"),
+                },
+                {
+                  label: "Markdown",
+                  onSelect: () => void ctx.copyActiveNoteAs("markdown"),
+                },
+              ],
+            },
+          ]
+        : []),
+      ...(targets.some((note) => note.reminder_at)
+        ? [
+            {
+              label: "Snooze reminder",
+              children: [
+                {
+                  label: "Later today",
+                  onSelect: () => void ctx.snoozeReminder("laterToday"),
+                },
+                {
+                  label: "Tomorrow morning",
+                  onSelect: () => void ctx.snoozeReminder("tomorrowMorning"),
+                },
+              ],
+            },
+          ]
+        : []),
       ...(count === 1
         ? [
             {
@@ -333,6 +380,14 @@ export function buildContextMenu(
             onSelect: () => void ctx.setNotebookStack(notebook.id, stack.id),
           })),
         ],
+      },
+      {
+        label: "Search in this notebook",
+        onSelect: () => ctx.searchInNotebook({ id: notebook.id, name: notebook.name }),
+      },
+      {
+        label: "Export notebook as Evernote XML",
+        onSelect: () => void ctx.exportNotebook(notebook.id, notebook.name),
       },
       { type: "separator" },
       {
@@ -460,6 +515,32 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           onSelect: () => void ctx.exportSelectedNotes("enex"),
         },
         {
+          label: "Export as Markdown…",
+          disabled: ctx.targetNoteIds().length === 0,
+          onSelect: () => void ctx.exportSelectedNotes("markdown"),
+        },
+        {
+          label: "Copy as",
+          disabled: !ctx.activeNote,
+          children: [
+            {
+              label: "Rich Text",
+              disabled: !ctx.activeNote,
+              onSelect: () => void ctx.copyActiveNoteAs("rich"),
+            },
+            {
+              label: "Plain Text",
+              disabled: !ctx.activeNote,
+              onSelect: () => void ctx.copyActiveNoteAs("plain"),
+            },
+            {
+              label: "Markdown",
+              disabled: !ctx.activeNote,
+              onSelect: () => void ctx.copyActiveNoteAs("markdown"),
+            },
+          ],
+        },
+        {
           label: "Print…",
           shortcut: "Ctrl/⌘ P",
           disabled: !ctx.activeNote,
@@ -559,6 +640,15 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
             ctx.persistEditorChrome({
               ...ctx.editorChrome,
               toolbarHidden: !ctx.editorChrome.toolbarHidden,
+            }),
+        },
+        {
+          label: ctx.editorChrome.outlineOpen ? "Hide Note Outline" : "Show Note Outline",
+          disabled: !ctx.activeNote,
+          onSelect: () =>
+            ctx.persistEditorChrome({
+              ...ctx.editorChrome,
+              outlineOpen: !ctx.editorChrome.outlineOpen,
             }),
         },
         {
@@ -707,6 +797,32 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           onSelect: () => ctx.setNotebookPicker("copy"),
         },
         {
+          label: "Copy as",
+          disabled: !ctx.activeNote,
+          children: [
+            {
+              label: "Rich Text",
+              disabled: !ctx.activeNote,
+              onSelect: () => void ctx.copyActiveNoteAs("rich"),
+            },
+            {
+              label: "Plain Text",
+              disabled: !ctx.activeNote,
+              onSelect: () => void ctx.copyActiveNoteAs("plain"),
+            },
+            {
+              label: "Markdown",
+              disabled: !ctx.activeNote,
+              onSelect: () => void ctx.copyActiveNoteAs("markdown"),
+            },
+          ],
+        },
+        {
+          label: "Export as Markdown…",
+          disabled: ctx.targetNoteIds().length === 0,
+          onSelect: () => void ctx.exportSelectedNotes("markdown"),
+        },
+        {
           label: "Set Reminder",
           disabled: !ctx.activeNote,
           onSelect: () => ctx.setShowReminderMenu(true),
@@ -824,6 +940,16 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: "Strikethrough",
           disabled: !ctx.activeNote,
           onSelect: () => runEditorCommand({ type: "strike" }),
+        },
+        {
+          label: "Superscript",
+          disabled: !ctx.activeNote,
+          onSelect: () => runEditorCommand({ type: "superscript" }),
+        },
+        {
+          label: "Subscript",
+          disabled: !ctx.activeNote,
+          onSelect: () => runEditorCommand({ type: "subscript" }),
         },
         { type: "separator" },
         {
@@ -968,6 +1094,27 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: "Quote",
           disabled: !ctx.activeNote,
           onSelect: () => runEditorCommand({ type: "blockquote" }),
+        },
+        {
+          label: "Callout",
+          disabled: !ctx.activeNote,
+          children: [
+            {
+              label: "Info",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "callout", kind: "info" }),
+            },
+            {
+              label: "Warning",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "callout", kind: "warning" }),
+            },
+            {
+              label: "Tip",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "callout", kind: "tip" }),
+            },
+          ],
         },
         {
           label: "Code Block",

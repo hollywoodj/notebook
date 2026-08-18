@@ -1,6 +1,6 @@
 # Evernote UI clone handoff
 
-This log is for future sessions continuing the exact-clone work. Passes 1–7 each closed visible Evernote desktop gaps. The goal remains pixel-and-behavior parity with Evernote’s three-pane desktop app (no AI).
+This log is for future sessions continuing the exact-clone work. Passes 1–8 each closed visible Evernote desktop gaps. The goal remains pixel-and-behavior parity with Evernote’s three-pane desktop app (no AI).
 
 ## Closed so far
 
@@ -64,7 +64,7 @@ This log is for future sessions continuing the exact-clone work. Passes 1–7 ea
 4. Clicking the section that is already open closes its panel; Escape and a click outside the sidebar close it too
 5. View menu gained **Notebooks** and **Tags** entries that open the matching panel
 
-### Pass 7 (this session)
+### Pass 7
 1. **Compact toolbar overflow** (`…`) when the formatting bar is too narrow
 2. **Font family and size** dropdowns in the toolbar (and a Format → Font menu)
 3. **Nested Format menus** for Highlight, Text Color, Align, and Table
@@ -75,6 +75,18 @@ This log is for future sessions continuing the exact-clone work. Passes 1–7 ea
 8. **Link dialog** Open / Copy, and display text is always applied
 9. **Account chip popover** with a hashed avatar color, Account, Settings, and theme
 10. **Collapse / expand stacks** (click, context menu, View menu)
+
+### Pass 8 (this session)
+1. **J / K** note-list navigation when a text field is not focused (arrows still work)
+2. **Note outline / table of contents** from headings (View menu; persisted)
+3. **Superscript and subscript** in the toolbar and Format menu
+4. **Callout boxes** (info / warning / tip)
+5. **Copy as** rich text, plain text, or Markdown
+6. **Export as Markdown** (File, Note, and note context)
+7. **Export notebook as Evernote XML** from the notebook context menu
+8. **Search operators** `notebook:`, `tag:`, `intitle:`, `reminder:`, `todo:` plus search-in-this-notebook
+9. **Date range filter chips**: Today / This week / This month
+10. **Snooze reminder**: Later today (+3h) and Tomorrow morning (9am)
 
 ## Where to look
 
@@ -96,44 +108,36 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 
 ### Note list
 - Saved searches (named), not only recent searches
-- Filter chips: created/updated date range
 - Drag to reorder notebooks and tags
 - Hover preview of a note (optional; Evernote v10 is weaker here, legacy is stronger)
 
 ### Editor
-- Table of contents / outline for headings
-- Justify alignment, inline code, superscript/subscript (justify and inline code exist; add super/sub)
-- Callout / colored info boxes
+- Justify alignment, inline code, superscript/subscript, and callouts exist; remaining: image resize handles and captions
 - Insert checkbox without converting the whole block to a task list (inline checkbox exists)
 - Paste from Word/Google Docs with fewer extra spans
 - Spellcheck underline styling; language picker
 - Code block language label
-- Image resize handles and border; caption under images
 - Audio notes / sketches / handwritten — out of scope unless requested
 
 ### Reminders & tasks
 - Dedicated reminders calendar / agenda view
-- Snooze (later today, tomorrow morning) from the list
 - Mark reminder done without deleting the datetime
 - Evernote Tasks are a separate product surface; only add if cloning that explicitly
 
 ### Search
-- Operators in the search box: `notebook:`, `tag:`, `intitle:`, `reminder:`, `todo:`
-- Search results grouping and “search in this notebook”
+- Named saved searches
+- Search results grouping
 
 ### Import / export / files
-- Export selected notes as PDF / Markdown
-- Copy note as rich text / plain text / Markdown
+- Export selected notes as PDF
 - Email note (mailto with HTML body)
-- ENEX export of a whole notebook from the notebook context menu
 - PDF annotate / ink — not needed for a notes clone unless requested
 
 ### Keyboard & power user
 - Command palette beyond Jump to (actions: new note, merge, export, settings)
-- `J` / `K` note navigation when the list is focused
 - Go to notebook (`Ctrl/⌘ Alt J` style)
 - Customizable shortcuts
-- Nest remaining menus the way Format now nests Align / Table / Color
+- Nest remaining menus the way Format now nests Align / Table / Color / Callout
 
 ### Settings & theming
 - Note list density + view persisted together more cleanly (`list_view` now exists; `show_snippets` is derived)

@@ -58,7 +58,7 @@ describe("Evernote sidebar chrome", () => {
     assert.match(appSource, /searchOpen \|\| filter\.type === "search"/);
     assert.match(appSource, /sidebarFilterOpen \|\| Boolean\(sidebarFilter\.trim\(\)\)/);
     assert.equal(appSource.includes('placeholder="Search"'), false);
-    assert.match(appSource, /placeholder="Search notes"/);
+    assert.match(appSource, /placeholder="Search notes  notebook: tag: intitle:"/);
   });
 
   it("exposes hide note list and expand note as a pair", () => {
@@ -134,9 +134,17 @@ describe("Evernote list and account chrome", () => {
     assert.match(appSource, /meta-chip/);
     assert.match(appSource, /persistCollapsedStacks/);
     assert.match(appSource, /account-popover/);
+    assert.match(appSource, /e\.key === "j" \|\| e\.key === "k"/);
+    assert.match(appSource, /This week/);
+    assert.match(appSource, /Later today/);
+    assert.match(appSource, /notebook: tag: intitle:/);
+    assert.match(appSource, /outlineOpen=\{editorChrome\.outlineOpen\}/);
     assert.match(menuSource, /Collapse stack/);
     assert.match(menuSource, /label: "Align"/);
     assert.match(menuSource, /label: "Table"/);
     assert.match(menuSource, /label: "Font"/);
+    assert.match(menuSource, /Show Note Outline/);
+    assert.match(menuSource, /Export as Markdown/);
+    assert.match(menuSource, /Export notebook as Evernote XML/);
   });
 });

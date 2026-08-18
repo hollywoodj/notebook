@@ -28,15 +28,22 @@ import {
   parsePaneLayout,
   parseRecentSearches,
   parseCollapsedStacks,
+  parseSearchQuery,
   formattingToolbarVisible,
   attachmentsLabel,
   attachmentCountLabel,
   avatarColor,
   checklistProgressLabel,
   collapseAllIds,
+  headingsFromHtml,
+  htmlToMarkdown,
+  htmlToPlainText,
+  noteMatchesDateRange,
   noteMatchesFacets,
+  noteMatchesSearchOperators,
   rememberSearch,
   reminderFromPreset,
+  reminderFromSnooze,
   resizeSidebarTo,
   resolveListView,
   resolveThumbnailUrl,
@@ -372,6 +379,11 @@ describe("editor chrome", () => {
     assert.equal(chrome.zoom, 130);
     assert.equal(parseEditorChrome("{}").attachmentsExpanded, false);
     assert.equal(parseEditorChrome("{").zoom, 100);
+    assert.equal(parseEditorChrome("{}").outlineOpen, false);
+    assert.equal(
+      parseEditorChrome(JSON.stringify({ outlineOpen: true })).outlineOpen,
+      true
+    );
   });
 
   it("hides the formatting toolbar until the note body is focused", () => {
@@ -534,5 +546,75 @@ describe("resolveThumbnailUrl", () => {
     );
     assert.equal(resolveThumbnailUrl("https://cdn.example/pic.png", toUrl), "https://cdn.example/pic.png");
     assert.equal(resolveThumbnailUrl(null, toUrl), null);
+  });
+});
+
+describe("search operators", () => {
+  it("parses Evernote-style operators and leaves free text", () => {
+    const parsed = parseSearchQuery('invoice notebook:"Work" tag:urgent intitle:Q3 reminder:true');
+    assert.equal(parsed.text, "invoice");
+    assert.equal(parsed.notebook, "Work");
+    assert.equal(parsed.tag, "urgent");
+    assert.equal(parsed.intitle, "Q3");
+    assert.equal(parsed.reminder, true);
+  });
+
+  it("filters notes by those operators", () => {
+    const note = {
+      title: "Q3 invoice",
+      notebook_name: "Work",
+      tag_names: ["urgent"],
+      reminder_at: "2026-08-18T09:00:00Z",
+      checklist_total: 2,
+    };
+    assert.equal(
+      noteMatchesSearchOperators(note, parseSearchQuery("notebook:Work todo:true")),
+      true
+    );
+    assert.equal(noteMatchesSearchOperators(note, parseSearchQuery("tag:home")), false);
+    assert.equal(noteMatchesSearchOperators(note, parseSearchQuery("intitle:missing")), false);
+  });
+});
+
+describe("date range facet", () => {
+  it("keeps notes inside today / 7 days / 30 days", () => {
+    const now = new Date("2026-08-18T15:00:00");
+    assert.equal(noteMatchesDateRange("2026-08-18T10:00:00", "today", now), true);
+    assert.equal(noteMatchesDateRange("2026-08-17T10:00:00", "today", now), false);
+    assert.equal(noteMatchesDateRange("2026-08-12T10:00:00", "week", now), true);
+    assert.equal(noteMatchesDateRange("2026-07-01T10:00:00", "week", now), false);
+    assert.equal(noteMatchesDateRange("2026-07-20T10:00:00", "month", now), true);
+  });
+});
+
+describe("html export helpers", () => {
+  it("turns simple HTML into markdown and plain text", () => {
+    const html = "<h1>Hello</h1><p>See <strong>this</strong> <a href=\"https://x\">link</a></p>";
+    assert.match(htmlToMarkdown(html), /^# Hello/m);
+    assert.match(htmlToMarkdown(html), /\*\*this\*\*/);
+    assert.match(htmlToMarkdown(html), /\[link\]\(https:\/\/x\)/);
+    assert.equal(htmlToPlainText(html).includes("Hello"), true);
+    assert.equal(htmlToPlainText(html).includes("<"), false);
+  });
+
+  it("reads heading outline entries", () => {
+    assert.deepEqual(
+      headingsFromHtml("<h1>One</h1><p>x</p><h2>Two</h2>").map((item) => [item.level, item.text]),
+      [
+        [1, "One"],
+        [2, "Two"],
+      ]
+    );
+  });
+});
+
+describe("reminder snooze", () => {
+  it("pushes later today by three hours and tomorrow morning to 9am", () => {
+    const now = new Date("2026-08-18T10:00:00");
+    const later = new Date(reminderFromSnooze("laterToday", now));
+    const morning = new Date(reminderFromSnooze("tomorrowMorning", now));
+    assert.equal(later.getHours(), 13);
+    assert.equal(morning.getDate(), 19);
+    assert.equal(morning.getHours(), 9);
   });
 });
