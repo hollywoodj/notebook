@@ -32,6 +32,7 @@ import { NoteTabBar } from "./components/NoteTabBar";
 import { PaneSplitter } from "./components/PaneSplitter";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { JumpToDialog } from "./components/JumpToDialog";
+import { SearchDialog } from "./components/SearchDialog";
 import { NotebookPickerDialog } from "./components/NotebookPickerDialog";
 import {
   noteIdsInRange,
@@ -98,6 +99,7 @@ import {
   parsePaneLayout,
   parseRecentSearches,
   parseSearchQuery,
+  pushNavHistory,
   reminderFromPreset,
   reminderFromSnooze,
   rememberSearch,
@@ -106,9 +108,12 @@ import {
   resolveListView,
   resolveThumbnailUrl,
   safeFilename,
+  sameNavLocation,
   sidebarFilterLabel,
   sidebarFlyoutTitle,
   snippetParts,
+  stepNavBack,
+  stepNavForward,
   toDatetimeLocalValue,
   toggleCollapsedId,
   toggleListFacet,
@@ -123,6 +128,7 @@ import {
   type SidebarFlyout,
   type SidebarFlyoutKind,
   type SnoozePreset,
+  type NavLocation,
 } from "./uiChrome";
 
 export default function App() {
@@ -150,6 +156,8 @@ export default function App() {
   const [listFacets, setListFacets] = useState<NoteListFacet[]>([]);
   const [listDateRange, setListDateRange] = useState<DateRangeFacet>("any");
   const [searchScope, setSearchScope] = useState<{ id: string; name: string } | null>(null);
+  const [navPast, setNavPast] = useState<NavLocation[]>([]);
+  const [navFuture, setNavFuture] = useState<NavLocation[]>([]);
   const [collapsedStacks, setCollapsedStacks] = useState(() =>
     parseCollapsedStacks(
       typeof localStorage === "undefined" ? null : localStorage.getItem(COLLAPSED_STACKS_KEY)
@@ -207,7 +215,6 @@ export default function App() {
   });
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
   const sidebarFilterRef = useRef<HTMLInputElement>(null);
   const skipNextSave = useRef(false);
   const lastClickedNoteId = useRef<string | null>(null);
@@ -225,6 +232,9 @@ export default function App() {
   activeNoteRef.current = activeNote;
   const filterRef = useRef(filter);
   filterRef.current = filter;
+  const ignoreNavRef = useRef(false);
+  const navSeededRef = useRef(false);
+  const navCurrentRef = useRef<NavLocation>({ filter: { type: "all" }, noteId: null });
 
   const openSettings = (section: SettingsSection = "application") => {
     setSettingsSection(section);
@@ -289,19 +299,11 @@ export default function App() {
     persistRecentSearches(rememberSearch(recentSearches, cleaned));
     setSearchInput(cleaned);
     setFilter({ type: "search", query: cleaned });
+    setSearchOpen(false);
   };
 
   const closeSearch = () => {
     setSearchOpen(false);
-    setSearchInput("");
-    if (filter.type === "search") {
-      if (searchScope) {
-        setFilter({ type: "notebook", id: searchScope.id, name: searchScope.name });
-      } else {
-        setFilter({ type: "all" });
-      }
-    }
-    setSearchScope(null);
   };
 
   const searchInNotebook = (notebook: { id: string; name: string }) => {
@@ -318,6 +320,9 @@ export default function App() {
       setSearchScope({ id: filter.id, name: filter.name });
     } else if (filter.type !== "search") {
       setSearchScope(null);
+    }
+    if (filter.type === "search") {
+      setSearchInput(filter.query);
     }
     if (paneLayout.listCollapsed) {
       persistPaneLayout({ ...paneLayout, listCollapsed: false });
@@ -424,6 +429,62 @@ export default function App() {
     );
   }, []);
 
+  const currentNavLocation = (): NavLocation => ({
+    filter: filterRef.current,
+    noteId: activeNoteRef.current?.id ?? null,
+  });
+
+  const applyNavLocation = (location: NavLocation) => {
+    ignoreNavRef.current = true;
+    let nextFilter: ViewFilter = { type: "all" };
+    if (location.filter.type === "notebook") {
+      nextFilter = { type: "notebook", id: location.filter.id || "", name: location.filter.name || "" };
+    } else if (location.filter.type === "tag") {
+      nextFilter = { type: "tag", id: location.filter.id || "", name: location.filter.name || "" };
+    } else if (location.filter.type === "search") {
+      nextFilter = { type: "search", query: location.filter.query || "" };
+    } else if (location.filter.type === "shortcuts") {
+      nextFilter = { type: "shortcuts" };
+    } else if (location.filter.type === "reminders") {
+      nextFilter = { type: "reminders" };
+    } else if (location.filter.type === "templates") {
+      nextFilter = { type: "templates" };
+    } else if (location.filter.type === "trash") {
+      nextFilter = { type: "trash" };
+    }
+    setFilter(nextFilter);
+    if (nextFilter.type === "search") setSearchInput(nextFilter.query);
+    navCurrentRef.current = location;
+    if (location.noteId) {
+      void loadNote(location.noteId).finally(() => {
+        navCurrentRef.current = location;
+        ignoreNavRef.current = false;
+      });
+      return;
+    }
+    skipNextSave.current = true;
+    setActiveNote(null);
+    setSelectedNoteIds(new Set());
+    lastClickedNoteId.current = null;
+    ignoreNavRef.current = false;
+  };
+
+  const goBack = () => {
+    const stepped = stepNavBack(navPast, currentNavLocation(), navFuture);
+    if (!stepped) return;
+    setNavPast(stepped.past);
+    setNavFuture(stepped.future);
+    applyNavLocation(stepped.current);
+  };
+
+  const goForward = () => {
+    const stepped = stepNavForward(navPast, currentNavLocation(), navFuture);
+    if (!stepped) return;
+    setNavPast(stepped.past);
+    setNavFuture(stepped.future);
+    applyNavLocation(stepped.current);
+  };
+
   const rememberCurrentTab = () => {
     const currentId = activeTabIdRef.current;
     const note = activeNoteRef.current;
@@ -444,23 +505,32 @@ export default function App() {
 
   const switchToTab = useCallback(async (tabId: string) => {
     if (tabId === activeTabIdRef.current) return;
+    ignoreNavRef.current = true;
     rememberCurrentTab();
     const next = tabsRef.current.find((tab) => tab.id === tabId);
-    if (!next) return;
+    if (!next) {
+      ignoreNavRef.current = false;
+      return;
+    }
     activeTabIdRef.current = tabId;
     setActiveTabId(tabId);
     setFilter(next.filter);
     if (next.noteId) {
       await loadNote(next.noteId, tabId);
+      navCurrentRef.current = { filter: next.filter, noteId: next.noteId };
+      ignoreNavRef.current = false;
       return;
     }
     skipNextSave.current = true;
     setActiveNote(null);
     setSelectedNoteIds(new Set());
     lastClickedNoteId.current = null;
+    navCurrentRef.current = { filter: next.filter, noteId: null };
+    ignoreNavRef.current = false;
   }, [loadNote]);
 
   const openNewTab = useCallback(() => {
+    ignoreNavRef.current = true;
     rememberCurrentTab();
     const tab = makeNoteTab({ filter: { type: "all" } });
     setTabs((current) => [...current, tab]);
@@ -471,6 +541,8 @@ export default function App() {
     setActiveNote(null);
     setSelectedNoteIds(new Set());
     lastClickedNoteId.current = null;
+    navCurrentRef.current = { filter: { type: "all" }, noteId: null };
+    ignoreNavRef.current = false;
   }, []);
 
   const closeTab = useCallback(
@@ -478,6 +550,7 @@ export default function App() {
       const currentTabs = tabsRef.current;
       const closing = currentTabs.find((tab) => tab.id === tabId);
       if (!closing) return;
+      ignoreNavRef.current = true;
 
       if (currentTabs.length === 1) {
         skipNextSave.current = true;
@@ -491,6 +564,8 @@ export default function App() {
         };
         tabsRef.current = [emptied];
         setTabs([emptied]);
+        navCurrentRef.current = { filter: filterRef.current, noteId: null };
+        ignoreNavRef.current = false;
         return;
       }
 
@@ -502,20 +577,31 @@ export default function App() {
       );
       tabsRef.current = remaining;
       setTabs(remaining);
-      if (!nextId || nextId === activeTabIdRef.current) return;
+      if (!nextId || nextId === activeTabIdRef.current) {
+        ignoreNavRef.current = false;
+        return;
+      }
       const next = remaining.find((tab) => tab.id === nextId);
-      if (!next) return;
+      if (!next) {
+        ignoreNavRef.current = false;
+        return;
+      }
       activeTabIdRef.current = next.id;
       setActiveTabId(next.id);
       setFilter(next.filter);
       if (next.noteId) {
-        void loadNote(next.noteId, next.id);
+        void loadNote(next.noteId, next.id).then(() => {
+          navCurrentRef.current = { filter: next.filter, noteId: next.noteId };
+          ignoreNavRef.current = false;
+        });
         return;
       }
       skipNextSave.current = true;
       setActiveNote(null);
       setSelectedNoteIds(new Set());
       lastClickedNoteId.current = null;
+      navCurrentRef.current = { filter: next.filter, noteId: null };
+      ignoreNavRef.current = false;
     },
     [loadNote]
   );
@@ -617,20 +703,18 @@ export default function App() {
   }, [endNoteDragSelect]);
 
   useEffect(() => {
-    if (!showJump) return;
+    if (!showJump && !searchOpen) return;
     let cancelled = false;
     api
       .listNotes({ templates: false })
       .then((list) => {
         if (!cancelled) setJumpNotes(list);
       })
-      .catch(() => {
-        if (!cancelled) setJumpNotes(notes);
-      });
+      .catch(console.error);
     return () => {
       cancelled = true;
     };
-  }, [notes, showJump]);
+  }, [notes, showJump, searchOpen]);
 
   useEffect(() => {
     (async () => {
@@ -973,10 +1057,30 @@ export default function App() {
   }, [activeNote]);
 
   useEffect(() => {
-    if (searchOpen || filter.type === "search") {
-      searchRef.current?.focus();
+    if (!ready) return;
+    const next: NavLocation = {
+      filter,
+      noteId: activeNote?.id ?? null,
+    };
+    if (!navSeededRef.current) {
+      navSeededRef.current = true;
+      navCurrentRef.current = next;
+      return;
     }
-  }, [searchOpen, filter]);
+    if (sameNavLocation(navCurrentRef.current, next)) {
+      navCurrentRef.current = next;
+      return;
+    }
+    if (ignoreNavRef.current) {
+      navCurrentRef.current = next;
+      return;
+    }
+    const pushed = pushNavHistory(navPast, navCurrentRef.current, next);
+    navCurrentRef.current = next;
+    if (!pushed) return;
+    setNavPast(pushed.past);
+    setNavFuture(pushed.future);
+  }, [ready, filter, activeNote?.id, navPast]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -988,6 +1092,12 @@ export default function App() {
         e.preventDefault();
         createNote();
       } else if (meta && e.key === "f" && e.shiftKey) {
+        e.preventDefault();
+        openGlobalSearch();
+      } else if (meta && (e.key === "k" || e.key === "K") && e.shiftKey) {
+        e.preventDefault();
+        openGlobalSearch();
+      } else if (meta && (e.key === "k" || e.key === "K") && !e.shiftKey) {
         e.preventDefault();
         openGlobalSearch();
       } else if (meta && e.key === "f") {
@@ -1028,6 +1138,12 @@ export default function App() {
       } else if (e.altKey && meta && (e.key === "s" || e.key === "S")) {
         e.preventDefault();
         persistPaneLayout(toggleSidebarRail(paneLayout));
+      } else if (meta && (e.key === "[" || e.key === "BracketLeft") && !e.altKey) {
+        e.preventDefault();
+        goBack();
+      } else if (meta && (e.key === "]" || e.key === "BracketRight") && !e.altKey) {
+        e.preventDefault();
+        goForward();
       } else if (e.key === "Escape" && focusMode) {
         e.preventDefault();
         setFocusMode(false);
@@ -1337,6 +1453,10 @@ export default function App() {
       persistCollapsedStacks(toggleCollapsedId(collapsedStacks, id)),
     collapseAllStacks: () => persistCollapsedStacks(collapseAllIds(stacks.map((stack) => stack.id))),
     expandAllStacks: () => persistCollapsedStacks([]),
+    canGoBack: navPast.length > 0,
+    canGoForward: navFuture.length > 0,
+    goBack,
+    goForward,
   };
   const contextMenuItems = (target: ContextTarget) => buildContextMenu(target, menuCtx);
   const menuGroups = buildMenuBar(menuCtx);
@@ -1377,6 +1497,10 @@ export default function App() {
       <NoteTabBar
         tabs={tabs}
         activeTabId={activeTabId}
+        canGoBack={navPast.length > 0}
+        canGoForward={navFuture.length > 0}
+        onBack={goBack}
+        onForward={goForward}
         onSelect={(id) => void switchToTab(id)}
         onClose={closeTab}
         onNewTab={openNewTab}
@@ -1413,13 +1537,7 @@ export default function App() {
             type="button"
             className={searchOpen || filter.type === "search" ? "icon-btn active" : "icon-btn"}
             title="Search"
-            onClick={() => {
-              if (searchOpen || filter.type === "search") {
-                closeSearch();
-                return;
-              }
-              openGlobalSearch();
-            }}
+            onClick={() => openGlobalSearch()}
           >
             <Icon.Search size={18} />
           </button>
@@ -2006,71 +2124,6 @@ export default function App() {
       />
 
       <section className="note-list-panel">
-        {(searchOpen || filter.type === "search") && (
-          <div className="list-search">
-            <Icon.Search size={15} />
-            <input
-              ref={searchRef}
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && searchInput.trim()) {
-                  runSearch(searchInput);
-                }
-                if (e.key === "Escape") {
-                  closeSearch();
-                }
-              }}
-              placeholder="Search notes  notebook: tag: intitle:"
-              aria-label="Search notes"
-            />
-            {searchScope && (
-              <button
-                type="button"
-                className="search-scope-chip"
-                title="Clear notebook scope"
-                onClick={() => setSearchScope(null)}
-              >
-                in {searchScope.name}
-                <Icon.Close size={11} />
-              </button>
-            )}
-            <button
-              type="button"
-              className="icon-btn"
-              title="Close search"
-              onClick={closeSearch}
-            >
-              <Icon.Close size={14} />
-            </button>
-            {recentSearches.length > 0 && !searchInput.trim() && (
-              <div className="recent-searches">
-                <div className="recent-searches-head">
-                  <span>Recent searches</span>
-                  <button
-                    type="button"
-                    className="ghost-btn small"
-                    onClick={() => persistRecentSearches([])}
-                  >
-                    Clear
-                  </button>
-                </div>
-                {recentSearches.map((query) => (
-                  <button
-                    key={query}
-                    type="button"
-                    className="recent-search-item"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => runSearch(query)}
-                  >
-                    <Icon.Search size={13} />
-                    {query}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
         <div className="panel-header">
           <div>
             <h2>{viewTitle}</h2>
@@ -3016,6 +3069,34 @@ export default function App() {
           onClose={() => setShowJump(false)}
           onSelect={(target) => {
             setShowJump(false);
+            if (target.kind === "notebook") {
+              const notebook = notebooks.find((item) => item.id === target.id);
+              if (notebook) setFilter({ type: "notebook", id: notebook.id, name: notebook.name });
+            } else if (target.kind === "tag") {
+              const tag = tags.find((item) => item.id === target.id);
+              if (tag) setFilter({ type: "tag", id: tag.id, name: tag.name });
+            } else {
+              void loadNote(target.id);
+            }
+          }}
+        />
+      )}
+
+      {searchOpen && (
+        <SearchDialog
+          query={searchInput}
+          recentSearches={recentSearches}
+          scope={searchScope}
+          notes={jumpNotes.length ? jumpNotes : notes}
+          notebooks={notebooks}
+          tags={tags}
+          onQueryChange={setSearchInput}
+          onClearRecent={() => persistRecentSearches([])}
+          onClearScope={() => setSearchScope(null)}
+          onClose={closeSearch}
+          onSearch={runSearch}
+          onSelect={(target) => {
+            setSearchOpen(false);
             if (target.kind === "notebook") {
               const notebook = notebooks.find((item) => item.id === target.id);
               if (notebook) setFilter({ type: "notebook", id: notebook.id, name: notebook.name });

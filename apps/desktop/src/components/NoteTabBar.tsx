@@ -10,6 +10,10 @@ export type NoteTabItem = {
 export function NoteTabBar({
   tabs,
   activeTabId,
+  canGoBack,
+  canGoForward,
+  onBack,
+  onForward,
   onSelect,
   onClose,
   onNewTab,
@@ -17,6 +21,10 @@ export function NoteTabBar({
 }: {
   tabs: NoteTabItem[];
   activeTabId: string;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  onBack: () => void;
+  onForward: () => void;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onNewTab: () => void;
@@ -42,6 +50,28 @@ export function NoteTabBar({
 
   return (
     <div className="note-tab-bar" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="note-history" role="group" aria-label="History">
+        <button
+          type="button"
+          className="note-history-btn"
+          title="Back"
+          aria-label="Back"
+          disabled={!canGoBack}
+          onClick={onBack}
+        >
+          <Icon.Back size={16} />
+        </button>
+        <button
+          type="button"
+          className="note-history-btn"
+          title="Forward"
+          aria-label="Forward"
+          disabled={!canGoForward}
+          onClick={onForward}
+        >
+          <Icon.Forward size={16} />
+        </button>
+      </div>
       <div className="note-tabs" role="tablist" aria-label="Open notes">
         {tabs.map((tab) => {
           const active = tab.id === activeTabId;
