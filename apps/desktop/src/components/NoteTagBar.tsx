@@ -7,10 +7,12 @@ export function NoteTagBar({
   tags,
   selectedIds,
   onChange,
+  onCreateTag,
 }: {
   tags: Tag[];
   selectedIds: string[];
   onChange: (tagIds: string[]) => void;
+  onCreateTag?: (name: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const selected = tags.filter((tag) => selectedIds.includes(tag.id));
@@ -18,6 +20,9 @@ export function NoteTagBar({
     () => suggestedTags(tags, query, selectedIds),
     [tags, query, selectedIds]
   );
+  const cleaned = query.trim();
+  const exactMatch = tags.some((tag) => tag.name.toLowerCase() === cleaned.toLowerCase());
+  const canCreate = Boolean(cleaned && !exactMatch && onCreateTag);
 
   const addTag = (tag: Tag) => {
     if (selectedIds.includes(tag.id)) return;
@@ -27,10 +32,18 @@ export function NoteTagBar({
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (!cleaned) return;
     const match =
-      suggestions.find((tag) => tag.name.toLowerCase() === query.trim().toLowerCase()) ||
-      suggestions[0];
-    if (match) addTag(match as Tag);
+      suggestions.find((tag) => tag.name.toLowerCase() === cleaned.toLowerCase()) ||
+      tags.find((tag) => tag.name.toLowerCase() === cleaned.toLowerCase());
+    if (match) {
+      addTag(match as Tag);
+      return;
+    }
+    if (onCreateTag) {
+      onCreateTag(cleaned);
+      setQuery("");
+    }
   };
 
   return (
@@ -55,15 +68,27 @@ export function NoteTagBar({
           placeholder={selected.length ? "Add tag" : "Add a tag"}
           aria-label="Add a tag"
         />
-        {query && suggestions.length > 0 && (
+        {(query && suggestions.length > 0) || canCreate ? (
           <div className="note-tag-suggestions">
             {suggestions.map((tag) => (
               <button key={tag.id} type="button" onMouseDown={() => addTag(tag as Tag)}>
                 #{tag.name}
               </button>
             ))}
+            {canCreate && (
+              <button
+                type="button"
+                className="note-tag-create"
+                onMouseDown={() => {
+                  onCreateTag?.(cleaned);
+                  setQuery("");
+                }}
+              >
+                Create #{cleaned}
+              </button>
+            )}
           </div>
-        )}
+        ) : null}
       </form>
     </div>
   );

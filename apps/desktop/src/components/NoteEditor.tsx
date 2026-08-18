@@ -21,6 +21,7 @@ import { api, Attachment, attachmentUrl } from "../api";
 import { Icon } from "./Icons";
 import {
   EDITOR_COMMAND_EVENT,
+  CODE_LANGUAGES,
   EDITOR_FONTS,
   EDITOR_FONT_SIZES,
   HIGHLIGHT_COLORS,
@@ -177,7 +178,9 @@ export function NoteEditor({
 
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      StarterKit.configure({
+        codeBlock: { languageClassPrefix: "language-" },
+      }),
       Underline,
       Link.configure({
         openOnClick: false,
@@ -1142,6 +1145,28 @@ export function NoteEditor({
           editor.isActive("codeBlock"),
           <Icon.Code size={16} />
         ))}
+        {editor.isActive("codeBlock") &&
+          wrap(
+            "code-lang",
+            <select
+              className="toolbar-select code-lang"
+              aria-label="Code language"
+              value={String(editor.getAttributes("codeBlock").language || "")}
+              onChange={(event) => {
+                editor
+                  .chain()
+                  .focus()
+                  .updateAttributes("codeBlock", { language: event.target.value })
+                  .run();
+              }}
+            >
+              {CODE_LANGUAGES.map((language) => (
+                <option key={language.label} value={language.id}>
+                  {language.label}
+                </option>
+              ))}
+            </select>
+          )}
         {wrap("inline-code", btn(
           "Inline code",
           () => editor.chain().focus().toggleCode().run(),

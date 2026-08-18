@@ -1,6 +1,6 @@
 # Evernote UI clone handoff
 
-This log is for future sessions continuing the exact-clone work. Passes 1–9 each closed visible Evernote desktop gaps. The goal remains pixel-and-behavior parity with Evernote’s three-pane desktop app (no AI).
+This log is for future sessions continuing the exact-clone work. Passes 1–10 each closed visible Evernote desktop gaps. The goal remains pixel-and-behavior parity with Evernote’s three-pane desktop app (no AI).
 
 ## Closed so far
 
@@ -93,12 +93,24 @@ This log is for future sessions continuing the exact-clone work. Passes 1–9 ea
 2. **Circular pill tabs** with the **+** button immediately after the last tab
 3. **Search popup** (sidebar Search, Ctrl/⌘ K, Ctrl/⌘ Shift F) with recent searches and Go to
 
+### Pass 10 (this session)
+1. **Named saved searches** in the search popup (save, run, delete; persisted locally)
+2. **Reminder agenda grouping**: Overdue / Today / Tomorrow / Later / Completed
+3. **Mark reminder done** without clearing the datetime (list, menus, reminder popover)
+4. **Email note** (`mailto:` from File, Note, context, and the note overflow menu)
+5. **Code block language** select in the formatting toolbar
+6. **Create tag from the tag bar** when the typed name does not exist
+7. **Hover preview** of a note in the list
+8. **Reopen last session** (last filter + note, unless startup is Shortcuts)
+9. **Group search results by notebook**
+10. **Command palette** (Ctrl/⌘ Shift P) for actions, distinct from Jump to
+
 ## Where to look
 
 - Chrome helpers and tests: `apps/desktop/src/uiChrome.ts`, `apps/desktop/src/uiChrome.test.ts`
 - Shell / menus / list / reminder header: `apps/desktop/src/App.tsx`
 - Editor: `apps/desktop/src/components/NoteEditor.tsx`
-- New dialogs: `JumpToDialog.tsx`, `SearchDialog.tsx`, `LinkDialog.tsx`, `NotebookPickerDialog.tsx`
+- New dialogs: `JumpToDialog.tsx`, `SearchDialog.tsx`, `CommandPalette.tsx`, `LinkDialog.tsx`, `NotebookPickerDialog.tsx`
 - Preferences: `apps/desktop/src/api.ts` (`list_view`) and `crates/notebook-core/src/templates.rs`
 
 Run desktop checks from `apps/desktop`: `npm test` and `npx tsc --noEmit`.
@@ -112,34 +124,24 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 - Account chip already lives in the footer with a popover; match Evernote’s signed-in menu more closely if needed
 
 ### Note list
-- Saved searches (named), not only recent searches
 - Drag to reorder notebooks and tags
-- Hover preview of a note (optional; Evernote v10 is weaker here, legacy is stronger)
 
 ### Editor
 - Justify alignment, inline code, superscript/subscript, and callouts exist; remaining: image resize handles and captions
 - Insert checkbox without converting the whole block to a task list (inline checkbox exists)
 - Paste from Word/Google Docs with fewer extra spans
 - Spellcheck underline styling; language picker
-- Code block language label
 - Audio notes / sketches / handwritten — out of scope unless requested
 
 ### Reminders & tasks
-- Dedicated reminders calendar / agenda view
-- Mark reminder done without deleting the datetime
+- Dedicated reminders calendar view (list grouping and mark-done exist)
 - Evernote Tasks are a separate product surface; only add if cloning that explicitly
-
-### Search
-- Named saved searches
-- Search results grouping
 
 ### Import / export / files
 - Export selected notes as PDF
-- Email note (mailto with HTML body)
 - PDF annotate / ink — not needed for a notes clone unless requested
 
 ### Keyboard & power user
-- Command palette beyond Jump to (actions: new note, merge, export, settings)
 - Go to notebook (`Ctrl/⌘ Alt J` style)
 - Customizable shortcuts
 - Nest remaining menus the way Format now nests Align / Table / Color / Callout
@@ -148,7 +150,6 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 - Note list density + view persisted together more cleanly (`list_view` now exists; `show_snippets` is derived)
 - Custom highlight colors
 - Sidebar section order
-- Start in last notebook / last note (startup view is only Notes / Shortcuts / Notebook)
 
 ### Quality / parity bugs to re-check
 - Note-list splitter sometimes feels like it does not move until a larger drag (the sidebar splitter now tracks the pointer instead)

@@ -1323,6 +1323,43 @@ button {
   color: var(--danger);
 }
 
+.note-card.reminder-done .note-card-title {
+  color: var(--text-muted);
+}
+
+.note-hover-preview {
+  position: fixed;
+  z-index: 40;
+  width: min(320px, calc(100vw - 24px));
+  pointer-events: none;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
+}
+
+.note-hover-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.note-hover-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.note-hover-snippet {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .note-card-title {
   font-weight: 650;
   margin-bottom: 4px;
@@ -1359,6 +1396,11 @@ button {
 .meta-chip.reminder.overdue {
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+}
+
+.meta-chip.reminder.done {
+  text-decoration: line-through;
+  color: var(--text-muted);
 }
 
 .note-card-thumb {
@@ -1549,6 +1591,11 @@ button {
   color: var(--danger);
 }
 
+.reminder-chip.done {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
 .editor-actions {
   display: flex;
   gap: 2px;
@@ -1628,6 +1675,10 @@ button {
 
 .toolbar-select.size {
   max-width: 64px;
+}
+
+.toolbar-select.code-lang {
+  max-width: 120px;
 }
 
 .toolbar-overflow {
@@ -2643,6 +2694,62 @@ button {
   background: var(--green-soft);
 }
 
+.search-saved-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+}
+
+.search-saved-row.search-dialog-item {
+  padding: 0;
+}
+
+.search-saved-run {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 9px 10px;
+  border-radius: 10px;
+}
+
+.search-saved-name {
+  font-weight: 650;
+}
+
+.search-saved-query {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-saved-delete {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 6px;
+  border-radius: 8px;
+}
+
+.search-saved-delete:hover {
+  background: var(--sidebar-hover);
+  color: var(--text);
+}
+
+.command-palette .jump-item {
+  grid-template-columns: 1fr auto;
+}
+
 .reminder-popover {
   min-width: 200px;
 }
@@ -3053,6 +3160,11 @@ kbd {
   background: var(--sidebar-hover);
 }
 
+.note-tag-create {
+  font-weight: 650;
+  color: var(--green-dark);
+}
+
 .editor-status {
   display: flex;
   align-items: center;
@@ -3070,6 +3182,10 @@ kbd {
 
 .reminder-overdue-text {
   color: var(--danger);
+}
+
+.reminder-done-text {
+  color: var(--text-muted);
 }
 
 .note-info-panel {
