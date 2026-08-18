@@ -116,6 +116,10 @@ export type AppMenuContext = {
   toggleStackCollapsed: (id: string) => void;
   collapseAllStacks: () => void;
   expandAllStacks: () => void;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  goBack: () => void;
+  goForward: () => void;
 };
 
 export function runEditorCommand(command: EditorCommand) {
@@ -607,6 +611,19 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         { label: "Tags", onSelect: () => ctx.revealSidebarFlyout("tags") },
         { label: "Reminders", onSelect: () => { ctx.setSidebarFlyout(null); ctx.setFilter({ type: "reminders" }); } },
         { label: "Templates", onSelect: () => { ctx.setSidebarFlyout(null); ctx.setFilter({ type: "templates" }); } },
+        { type: "separator" },
+        {
+          label: "Back",
+          shortcut: "Ctrl/⌘ [",
+          disabled: !ctx.canGoBack,
+          onSelect: ctx.goBack,
+        },
+        {
+          label: "Forward",
+          shortcut: "Ctrl/⌘ ]",
+          disabled: !ctx.canGoForward,
+          onSelect: ctx.goForward,
+        },
         { type: "separator" },
         {
           label: ctx.paneLayout.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar",

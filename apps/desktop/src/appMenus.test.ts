@@ -93,6 +93,10 @@ function stubMenu(overrides: Partial<AppMenuContext> = {}): AppMenuContext {
     toggleStackCollapsed: noop,
     collapseAllStacks: noop,
     expandAllStacks: noop,
+    canGoBack: false,
+    canGoForward: false,
+    goBack: noop,
+    goForward: noop,
     ...overrides,
   };
 }
@@ -132,6 +136,8 @@ describe("buildMenuBar", () => {
     assert.equal(viewLabels.includes("Pin Sidebar Open"), true);
     assert.equal(viewLabels.includes("Hide Attachments"), true);
     assert.equal(viewLabels.includes("Show Note Outline"), true);
+    assert.equal(viewLabels.includes("Back"), true);
+    assert.equal(viewLabels.includes("Forward"), true);
   });
 
   it("disables note actions when nothing is targeted", () => {

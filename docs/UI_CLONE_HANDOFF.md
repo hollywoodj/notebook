@@ -1,6 +1,6 @@
 # Evernote UI clone handoff
 
-This log is for future sessions continuing the exact-clone work. Passes 1–8 each closed visible Evernote desktop gaps. The goal remains pixel-and-behavior parity with Evernote’s three-pane desktop app (no AI).
+This log is for future sessions continuing the exact-clone work. Passes 1–9 each closed visible Evernote desktop gaps. The goal remains pixel-and-behavior parity with Evernote’s three-pane desktop app (no AI).
 
 ## Closed so far
 
@@ -88,12 +88,17 @@ This log is for future sessions continuing the exact-clone work. Passes 1–8 ea
 9. **Date range filter chips**: Today / This week / This month
 10. **Snooze reminder**: Later today (+3h) and Tomorrow morning (9am)
 
+### Pass 9 (this session)
+1. **Back / Forward** in the tab bar (View menu + Ctrl/⌘ [ and ])
+2. **Circular pill tabs** with the **+** button immediately after the last tab
+3. **Search popup** (sidebar Search, Ctrl/⌘ K, Ctrl/⌘ Shift F) with recent searches and Go to
+
 ## Where to look
 
 - Chrome helpers and tests: `apps/desktop/src/uiChrome.ts`, `apps/desktop/src/uiChrome.test.ts`
 - Shell / menus / list / reminder header: `apps/desktop/src/App.tsx`
 - Editor: `apps/desktop/src/components/NoteEditor.tsx`
-- New dialogs: `JumpToDialog.tsx`, `LinkDialog.tsx`, `NotebookPickerDialog.tsx`
+- New dialogs: `JumpToDialog.tsx`, `SearchDialog.tsx`, `LinkDialog.tsx`, `NotebookPickerDialog.tsx`
 - Preferences: `apps/desktop/src/api.ts` (`list_view`) and `crates/notebook-core/src/templates.rs`
 
 Run desktop checks from `apps/desktop`: `npm test` and `npx tsc --noEmit`.

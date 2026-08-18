@@ -65,6 +65,10 @@ import {
   reorderById,
   sidebarFilterLabel,
   sidebarFlyoutTitle,
+  sameNavLocation,
+  pushNavHistory,
+  stepNavBack,
+  stepNavForward,
 } from "./uiChrome.ts";
 
 describe("clampPaneWidth", () => {
@@ -616,5 +620,27 @@ describe("reminder snooze", () => {
     assert.equal(later.getHours(), 13);
     assert.equal(morning.getDate(), 19);
     assert.equal(morning.getHours(), 9);
+  });
+});
+
+describe("navigation history", () => {
+  it("pushes a new location and can step back and forward", () => {
+    const notes = { filter: { type: "all" }, noteId: null };
+    const invoice = { filter: { type: "all" }, noteId: "n1" };
+    const work = { filter: { type: "notebook", id: "nb" }, noteId: "n1" };
+    assert.equal(sameNavLocation(notes, { filter: { type: "all" }, noteId: null }), true);
+    assert.equal(sameNavLocation(notes, invoice), false);
+    const pushed = pushNavHistory([], notes, invoice);
+    assert.ok(pushed);
+    assert.equal(pushNavHistory(pushed.past, invoice, invoice), null);
+    const back = stepNavBack(pushed.past, invoice, []);
+    assert.ok(back);
+    assert.equal(back.current.noteId, null);
+    const forward = stepNavForward(back.past, back.current, back.future);
+    assert.ok(forward);
+    assert.equal(forward.current.noteId, "n1");
+    const notebook = pushNavHistory(forward.past, forward.current, work);
+    assert.ok(notebook);
+    assert.equal(notebook.future.length, 0);
   });
 });
