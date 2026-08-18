@@ -6,7 +6,8 @@ export type MenuBarItem =
       label: string;
       shortcut?: string;
       disabled?: boolean;
-      onSelect: () => void;
+      onSelect?: () => void;
+      children?: MenuBarItem[];
     };
 
 export interface MenuBarGroup {
@@ -18,6 +19,52 @@ function isSeparator(
   item: MenuBarItem
 ): item is Extract<MenuBarItem, { type: "separator" }> {
   return "type" in item && item.type === "separator";
+}
+
+function MenuItems({
+  items,
+  onClose,
+}: {
+  items: MenuBarItem[];
+  onClose: () => void;
+}) {
+  return (
+    <>
+      {items.map((item, index) =>
+        isSeparator(item) ? (
+          <div className="app-menu-separator" role="separator" key={`separator-${index}`} />
+        ) : (
+          <div className="app-menu-item-wrap" key={`${item.label}-${index}`}>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={item.disabled}
+              aria-haspopup={item.children?.length ? "menu" : undefined}
+              onClick={() => {
+                if (item.children?.length) return;
+                onClose();
+                item.onSelect?.();
+              }}
+            >
+              <span>{item.label}</span>
+              {item.children?.length ? (
+                <span className="app-menu-arrow" aria-hidden="true">
+                  ›
+                </span>
+              ) : item.shortcut ? (
+                <kbd>{item.shortcut}</kbd>
+              ) : null}
+            </button>
+            {item.children?.length ? (
+              <div className="app-menu-submenu" role="menu">
+                <MenuItems items={item.children} onClose={onClose} />
+              </div>
+            ) : null}
+          </div>
+        )
+      )}
+    </>
+  );
 }
 
 export function MenuBar({ groups }: { groups: MenuBarGroup[] }) {
@@ -64,29 +111,7 @@ export function MenuBar({ groups }: { groups: MenuBarGroup[] }) {
             </button>
             {open && (
               <div className="app-menu-dropdown" role="menu">
-                {group.items.map((item, index) =>
-                  isSeparator(item) ? (
-                    <div
-                      className="app-menu-separator"
-                      role="separator"
-                      key={`separator-${index}`}
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      role="menuitem"
-                      key={`${item.label}-${index}`}
-                      disabled={item.disabled}
-                      onClick={() => {
-                        setOpenMenu(null);
-                        item.onSelect();
-                      }}
-                    >
-                      <span>{item.label}</span>
-                      {item.shortcut && <kbd>{item.shortcut}</kbd>}
-                    </button>
-                  )
-                )}
+                <MenuItems items={group.items} onClose={() => setOpenMenu(null)} />
               </div>
             )}
           </div>

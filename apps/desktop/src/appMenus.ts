@@ -107,6 +107,10 @@ export type AppMenuContext = {
   deleteTag: (tag: { id: string; name: string }) => void | Promise<void>;
   restoreTemplates: () => void | Promise<void>;
   toggleTheme: () => void;
+  collapsedStacks: string[];
+  toggleStackCollapsed: (id: string) => void;
+  collapseAllStacks: () => void;
+  expandAllStacks: () => void;
 };
 
 export function runEditorCommand(command: EditorCommand) {
@@ -355,6 +359,20 @@ export function buildContextMenu(
         label: "Rename stack…",
         onSelect: () =>
           ctx.openRename({ kind: "stack", id: stack.id, name: stack.name }),
+      },
+      {
+        label: ctx.collapsedStacks.includes(stack.id) ? "Expand stack" : "Collapse stack",
+        onSelect: () => ctx.toggleStackCollapsed(stack.id),
+      },
+      {
+        label: "Collapse all stacks",
+        disabled: ctx.stacks.length === 0,
+        onSelect: ctx.collapseAllStacks,
+      },
+      {
+        label: "Expand all stacks",
+        disabled: ctx.collapsedStacks.length === 0,
+        onSelect: ctx.expandAllStacks,
       },
       { type: "separator" },
       {
@@ -619,6 +637,17 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: ctx.prefs.theme === "dark" ? "Use Light Theme" : "Use Dark Theme",
           onSelect: () => ctx.toggleTheme(),
         },
+        { type: "separator" },
+        {
+          label: "Collapse All Stacks",
+          disabled: ctx.stacks.length === 0,
+          onSelect: ctx.collapseAllStacks,
+        },
+        {
+          label: "Expand All Stacks",
+          disabled: ctx.collapsedStacks.length === 0,
+          onSelect: ctx.expandAllStacks,
+        },
       ],
     },
     {
@@ -741,6 +770,23 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
       label: "Format",
       items: [
         {
+          label: "Font",
+          disabled: !ctx.activeNote,
+          children: [
+            { label: "Default", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontFamily" }) },
+            { label: "Sans Serif", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontFamily", family: "Arial, sans-serif" }) },
+            { label: "Serif", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontFamily", family: "Georgia, \"Times New Roman\", serif" }) },
+            { label: "Monospace", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontFamily", family: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" }) },
+            { type: "separator" },
+            { label: "12", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize", size: "12px" }) },
+            { label: "16", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize", size: "16px" }) },
+            { label: "18", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize", size: "18px" }) },
+            { label: "24", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize", size: "24px" }) },
+            { label: "Reset Size", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize" }) },
+          ],
+        },
+        { type: "separator" },
+        {
           label: "Heading 1",
           disabled: !ctx.activeNote,
           onSelect: () => runEditorCommand({ type: "heading", level: 1 }),
@@ -780,42 +826,64 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           onSelect: () => runEditorCommand({ type: "strike" }),
         },
         { type: "separator" },
-        ...HIGHLIGHT_COLORS.map((swatch) => ({
-          label: `Highlight ${swatch.label}`,
-          disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "highlight", color: swatch.color }),
-        })),
-        { type: "separator" },
-        ...TEXT_COLORS.filter((swatch) => swatch.color).map((swatch) => ({
-          label: `Text ${swatch.label}`,
-          disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "color", color: swatch.color }),
-        })),
         {
-          label: "Remove Text Color",
+          label: "Highlight",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "color" }),
+          children: [
+            ...HIGHLIGHT_COLORS.map((swatch) => ({
+              label: swatch.label,
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "highlight", color: swatch.color }),
+            })),
+            {
+              label: "Remove Highlight",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "highlight" }),
+            },
+          ],
+        },
+        {
+          label: "Text Color",
+          disabled: !ctx.activeNote,
+          children: [
+            ...TEXT_COLORS.filter((swatch) => swatch.color).map((swatch) => ({
+              label: swatch.label,
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "color", color: swatch.color }),
+            })),
+            {
+              label: "Remove Text Color",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "color" }),
+            },
+          ],
         },
         { type: "separator" },
         {
-          label: "Align Left",
+          label: "Align",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "align", align: "left" }),
-        },
-        {
-          label: "Align Center",
-          disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "align", align: "center" }),
-        },
-        {
-          label: "Align Right",
-          disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "align", align: "right" }),
-        },
-        {
-          label: "Justify",
-          disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "align", align: "justify" }),
+          children: [
+            {
+              label: "Align Left",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "align", align: "left" }),
+            },
+            {
+              label: "Align Center",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "align", align: "center" }),
+            },
+            {
+              label: "Align Right",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "align", align: "right" }),
+            },
+            {
+              label: "Justify",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "align", align: "justify" }),
+            },
+          ],
         },
         {
           label: "Increase Indent",
@@ -831,9 +899,40 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         },
         { type: "separator" },
         {
-          label: "Insert Table",
+          label: "Table",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "insertTable" }),
+          children: [
+            {
+              label: "Insert Table",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "insertTable" }),
+            },
+            {
+              label: "Add Row Below",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "tableAction", action: "addRow" }),
+            },
+            {
+              label: "Add Column Right",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "tableAction", action: "addColumn" }),
+            },
+            {
+              label: "Delete Row",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "tableAction", action: "deleteRow" }),
+            },
+            {
+              label: "Delete Column",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "tableAction", action: "deleteColumn" }),
+            },
+            {
+              label: "Delete Table",
+              disabled: !ctx.activeNote,
+              onSelect: () => runEditorCommand({ type: "tableAction", action: "deleteTable" }),
+            },
+          ],
         },
         {
           label: "Insert Link…",

@@ -118,9 +118,25 @@ describe("Evernote sidebar chrome", () => {
 
   it("counts the current view rather than repeating the all-notes total", () => {
     assert.match(appSource, /title="Notes in this view"/);
-    assert.match(appSource, /\{notes\.length\}/);
+    assert.match(appSource, /\{visibleNotes\.length\}/);
     assert.match(appSource, /\{shortcutNotes\.length\}/);
     assert.match(appSource, /\{notebooks\.length\}/);
     assert.match(navSource, /notebook\.note_count \?\? 0/);
+  });
+});
+
+describe("Evernote list and account chrome", () => {
+  it("shows recent searches, filter chips, and stack collapse", () => {
+    assert.match(appSource, /Recent searches/);
+    assert.match(appSource, /Has reminder/);
+    assert.match(appSource, /Has attachment/);
+    assert.match(appSource, /note-card-thumb/);
+    assert.match(appSource, /meta-chip/);
+    assert.match(appSource, /persistCollapsedStacks/);
+    assert.match(appSource, /account-popover/);
+    assert.match(menuSource, /Collapse stack/);
+    assert.match(menuSource, /label: "Align"/);
+    assert.match(menuSource, /label: "Table"/);
+    assert.match(menuSource, /label: "Font"/);
   });
 });

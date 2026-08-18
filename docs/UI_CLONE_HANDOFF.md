@@ -1,6 +1,6 @@
 # Evernote UI clone handoff
 
-This log is for future sessions continuing the exact-clone work. Passes 1–4 each closed ten visible Evernote desktop gaps. The goal remains pixel-and-behavior parity with Evernote’s three-pane desktop app (no AI).
+This log is for future sessions continuing the exact-clone work. Passes 1–7 each closed visible Evernote desktop gaps. The goal remains pixel-and-behavior parity with Evernote’s three-pane desktop app (no AI).
 
 ## Closed so far
 
@@ -64,6 +64,18 @@ This log is for future sessions continuing the exact-clone work. Passes 1–4 ea
 4. Clicking the section that is already open closes its panel; Escape and a click outside the sidebar close it too
 5. View menu gained **Notebooks** and **Tags** entries that open the matching panel
 
+### Pass 7 (this session)
+1. **Compact toolbar overflow** (`…`) when the formatting bar is too narrow
+2. **Font family and size** dropdowns in the toolbar (and a Format → Font menu)
+3. **Nested Format menus** for Highlight, Text Color, Align, and Table
+4. **Card thumbnails** from the first image attachment or inline image
+5. **List metadata** as its own row: reminder time, attachment count, checklist progress
+6. **Recent searches** under Search, persisted locally
+7. **Filter chips** for Has reminder and Has attachment
+8. **Link dialog** Open / Copy, and display text is always applied
+9. **Account chip popover** with a hashed avatar color, Account, Settings, and theme
+10. **Collapse / expand stacks** (click, context menu, View menu)
+
 ## Where to look
 
 - Chrome helpers and tests: `apps/desktop/src/uiChrome.ts`, `apps/desktop/src/uiChrome.test.ts`
@@ -79,25 +91,20 @@ Run desktop checks from `apps/desktop`: `npm test` and `npx tsc --noEmit`.
 Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the product scope changes.
 
 ### High-visibility chrome
-- Compact toolbar overflow (`…`) when the window is narrow
 - Always on top
-- Account chip already lives in the footer; match avatar color / popover more closely if needed
+- Account chip already lives in the footer with a popover; match Evernote’s signed-in menu more closely if needed
 
 ### Note list
-- **Thumbnails** in Cards view (first image attachment / inline image)
-- Attachment count, checklist progress, and reminder time as distinct list metadata (not only icons)
-- Saved searches / recent searches under Search
-- Filter chips: has reminder, has attachment, created/updated date range
-- Drag to reorder notebooks and tags; collapse/expand all stacks
+- Saved searches (named), not only recent searches
+- Filter chips: created/updated date range
+- Drag to reorder notebooks and tags
 - Hover preview of a note (optional; Evernote v10 is weaker here, legacy is stronger)
 
 ### Editor
 - Table of contents / outline for headings
-- Font family and size **in the toolbar** (prefs exist only in Settings today)
-- Justify alignment, inline code, superscript/subscript
+- Justify alignment, inline code, superscript/subscript (justify and inline code exist; add super/sub)
 - Callout / colored info boxes
-- Insert checkbox without converting the whole block to a task list (Evernote mixed checklists)
-- Better link dialog: display text always applied to an existing selection; open/copy link
+- Insert checkbox without converting the whole block to a task list (inline checkbox exists)
 - Paste from Word/Google Docs with fewer extra spans
 - Spellcheck underline styling; language picker
 - Code block language label
@@ -126,7 +133,7 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 - `J` / `K` note navigation when the list is focused
 - Go to notebook (`Ctrl/⌘ Alt J` style)
 - Customizable shortcuts
-- Menu bar nested submenus (Format → Align, Format → Table) instead of a long flat list
+- Nest remaining menus the way Format now nests Align / Table / Color
 
 ### Settings & theming
 - Note list density + view persisted together more cleanly (`list_view` now exists; `show_snippets` is derived)
@@ -144,6 +151,8 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 - Table Tab vs indent: indent yields to the table extension; re-test nested lists inside table cells
 - Jump To currently lists non-template notes only; consider templates and trash as optional groups
 - Toolbar hide + attach: media button is in the toolbar; drag-and-drop still works when hidden
+- Toolbar overflow should be re-checked in a narrow window; font dropdowns take extra width
+- Card thumbnails depend on the first image attachment or an `<img>` in the note body
 
 ## Intentionally out of scope
 

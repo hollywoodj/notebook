@@ -378,6 +378,12 @@ export type EditorCommand =
   | { type: "indent" | "outdent" }
   | { type: "link"; href?: string; text?: string }
   | { type: "openLinkDialog" }
+  | { type: "fontFamily"; family?: string }
+  | { type: "fontSize"; size?: string }
+  | {
+      type: "tableAction";
+      action: "insert" | "addRow" | "addColumn" | "deleteRow" | "deleteColumn" | "deleteTable";
+    }
   | { type: "replace"; query: string; replacement: string; all?: boolean };
 
 export function dispatchEditorCommand(command: EditorCommand) {
@@ -700,4 +706,143 @@ export function hasVisibleSidebarNotebooks(
   if (!needle) return notebooks.length > 0;
   if (stacks.some((stack) => stack.name.toLowerCase().includes(needle))) return true;
   return notebooks.some((notebook) => notebook.name.toLowerCase().includes(needle));
+}
+
+export const TOOLBAR_OVERFLOW_WIDTH = 34;
+
+/** How many leading toolbar items fit before the rest move into `…`. */
+export function visibleToolbarCount(
+  availableWidth: number,
+  itemWidths: number[],
+  overflowWidth = TOOLBAR_OVERFLOW_WIDTH
+): number {
+  if (itemWidths.length === 0) return 0;
+  const total = itemWidths.reduce((sum, width) => sum + width, 0);
+  if (total <= availableWidth) return itemWidths.length;
+  const budget = Math.max(0, availableWidth - overflowWidth);
+  let used = 0;
+  let count = 0;
+  for (const width of itemWidths) {
+    if (used + width > budget) break;
+    used += width;
+    count += 1;
+  }
+  return count;
+}
+
+export const EDITOR_FONTS = [
+  { id: "", label: "Default" },
+  { id: "Arial, sans-serif", label: "Sans Serif" },
+  { id: "Georgia, \"Times New Roman\", serif", label: "Serif" },
+  { id: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", label: "Monospace" },
+  { id: "Trebuchet MS, sans-serif", label: "Trebuchet" },
+  { id: "Verdana, sans-serif", label: "Verdana" },
+] as const;
+
+export const EDITOR_FONT_SIZES = [12, 14, 16, 18, 24, 32, 48] as const;
+
+export const RECENT_SEARCHES_KEY = "notebook.recentSearches";
+export const RECENT_SEARCH_LIMIT = 8;
+
+export function parseRecentSearches(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, RECENT_SEARCH_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+export function rememberSearch(history: string[], query: string, limit = RECENT_SEARCH_LIMIT): string[] {
+  const cleaned = query.trim();
+  if (!cleaned) return history;
+  return [cleaned, ...history.filter((item) => item.toLowerCase() !== cleaned.toLowerCase())].slice(
+    0,
+    limit
+  );
+}
+
+export type NoteListFacet = "reminder" | "attachment";
+
+export function toggleListFacet(
+  current: NoteListFacet[],
+  facet: NoteListFacet
+): NoteListFacet[] {
+  return current.includes(facet)
+    ? current.filter((item) => item !== facet)
+    : [...current, facet];
+}
+
+export function noteMatchesFacets(
+  note: { reminder_at: string | null; attachment_count: number },
+  facets: NoteListFacet[]
+): boolean {
+  if (facets.includes("reminder") && !note.reminder_at) return false;
+  if (facets.includes("attachment") && note.attachment_count <= 0) return false;
+  return true;
+}
+
+export function checklistProgressLabel(done: number, total: number): string | null {
+  if (!Number.isFinite(done) || !Number.isFinite(total) || total <= 0) return null;
+  return `${Math.max(0, Math.round(done))}/${Math.max(0, Math.round(total))}`;
+}
+
+export function attachmentCountLabel(count: number): string | null {
+  if (!Number.isFinite(count) || count <= 0) return null;
+  return count === 1 ? "1 attachment" : `${Math.round(count)} attachments`;
+}
+
+const AVATAR_COLORS = ["#00a82d", "#2b6cb0", "#d64545", "#d9822b", "#6b46c1", "#0f9d8e"];
+
+export function avatarColor(name: string): string {
+  const source = name.trim() || "?";
+  let hash = 0;
+  for (let i = 0; i < source.length; i++) {
+    hash = (hash * 31 + source.charCodeAt(i)) | 0;
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+export const COLLAPSED_STACKS_KEY = "notebook.collapsedStacks";
+
+export function parseCollapsedStacks(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id): id is string => typeof id === "string" && id.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+export function toggleCollapsedId(ids: string[], id: string): string[] {
+  return ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id];
+}
+
+export function collapseAllIds(allIds: string[]): string[] {
+  return [...new Set(allIds.filter(Boolean))];
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function resolveThumbnailUrl(
+  raw: string | null | undefined,
+  toAttachmentUrl: (id: string) => string
+): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const attached = trimmed.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+  if (UUID_RE.test(trimmed) && attached) return toAttachmentUrl(attached[1]);
+  if (trimmed.startsWith("notebook-attachment://") && attached) {
+    return toAttachmentUrl(attached[1]);
+  }
+  return trimmed;
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import {
   Account,
   api,
+  attachmentUrl,
   defaultPreferences,
   Note,
   NoteSummary,
@@ -57,9 +58,15 @@ import {
   LIST_MIN,
   NOTE_DRAG_TYPE,
   PANE_LAYOUT_KEY,
+  RECENT_SEARCHES_KEY,
+  COLLAPSED_STACKS_KEY,
   SIDEBAR_RAIL_WIDTH,
   adjacentNoteId,
+  attachmentCountLabel,
+  avatarColor,
+  checklistProgressLabel,
   clampPaneWidth,
+  collapseAllIds,
   countWords,
   decodeNoteDrag,
   dispatchEditorCommand,
@@ -76,23 +83,31 @@ import {
   nextSidebarFlyout,
   nextZoom,
   noteAppLink,
+  noteMatchesFacets,
   noteTabLabel,
   notebooksMatchingFilter,
+  parseCollapsedStacks,
   parseEditorChrome,
   parsePaneLayout,
+  parseRecentSearches,
   reminderFromPreset,
+  rememberSearch,
   reorderById,
   resizeSidebarTo,
   resolveListView,
+  resolveThumbnailUrl,
   sidebarFilterLabel,
   sidebarFlyoutTitle,
   snippetParts,
   toDatetimeLocalValue,
+  toggleCollapsedId,
+  toggleListFacet,
   toggleNoteExpanded,
   toggleNoteListHidden,
   toggleSidebarRail,
   windowTitleForNote,
   type ListView,
+  type NoteListFacet,
   type ReminderPreset,
   type SidebarFlyout,
   type SidebarFlyoutKind,
@@ -115,6 +130,18 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState(() => tabs[0].id);
   const [searchInput, setSearchInput] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [recentSearches, setRecentSearches] = useState(() =>
+    parseRecentSearches(
+      typeof localStorage === "undefined" ? null : localStorage.getItem(RECENT_SEARCHES_KEY)
+    )
+  );
+  const [listFacets, setListFacets] = useState<NoteListFacet[]>([]);
+  const [collapsedStacks, setCollapsedStacks] = useState(() =>
+    parseCollapsedStacks(
+      typeof localStorage === "undefined" ? null : localStorage.getItem(COLLAPSED_STACKS_KEY)
+    )
+  );
+  const [accountMenu, setAccountMenu] = useState(false);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [showNewNotebook, setShowNewNotebook] = useState(false);
   const [showNewStack, setShowNewStack] = useState(false);
@@ -230,6 +257,24 @@ export default function App() {
   const persistEditorChrome = (next: typeof editorChrome) => {
     setEditorChrome(next);
     localStorage.setItem(EDITOR_CHROME_KEY, JSON.stringify(next));
+  };
+
+  const persistRecentSearches = (history: string[]) => {
+    setRecentSearches(history);
+    localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(history));
+  };
+
+  const persistCollapsedStacks = (ids: string[]) => {
+    setCollapsedStacks(ids);
+    localStorage.setItem(COLLAPSED_STACKS_KEY, JSON.stringify(ids));
+  };
+
+  const runSearch = (query: string) => {
+    const cleaned = query.trim();
+    if (!cleaned) return;
+    persistRecentSearches(rememberSearch(recentSearches, cleaned));
+    setSearchInput(cleaned);
+    setFilter({ type: "search", query: cleaned });
   };
 
   const openGlobalSearch = () => {
@@ -791,17 +836,22 @@ export default function App() {
     return grouped;
   }, [notebooks, stacks]);
 
+  const visibleNotes = useMemo(
+    () => notes.filter((note) => noteMatchesFacets(note, listFacets)),
+    [notes, listFacets]
+  );
+
   const groupedNotes = useMemo(
     () =>
       groupNotesForList(
-        notes,
+        visibleNotes,
         prefs.sort_by === "title"
           ? "title"
           : prefs.sort_by === "created"
             ? "created"
             : "updated"
       ),
-    [notes, prefs.sort_by]
+    [visibleNotes, prefs.sort_by]
   );
 
   const visibleTags = useMemo(
@@ -872,7 +922,9 @@ export default function App() {
       } else if (e.key === "Escape" && focusMode) {
         e.preventDefault();
         setFocusMode(false);
-      } else if (e.key === "Escape" && sidebarFlyout) {
+      } else if (e.key === "Escape" && accountMenu) {
+        e.preventDefault();
+        setAccountMenu(false);
         e.preventDefault();
         setSidebarFlyout(null);
       } else if (e.key === "Escape" && searchOpen) {
@@ -891,14 +943,14 @@ export default function App() {
       } else if (
         (e.key === "ArrowDown" || e.key === "ArrowUp") &&
         !isTextInputFocused() &&
-        notes.length > 0
+        visibleNotes.length > 0
       ) {
         e.preventDefault();
         const current =
           lastClickedNoteId.current ||
           (selectedNoteIds.size === 1 ? [...selectedNoteIds][0] : null);
         const nextId = adjacentNoteId(
-          notes,
+          visibleNotes,
           current,
           e.key === "ArrowDown" ? 1 : -1
         );
@@ -1151,6 +1203,11 @@ export default function App() {
       setPrefs((current) => ({ ...current, theme }));
       void api.updateSettings({ theme });
     },
+    collapsedStacks,
+    toggleStackCollapsed: (id: string) =>
+      persistCollapsedStacks(toggleCollapsedId(collapsedStacks, id)),
+    collapseAllStacks: () => persistCollapsedStacks(collapseAllIds(stacks.map((stack) => stack.id))),
+    expandAllStacks: () => persistCollapsedStacks([]),
   };
   const contextMenuItems = (target: ContextTarget) => buildContextMenu(target, menuCtx);
   const menuGroups = buildMenuBar(menuCtx);
@@ -1180,6 +1237,7 @@ export default function App() {
         setShowNewMenu(false);
         setShowNoteMenu(false);
         setShowReminderMenu(false);
+        setAccountMenu(false);
         setContextMenu(null);
         if (!(event.target as HTMLElement).closest(".sidebar")) {
           setSidebarFlyout(null);
@@ -1543,9 +1601,13 @@ export default function App() {
                     );
                     if (!stacked.length) return null;
                     return (
-                      <div key={stack.id} className="stack-group">
+                      <div key={stack.id} className={collapsedStacks.includes(stack.id) ? "stack-group collapsed" : "stack-group"}>
                         <button
                           className="stack-name"
+                          aria-expanded={!collapsedStacks.includes(stack.id)}
+                          onClick={() =>
+                            persistCollapsedStacks(toggleCollapsedId(collapsedStacks, stack.id))
+                          }
                           onContextMenu={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
@@ -1557,9 +1619,10 @@ export default function App() {
                             });
                           }}
                         >
+                          <Icon.Chevron size={12} />
                           {stack.name}
                         </button>
-                        {stacked.map((nb) => (
+                        {!collapsedStacks.includes(stack.id) && stacked.map((nb) => (
                           <NotebookNavItem
                             key={nb.id}
                             notebook={nb}
@@ -1672,18 +1735,73 @@ export default function App() {
           </div>
         )}
         <div className="sidebar-account">
-          <button
-            type="button"
-            className="account-chip"
-            onClick={() => openSettings("account")}
-            title="Account"
-          >
-            <span className="avatar">{account.display_name.slice(0, 1).toUpperCase()}</span>
-            <span className="account-copy">
-              <span className="account-name">{account.display_name}</span>
-              <span className="account-email">{account.email || "Local account"}</span>
-            </span>
-          </button>
+          <div className="account-menu-wrap" onMouseDown={(event) => event.stopPropagation()}>
+            <button
+              type="button"
+              className={accountMenu ? "account-chip active" : "account-chip"}
+              onClick={() => setAccountMenu((open) => !open)}
+              title="Account"
+            >
+              <span
+                className="avatar"
+                style={{ background: avatarColor(account.display_name) }}
+              >
+                {account.display_name.slice(0, 1).toUpperCase()}
+              </span>
+              <span className="account-copy">
+                <span className="account-name">{account.display_name}</span>
+                <span className="account-email">{account.email || "Local account"}</span>
+              </span>
+            </button>
+            {accountMenu && (
+              <div className="account-popover" role="menu">
+                <div className="account-popover-head">
+                  <span
+                    className="avatar"
+                    style={{ background: avatarColor(account.display_name) }}
+                  >
+                    {account.display_name.slice(0, 1).toUpperCase()}
+                  </span>
+                  <span className="account-copy">
+                    <span className="account-name">{account.display_name}</span>
+                    <span className="account-email">{account.email || "Local account"}</span>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setAccountMenu(false);
+                    openSettings("account");
+                  }}
+                >
+                  Account
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setAccountMenu(false);
+                    openSettings();
+                  }}
+                >
+                  Settings
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setAccountMenu(false);
+                    const theme = prefs.theme === "dark" ? "light" : "dark";
+                    setPrefs((current) => ({ ...current, theme }));
+                    void api.updateSettings({ theme });
+                  }}
+                >
+                  {prefs.theme === "dark" ? "Use light theme" : "Use dark theme"}
+                </button>
+              </div>
+            )}
+          </div>
           <button
             type="button"
             className="icon-btn"
@@ -1769,7 +1887,7 @@ export default function App() {
               onChange={(e) => setSearchInput(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && searchInput.trim()) {
-                  setFilter({ type: "search", query: searchInput.trim() });
+                  runSearch(searchInput);
                 }
                 if (e.key === "Escape") {
                   setSearchOpen(false);
@@ -1791,13 +1909,42 @@ export default function App() {
             >
               <Icon.Close size={14} />
             </button>
+            {recentSearches.length > 0 && !searchInput.trim() && (
+              <div className="recent-searches">
+                <div className="recent-searches-head">
+                  <span>Recent searches</span>
+                  <button
+                    type="button"
+                    className="ghost-btn small"
+                    onClick={() => persistRecentSearches([])}
+                  >
+                    Clear
+                  </button>
+                </div>
+                {recentSearches.map((query) => (
+                  <button
+                    key={query}
+                    type="button"
+                    className="recent-search-item"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => runSearch(query)}
+                  >
+                    <Icon.Search size={13} />
+                    {query}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
         <div className="panel-header">
           <div>
             <h2>{viewTitle}</h2>
             <span className="count" title="Notes in this view">
-              {notes.length}
+              {visibleNotes.length}
+              {listFacets.length && visibleNotes.length !== notes.length
+                ? ` of ${notes.length}`
+                : ""}
             </span>
           </div>
           <div className="panel-tools">
@@ -1866,6 +2013,24 @@ export default function App() {
             </div>
           </div>
         </div>
+        {filter.type !== "trash" && (
+          <div className="list-facets" role="group" aria-label="Filter notes">
+            <button
+              type="button"
+              className={listFacets.includes("reminder") ? "active" : ""}
+              onClick={() => setListFacets(toggleListFacet(listFacets, "reminder"))}
+            >
+              Has reminder
+            </button>
+            <button
+              type="button"
+              className={listFacets.includes("attachment") ? "active" : ""}
+              onClick={() => setListFacets(toggleListFacet(listFacets, "attachment"))}
+            >
+              Has attachment
+            </button>
+          </div>
+        )}
         {importStatus && <div className="import-status">{importStatus}</div>}
         {selectedNoteIds.size > 1 && (
           <div className="bulk-bar">
@@ -1967,16 +2132,52 @@ export default function App() {
               <div className="note-card-title">
                 {note.is_pinned && <Icon.Pin size={13} />}
                 {note.is_template && <Icon.Templates size={13} />}
-                {note.reminder_at && <Icon.Reminder size={13} />}
-                {note.attachment_count > 0 && <Icon.Attach size={13} />}
                 {note.title || "Untitled"}
               </div>
               <div className="note-card-meta">
-                {note.reminder_at
-                  ? formatReminderLabel(note.reminder_at, prefs.date_format)
-                  : formatDate(note.updated_at, prefs.date_format)}
+                {formatDate(note.updated_at, prefs.date_format)}
                 {note.notebook_name ? ` · ${note.notebook_name}` : ""}
               </div>
+              {(note.reminder_at ||
+                note.attachment_count > 0 ||
+                (note.checklist_total || 0) > 0) && (
+                <div className="note-card-extras">
+                  {note.reminder_at && (
+                    <span
+                      className={
+                        isReminderOverdue(note.reminder_at)
+                          ? "meta-chip reminder overdue"
+                          : "meta-chip reminder"
+                      }
+                    >
+                      <Icon.Reminder size={12} />
+                      {formatReminderLabel(note.reminder_at, prefs.date_format)}
+                    </span>
+                  )}
+                  {attachmentCountLabel(note.attachment_count) && (
+                    <span className="meta-chip">
+                      <Icon.Attach size={12} />
+                      {attachmentCountLabel(note.attachment_count)}
+                    </span>
+                  )}
+                  {checklistProgressLabel(note.checklist_done || 0, note.checklist_total || 0) && (
+                    <span className="meta-chip">
+                      <Icon.Checklist size={12} />
+                      {checklistProgressLabel(note.checklist_done || 0, note.checklist_total || 0)}
+                    </span>
+                  )}
+                </div>
+              )}
+              {listView === "cards" &&
+                resolveThumbnailUrl(note.thumbnail_url, attachmentUrl) && (
+                  <div
+                    className="note-card-thumb"
+                    style={{
+                      backgroundImage: `url("${resolveThumbnailUrl(note.thumbnail_url, attachmentUrl)}")`,
+                    }}
+                    aria-hidden="true"
+                  />
+                )}
               {listView !== "titles" && prefs.show_snippets && (
                 <div className="note-card-snippet">
                   {searchQuery
@@ -2009,6 +2210,9 @@ export default function App() {
               onCreate={() => void createNote()}
               onBrowseTemplates={() => setShowGallery(true)}
             />
+          )}
+          {notes.length > 0 && visibleNotes.length === 0 && (
+            <div className="empty-state compact">No notes match these filters.</div>
           )}
         </div>
       </section>

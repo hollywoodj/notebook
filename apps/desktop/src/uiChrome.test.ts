@@ -26,18 +26,30 @@ import {
   notesToEnex,
   parseEditorChrome,
   parsePaneLayout,
+  parseRecentSearches,
+  parseCollapsedStacks,
   formattingToolbarVisible,
   attachmentsLabel,
+  attachmentCountLabel,
+  avatarColor,
+  checklistProgressLabel,
+  collapseAllIds,
+  noteMatchesFacets,
+  rememberSearch,
   reminderFromPreset,
   resizeSidebarTo,
   resolveListView,
+  resolveThumbnailUrl,
   snippetParts,
   suggestedTags,
   toDatetimeLocalValue,
   toEnexTimestamp,
+  toggleCollapsedId,
+  toggleListFacet,
   toggleNoteExpanded,
   toggleNoteListHidden,
   toggleSidebarRail,
+  visibleToolbarCount,
   windowTitleForNote,
   createNoteTab,
   noteTabLabel,
@@ -448,5 +460,79 @@ describe("sidebar filter", () => {
       hasVisibleSidebarNotebooks([{ name: "Work" }], [{ name: "Personal" }], "zzz"),
       false
     );
+  });
+});
+
+describe("visibleToolbarCount", () => {
+  it("keeps every item when they fit, otherwise hides from the end behind overflow", () => {
+    assert.equal(visibleToolbarCount(400, [40, 40, 40, 40]), 4);
+    assert.equal(visibleToolbarCount(120, [40, 40, 40, 40], 30), 2);
+    assert.equal(visibleToolbarCount(20, [40, 40], 30), 0);
+  });
+});
+
+describe("recent searches", () => {
+  it("moves a repeated query to the front and caps the list", () => {
+    assert.deepEqual(rememberSearch(["alpha", "beta"], "Beta"), ["Beta", "alpha"]);
+    assert.deepEqual(rememberSearch(["a", "b", "c"], "d", 3), ["d", "a", "b"]);
+    assert.deepEqual(parseRecentSearches(JSON.stringify([" invoice ", ""])), ["invoice"]);
+    assert.deepEqual(parseRecentSearches("{"), []);
+  });
+});
+
+describe("note list facets", () => {
+  it("filters notes that have a reminder or attachment", () => {
+    const notes = [
+      { reminder_at: "2026-08-18T09:00:00Z", attachment_count: 0 },
+      { reminder_at: null, attachment_count: 2 },
+      { reminder_at: "2026-08-18T09:00:00Z", attachment_count: 1 },
+    ];
+    assert.deepEqual(toggleListFacet(["reminder"], "attachment"), ["reminder", "attachment"]);
+    assert.deepEqual(toggleListFacet(["reminder"], "reminder"), []);
+    assert.equal(noteMatchesFacets(notes[0], ["reminder"]), true);
+    assert.equal(noteMatchesFacets(notes[0], ["attachment"]), false);
+    assert.equal(noteMatchesFacets(notes[2], ["reminder", "attachment"]), true);
+  });
+});
+
+describe("list metadata labels", () => {
+  it("formats attachment counts and checklist progress", () => {
+    assert.equal(attachmentCountLabel(0), null);
+    assert.equal(attachmentCountLabel(1), "1 attachment");
+    assert.equal(attachmentCountLabel(3), "3 attachments");
+    assert.equal(checklistProgressLabel(1, 4), "1/4");
+    assert.equal(checklistProgressLabel(0, 0), null);
+  });
+});
+
+describe("avatarColor", () => {
+  it("picks a stable color from the display name", () => {
+    assert.equal(avatarColor("Ada"), avatarColor("Ada"));
+    assert.notEqual(avatarColor("Ada"), avatarColor("Grace"));
+  });
+});
+
+describe("collapsed stacks", () => {
+  it("toggles one stack and can collapse every stack", () => {
+    assert.deepEqual(toggleCollapsedId(["a"], "b"), ["a", "b"]);
+    assert.deepEqual(toggleCollapsedId(["a", "b"], "a"), ["b"]);
+    assert.deepEqual(collapseAllIds(["s1", "s2", "s1"]), ["s1", "s2"]);
+    assert.deepEqual(parseCollapsedStacks(JSON.stringify(["s1"])), ["s1"]);
+    assert.deepEqual(parseCollapsedStacks("nope"), []);
+  });
+});
+
+describe("resolveThumbnailUrl", () => {
+  const toUrl = (id: string) => `http://api/attachments/${id}`;
+
+  it("turns attachment ids into download URLs and leaves remote images alone", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    assert.equal(resolveThumbnailUrl(id, toUrl), `http://api/attachments/${id}`);
+    assert.equal(
+      resolveThumbnailUrl(`notebook-attachment://${id}`, toUrl),
+      `http://api/attachments/${id}`
+    );
+    assert.equal(resolveThumbnailUrl("https://cdn.example/pic.png", toUrl), "https://cdn.example/pic.png");
+    assert.equal(resolveThumbnailUrl(null, toUrl), null);
   });
 });

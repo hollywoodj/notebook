@@ -40,6 +40,9 @@ export interface NoteSummary {
   tag_ids: string[];
   tag_names: string[];
   attachment_count: number;
+  thumbnail_url?: string | null;
+  checklist_done?: number;
+  checklist_total?: number;
   is_template: boolean;
   template_category: string | null;
   notebook_name: string;

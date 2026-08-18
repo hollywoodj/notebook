@@ -85,6 +85,10 @@ function stubMenu(overrides: Partial<AppMenuContext> = {}): AppMenuContext {
     deleteTag: noop,
     restoreTemplates: noop,
     toggleTheme: noop,
+    collapsedStacks: [],
+    toggleStackCollapsed: noop,
+    collapseAllStacks: noop,
+    expandAllStacks: noop,
     ...overrides,
   };
 }
@@ -134,6 +138,21 @@ describe("buildMenuBar", () => {
     );
     assert.ok(pin && "disabled" in pin);
     assert.equal(pin.disabled, true);
+  });
+
+  it("nests Format color, align, table, and font commands", () => {
+    const groups = buildMenuBar(stubMenu());
+    const format = groups.find((group) => group.label === "Format");
+    assert.ok(format);
+    const top = labels(format.items);
+    assert.equal(top.includes("Highlight"), true);
+    assert.equal(top.includes("Text Color"), true);
+    assert.equal(top.includes("Align"), true);
+    assert.equal(top.includes("Table"), true);
+    assert.equal(top.includes("Font"), true);
+    const align = format.items.find((item) => "label" in item && item.label === "Align");
+    assert.ok(align && "children" in align && align.children);
+    assert.equal(labels(align.children).includes("Justify"), true);
   });
 });
 
