@@ -1086,3 +1086,177 @@ export function stepNavForward(
     future: rest,
   };
 }
+
+export function groupNotesByNotebook<T extends { notebook_name: string }>(
+  notes: T[]
+): NoteListGroup<T>[] {
+  const buckets = new Map<string, T[]>();
+  for (const note of notes) {
+    const name = note.notebook_name.trim() || "Notebook";
+    const current = buckets.get(name) ?? [];
+    current.push(note);
+    buckets.set(name, current);
+  }
+  return [...buckets.entries()].map(([label, grouped]) => ({
+    key: `notebook:${label}`,
+    label,
+    notes: grouped,
+  }));
+}
+
+export function groupRemindersForList<
+  T extends { reminder_at: string | null; id: string },
+>(notes: T[], completedIds: string[], now = new Date()): NoteListGroup<T>[] {
+  const today = startOfLocalDay(now);
+  const tomorrow = today + 86_400_000;
+  const completed = new Set(completedIds);
+  const buckets: Record<string, T[]> = {
+    overdue: [],
+    today: [],
+    tomorrow: [],
+    later: [],
+    completed: [],
+  };
+  for (const note of notes) {
+    if (!note.reminder_at) continue;
+    if (completed.has(note.id)) {
+      buckets.completed.push(note);
+      continue;
+    }
+    const stamp = new Date(note.reminder_at).getTime();
+    if (Number.isNaN(stamp) || stamp < now.getTime()) buckets.overdue.push(note);
+    else if (stamp < tomorrow) buckets.today.push(note);
+    else if (stamp < tomorrow + 86_400_000) buckets.tomorrow.push(note);
+    else buckets.later.push(note);
+  }
+  return (
+    [
+      ["overdue", "Overdue"],
+      ["today", "Today"],
+      ["tomorrow", "Tomorrow"],
+      ["later", "Later"],
+      ["completed", "Completed"],
+    ] as const
+  )
+    .filter(([key]) => buckets[key].length > 0)
+    .map(([key, label]) => ({ key, label, notes: buckets[key] }));
+}
+
+export const COMPLETED_REMINDERS_KEY = "notebook.completedReminders";
+
+export function parseCompletedReminders(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id): id is string => typeof id === "string" && id.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+export function toggleCompletedReminder(ids: string[], id: string): string[] {
+  return ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id];
+}
+
+export function isReminderDone(ids: string[], id: string): boolean {
+  return ids.includes(id);
+}
+
+export const SAVED_SEARCHES_KEY = "notebook.savedSearches";
+
+export type SavedSearch = { id: string; name: string; query: string };
+
+export function parseSavedSearches(raw: string | null): SavedSearch[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && typeof item.query === "string")
+      .map((item) => ({
+        id: typeof item.id === "string" && item.id ? item.id : `search-${item.query}`,
+        name: String(item.name || item.query).trim() || item.query,
+        query: String(item.query).trim(),
+      }))
+      .filter((item) => item.query);
+  } catch {
+    return [];
+  }
+}
+
+export function upsertSavedSearch(list: SavedSearch[], query: string, name?: string): SavedSearch[] {
+  const cleaned = query.trim();
+  if (!cleaned) return list;
+  const label = (name || cleaned).trim() || cleaned;
+  const existing = list.findIndex((item) => item.query.toLowerCase() === cleaned.toLowerCase());
+  const entry: SavedSearch = {
+    id: existing >= 0 ? list[existing].id : `search-${Date.now()}`,
+    name: label,
+    query: cleaned,
+  };
+  if (existing >= 0) {
+    const next = [...list];
+    next[existing] = entry;
+    return next;
+  }
+  return [entry, ...list].slice(0, 20);
+}
+
+export function deleteSavedSearch(list: SavedSearch[], id: string): SavedSearch[] {
+  return list.filter((item) => item.id !== id);
+}
+
+export const LAST_SESSION_KEY = "notebook.lastSession";
+
+export type LastSession = NavLocation;
+
+export function parseLastSession(raw: string | null): LastSession | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<LastSession>;
+    if (!parsed || typeof parsed !== "object" || !parsed.filter?.type) return null;
+    return {
+      filter: {
+        type: String(parsed.filter.type),
+        id: parsed.filter.id,
+        name: parsed.filter.name,
+        query: parsed.filter.query,
+      },
+      noteId: parsed.noteId || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function noteMailtoHref(title: string, plain: string): string {
+  const subject = encodeURIComponent(title.trim() || "Untitled");
+  const body = encodeURIComponent(plain.trim() || "");
+  return `mailto:?subject=${subject}&body=${body}`;
+}
+
+export const CODE_LANGUAGES = [
+  { id: "", label: "Plain text" },
+  { id: "javascript", label: "JavaScript" },
+  { id: "typescript", label: "TypeScript" },
+  { id: "python", label: "Python" },
+  { id: "rust", label: "Rust" },
+  { id: "json", label: "JSON" },
+  { id: "html", label: "HTML" },
+  { id: "css", label: "CSS" },
+  { id: "shell", label: "Shell" },
+] as const;
+
+export type PaletteAction = {
+  id: string;
+  label: string;
+  hint?: string;
+};
+
+export function paletteMatches(query: string, actions: PaletteAction[], limit = 24): PaletteAction[] {
+  const needle = query.trim().toLowerCase();
+  return actions
+    .filter((action) => !needle || action.label.toLowerCase().includes(needle) || action.hint?.toLowerCase().includes(needle))
+    .slice(0, limit);
+}

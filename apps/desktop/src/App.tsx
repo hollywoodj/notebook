@@ -33,6 +33,7 @@ import { PaneSplitter } from "./components/PaneSplitter";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { JumpToDialog } from "./components/JumpToDialog";
 import { SearchDialog } from "./components/SearchDialog";
+import { CommandPalette } from "./components/CommandPalette";
 import { NotebookPickerDialog } from "./components/NotebookPickerDialog";
 import {
   noteIdsInRange,
@@ -61,6 +62,9 @@ import {
   PANE_LAYOUT_KEY,
   RECENT_SEARCHES_KEY,
   COLLAPSED_STACKS_KEY,
+  COMPLETED_REMINDERS_KEY,
+  LAST_SESSION_KEY,
+  SAVED_SEARCHES_KEY,
   SIDEBAR_RAIL_WIDTH,
   adjacentNoteId,
   attachmentCountLabel,
@@ -76,9 +80,12 @@ import {
   encodeNoteDrag,
   formatReminderLabel,
   fromDatetimeLocalValue,
+  groupNotesByNotebook,
   groupNotesForList,
+  groupRemindersForList,
   htmlToMarkdown,
   htmlToPlainText,
+  isReminderDone,
   isReminderOverdue,
   isNoteExpanded,
   isSidebarRail,
@@ -88,6 +95,7 @@ import {
   nextSidebarFlyout,
   nextZoom,
   noteAppLink,
+  noteMailtoHref,
   noteMatchesDateRange,
   noteMatchesFacets,
   noteMatchesSearchOperators,
@@ -95,9 +103,12 @@ import {
   notebooksMatchingFilter,
   notesToEnex,
   parseCollapsedStacks,
+  parseCompletedReminders,
   parseEditorChrome,
+  parseLastSession,
   parsePaneLayout,
   parseRecentSearches,
+  parseSavedSearches,
   parseSearchQuery,
   pushNavHistory,
   reminderFromPreset,
@@ -116,11 +127,14 @@ import {
   stepNavForward,
   toDatetimeLocalValue,
   toggleCollapsedId,
+  toggleCompletedReminder,
   toggleListFacet,
   toggleNoteExpanded,
   toggleNoteListHidden,
   toggleSidebarRail,
   windowTitleForNote,
+  deleteSavedSearch,
+  upsertSavedSearch,
   type DateRangeFacet,
   type ListView,
   type NoteListFacet,
@@ -129,7 +143,29 @@ import {
   type SidebarFlyoutKind,
   type SnoozePreset,
   type NavLocation,
+  type PaletteAction,
 } from "./uiChrome";
+
+const PALETTE_ACTIONS: PaletteAction[] = [
+  { id: "new-note", label: "New note", hint: "Ctrl/⌘ N" },
+  { id: "search", label: "Search notes", hint: "Ctrl/⌘ K" },
+  { id: "jump", label: "Jump to…", hint: "Ctrl/⌘ J" },
+  { id: "settings", label: "Settings", hint: "Ctrl/⌘ ," },
+  { id: "templates", label: "Browse templates" },
+  { id: "print", label: "Print note", hint: "Ctrl/⌘ P" },
+  { id: "email", label: "Email note…" },
+  { id: "theme", label: "Toggle theme" },
+  { id: "focus", label: "Focus mode", hint: "F11" },
+  { id: "back", label: "Go back", hint: "Ctrl/⌘ [" },
+  { id: "forward", label: "Go forward", hint: "Ctrl/⌘ ]" },
+  { id: "new-notebook", label: "New notebook…" },
+  { id: "new-tag", label: "New tag…" },
+  { id: "reminders", label: "Show reminders" },
+  { id: "shortcuts", label: "Show shortcuts" },
+  { id: "all-notes", label: "All notes" },
+  { id: "info", label: "Note info", hint: "Ctrl/⌘ Shift I" },
+  { id: "outline", label: "Toggle note outline" },
+];
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -153,6 +189,22 @@ export default function App() {
       typeof localStorage === "undefined" ? null : localStorage.getItem(RECENT_SEARCHES_KEY)
     )
   );
+  const [savedSearches, setSavedSearches] = useState(() =>
+    parseSavedSearches(
+      typeof localStorage === "undefined" ? null : localStorage.getItem(SAVED_SEARCHES_KEY)
+    )
+  );
+  const [completedReminders, setCompletedReminders] = useState(() =>
+    parseCompletedReminders(
+      typeof localStorage === "undefined" ? null : localStorage.getItem(COMPLETED_REMINDERS_KEY)
+    )
+  );
+  const [showPalette, setShowPalette] = useState(false);
+  const [hoverPreview, setHoverPreview] = useState<{
+    note: NoteSummary;
+    x: number;
+    y: number;
+  } | null>(null);
   const [listFacets, setListFacets] = useState<NoteListFacet[]>([]);
   const [listDateRange, setListDateRange] = useState<DateRangeFacet>("any");
   const [searchScope, setSearchScope] = useState<{ id: string; name: string } | null>(null);
@@ -235,6 +287,8 @@ export default function App() {
   const ignoreNavRef = useRef(false);
   const navSeededRef = useRef(false);
   const navCurrentRef = useRef<NavLocation>({ filter: { type: "all" }, noteId: null });
+  const sessionReadyRef = useRef(false);
+  const hoverTimerRef = useRef<number | null>(null);
 
   const openSettings = (section: SettingsSection = "application") => {
     setSettingsSection(section);
@@ -288,6 +342,16 @@ export default function App() {
     localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(history));
   };
 
+  const persistSavedSearches = (list: typeof savedSearches) => {
+    setSavedSearches(list);
+    localStorage.setItem(SAVED_SEARCHES_KEY, JSON.stringify(list));
+  };
+
+  const persistCompletedReminders = (ids: string[]) => {
+    setCompletedReminders(ids);
+    localStorage.setItem(COMPLETED_REMINDERS_KEY, JSON.stringify(ids));
+  };
+
   const persistCollapsedStacks = (ids: string[]) => {
     setCollapsedStacks(ids);
     localStorage.setItem(COLLAPSED_STACKS_KEY, JSON.stringify(ids));
@@ -300,6 +364,10 @@ export default function App() {
     setSearchInput(cleaned);
     setFilter({ type: "search", query: cleaned });
     setSearchOpen(false);
+  };
+
+  const saveCurrentSearch = (query: string) => {
+    persistSavedSearches(upsertSavedSearch(savedSearches, query));
   };
 
   const closeSearch = () => {
@@ -737,7 +805,13 @@ export default function App() {
           await refreshMeta();
           if (loadedPrefs.startup_view === "shortcuts") {
             setFilter({ type: "shortcuts" });
+          } else {
+            const session = parseLastSession(
+              typeof localStorage === "undefined" ? null : localStorage.getItem(LAST_SESSION_KEY)
+            );
+            if (session) applyNavLocation(session);
           }
+          sessionReadyRef.current = true;
           return;
         } catch {
           await new Promise((r) => setTimeout(r, 200));
@@ -968,6 +1042,42 @@ export default function App() {
 
   const printActiveNote = () => window.print();
 
+  const emailActiveNote = async (id?: string) => {
+    const targetId = id || activeNote?.id;
+    if (!targetId) return;
+    const note =
+      activeNote?.id === targetId
+        ? activeNote
+        : await api.getNote(targetId).catch(() => null);
+    if (!note) return;
+    window.location.href = noteMailtoHref(
+      note.title,
+      note.content_plain || htmlToPlainText(note.content)
+    );
+  };
+
+  const toggleReminderDone = (id?: string) => {
+    const target = id || activeNote?.id;
+    if (!target) return;
+    persistCompletedReminders(toggleCompletedReminder(completedReminders, target));
+    setShowReminderMenu(false);
+  };
+
+  const scheduleHoverPreview = (note: NoteSummary, event: MouseEvent<HTMLElement>) => {
+    if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
+    const rect = event.currentTarget.getBoundingClientRect();
+    hoverTimerRef.current = window.setTimeout(() => {
+      const top = Math.min(rect.top, Math.max(12, window.innerHeight - 200));
+      setHoverPreview({ note, x: rect.right + 12, y: Math.max(12, top) });
+    }, 450);
+  };
+
+  const hideHoverPreview = () => {
+    if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = null;
+    setHoverPreview(null);
+  };
+
   const copyActiveNoteLink = async () => {
     if (!activeNote) return;
     await navigator.clipboard.writeText(noteAppLink(activeNote.id));
@@ -1034,23 +1144,38 @@ export default function App() {
     [notes, listFacets, listDateRange]
   );
 
-  const groupedNotes = useMemo(
-    () =>
-      groupNotesForList(
-        visibleNotes,
-        prefs.sort_by === "title"
-          ? "title"
-          : prefs.sort_by === "created"
-            ? "created"
-            : "updated"
-      ),
-    [visibleNotes, prefs.sort_by]
-  );
+  const groupedNotes = useMemo(() => {
+    if (filter.type === "reminders") {
+      return groupRemindersForList(visibleNotes, completedReminders);
+    }
+    if (filter.type === "search") {
+      return groupNotesByNotebook(visibleNotes);
+    }
+    return groupNotesForList(
+      visibleNotes,
+      prefs.sort_by === "title"
+        ? "title"
+        : prefs.sort_by === "created"
+          ? "created"
+          : "updated"
+    );
+  }, [visibleNotes, prefs.sort_by, filter.type, completedReminders]);
 
   const visibleTags = useMemo(
     () => tags.filter((tag) => matchesSidebarFilter(tag.name, sidebarFilter)),
     [tags, sidebarFilter]
   );
+
+  useEffect(() => {
+    if (!ready || !sessionReadyRef.current) return;
+    localStorage.setItem(
+      LAST_SESSION_KEY,
+      JSON.stringify({
+        filter,
+        noteId: activeNote?.id ?? null,
+      })
+    );
+  }, [ready, filter, activeNote?.id]);
 
   useEffect(() => {
     document.title = windowTitleForNote(activeNote ? activeNote.title : null);
@@ -1153,13 +1278,22 @@ export default function App() {
       } else if (e.key === "Escape" && sidebarFlyout) {
         e.preventDefault();
         setSidebarFlyout(null);
+      } else if (e.key === "Escape" && showPalette) {
+        e.preventDefault();
+        setShowPalette(false);
       } else if (e.key === "Escape" && searchOpen) {
         e.preventDefault();
         closeSearch();
+      } else if (e.key === "Escape" && hoverPreview) {
+        e.preventDefault();
+        hideHoverPreview();
       } else if (meta && e.key === "j") {
         e.preventDefault();
         setShowJump(true);
-      } else if (meta && e.key === "p") {
+      } else if (meta && (e.key === "p" || e.key === "P") && e.shiftKey) {
+        e.preventDefault();
+        setShowPalette(true);
+      } else if (meta && (e.key === "p" || e.key === "P")) {
         e.preventDefault();
         window.print();
       } else if (meta && e.key === "i" && e.shiftKey && activeNote) {
@@ -1317,6 +1451,82 @@ export default function App() {
     setNewName(target.name);
   };
 
+  const toggleTheme = () => {
+    const theme = prefs.theme === "dark" ? "light" : "dark";
+    setPrefs((current) => ({ ...current, theme }));
+    void api.updateSettings({ theme });
+  };
+
+  const runPaletteAction = (id: string) => {
+    switch (id) {
+      case "new-note":
+        void createNote();
+        break;
+      case "search":
+        openGlobalSearch();
+        break;
+      case "jump":
+        setShowJump(true);
+        break;
+      case "settings":
+        openSettings();
+        break;
+      case "templates":
+        setShowGallery(true);
+        break;
+      case "print":
+        printActiveNote();
+        break;
+      case "email":
+        void emailActiveNote();
+        break;
+      case "theme":
+        toggleTheme();
+        break;
+      case "focus":
+        setFocusMode((open) => !open);
+        break;
+      case "back":
+        goBack();
+        break;
+      case "forward":
+        goForward();
+        break;
+      case "new-notebook":
+        setNewNotebookStackId(null);
+        setNewName("");
+        setShowNewNotebook(true);
+        break;
+      case "new-tag":
+        setNewName("");
+        setShowNewTag(true);
+        break;
+      case "reminders":
+        setSidebarFlyout(null);
+        setFilter({ type: "reminders" });
+        break;
+      case "shortcuts":
+        revealSidebarFlyout("shortcuts");
+        setFilter({ type: "shortcuts" });
+        break;
+      case "all-notes":
+        setSidebarFlyout(null);
+        setFilter({ type: "all" });
+        break;
+      case "info":
+        if (activeNote) setShowInfo((open) => !open);
+        break;
+      case "outline":
+        persistEditorChrome({
+          ...editorChrome,
+          outlineOpen: !editorChrome.outlineOpen,
+        });
+        break;
+      default:
+        break;
+    }
+  };
+
   const menuCtx: AppMenuContext = {
     filter,
     selectedNoteIds,
@@ -1443,11 +1653,7 @@ export default function App() {
       await refreshNotes();
     },
     restoreTemplates: () => void api.restoreTemplates().then(refreshMeta),
-    toggleTheme: () => {
-      const theme = prefs.theme === "dark" ? "light" : "dark";
-      setPrefs((current) => ({ ...current, theme }));
-      void api.updateSettings({ theme });
-    },
+    toggleTheme,
     collapsedStacks,
     toggleStackCollapsed: (id: string) =>
       persistCollapsedStacks(toggleCollapsedId(collapsedStacks, id)),
@@ -1457,6 +1663,10 @@ export default function App() {
     canGoForward: navFuture.length > 0,
     goBack,
     goForward,
+    emailActiveNote: (id) => void emailActiveNote(id),
+    toggleReminderDone,
+    openCommandPalette: () => setShowPalette(true),
+    isReminderCompleted: (id) => isReminderDone(completedReminders, id),
   };
   const contextMenuItems = (target: ContextTarget) => buildContextMenu(target, menuCtx);
   const menuGroups = buildMenuBar(menuCtx);
@@ -1487,6 +1697,7 @@ export default function App() {
         setShowNoteMenu(false);
         setShowReminderMenu(false);
         setAccountMenu(false);
+        hideHoverPreview();
         setContextMenu(null);
         if (!(event.target as HTMLElement).closest(".sidebar")) {
           setSidebarFlyout(null);
@@ -2292,6 +2503,7 @@ export default function App() {
             (listView === "titles" ? " titles" : "")
           }
           ref={noteListRef}
+          onScroll={hideHoverPreview}
         >
           {groupedNotes.map((group) => (
             <div className="note-list-group" key={group.key}>
@@ -2305,10 +2517,13 @@ export default function App() {
                 (listView === "cards" ? " card-view" : "") +
                 (note.reminder_at && isReminderOverdue(note.reminder_at)
                   ? " reminder-overdue"
-                  : "")
+                  : "") +
+                (isReminderDone(completedReminders, note.id) ? " reminder-done" : "")
               }
               aria-pressed={selectedNoteIds.has(note.id)}
               draggable={filter.type !== "trash"}
+              onMouseEnter={(event) => scheduleHoverPreview(note, event)}
+              onMouseLeave={hideHoverPreview}
               onDragStart={(event) => {
                 const ids =
                   selectedNoteIds.has(note.id) && selectedNoteIds.size > 1
@@ -2351,9 +2566,11 @@ export default function App() {
                   {note.reminder_at && (
                     <span
                       className={
-                        isReminderOverdue(note.reminder_at)
-                          ? "meta-chip reminder overdue"
-                          : "meta-chip reminder"
+                        isReminderDone(completedReminders, note.id)
+                          ? "meta-chip reminder done"
+                          : isReminderOverdue(note.reminder_at)
+                            ? "meta-chip reminder overdue"
+                            : "meta-chip reminder"
                       }
                     >
                       <Icon.Reminder size={12} />
@@ -2421,6 +2638,24 @@ export default function App() {
             <div className="empty-state compact">No notes match these filters.</div>
           )}
         </div>
+        {hoverPreview && (
+          <div
+            className="note-hover-preview"
+            style={{ left: hoverPreview.x, top: hoverPreview.y }}
+            role="tooltip"
+          >
+            <div className="note-hover-title">{hoverPreview.note.title || "Untitled"}</div>
+            <div className="note-hover-meta">
+              {hoverPreview.note.notebook_name}
+              {hoverPreview.note.updated_at
+                ? ` · ${formatDate(hoverPreview.note.updated_at, prefs.date_format)}`
+                : ""}
+            </div>
+            {hoverPreview.note.snippet ? (
+              <div className="note-hover-snippet">{hoverPreview.note.snippet}</div>
+            ) : null}
+          </div>
+        )}
       </section>
       <PaneSplitter
         label="Resize note list"
@@ -2521,6 +2756,11 @@ export default function App() {
                             <button onClick={() => void snoozeReminder("tomorrowMorning")}>
                               Tomorrow morning
                             </button>
+                            <button onClick={() => toggleReminderDone(activeNote.id)}>
+                              {isReminderDone(completedReminders, activeNote.id)
+                                ? "Restore reminder"
+                                : "Mark reminder done"}
+                            </button>
                           </>
                         )}
                         <button onClick={() => void setReminderPreset("tonight")}>Tonight</button>
@@ -2573,6 +2813,14 @@ export default function App() {
                           }}
                         >
                           Open in New Tab
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            void emailActiveNote(activeNote.id);
+                          }}
+                        >
+                          Email note…
                         </button>
                         {!activeNote.is_template && (
                           <button
@@ -2753,13 +3001,17 @@ export default function App() {
                 {activeNote.reminder_at && (
                   <span
                     className={
-                      isReminderOverdue(activeNote.reminder_at)
-                        ? "reminder-chip overdue"
-                        : "reminder-chip"
+                      isReminderDone(completedReminders, activeNote.id)
+                        ? "reminder-chip done"
+                        : isReminderOverdue(activeNote.reminder_at)
+                          ? "reminder-chip overdue"
+                          : "reminder-chip"
                     }
                   >
                     <Icon.Reminder size={12} />
-                    {formatReminderLabel(activeNote.reminder_at, prefs.date_format)}
+                    {isReminderDone(completedReminders, activeNote.id)
+                      ? "Done"
+                      : formatReminderLabel(activeNote.reminder_at, prefs.date_format)}
                   </span>
                 )}
               </div>
@@ -2821,6 +3073,11 @@ export default function App() {
               tags={tags}
               selectedIds={activeNote.tag_ids}
               onChange={(tagIds) => void saveNote({ tag_ids: tagIds })}
+              onCreateTag={async (name) => {
+                const tag = await api.createTag(name);
+                await refreshMeta();
+                await saveNote({ tag_ids: [...activeNote.tag_ids, tag.id] });
+              }}
             />
             <div className="editor-status">
               <span>
@@ -2831,9 +3088,14 @@ export default function App() {
               {activeNote.reminder_at && (
                 <span
                   className={
-                    isReminderOverdue(activeNote.reminder_at) ? "reminder-overdue-text" : ""
+                    isReminderDone(completedReminders, activeNote.id)
+                      ? "reminder-done-text"
+                      : isReminderOverdue(activeNote.reminder_at)
+                        ? "reminder-overdue-text"
+                        : ""
                   }
                 >
+                  {isReminderDone(completedReminders, activeNote.id) ? "Done · " : ""}
                   Reminder {formatReminderLabel(activeNote.reminder_at, prefs.date_format)}
                 </span>
               )}
@@ -3086,6 +3348,7 @@ export default function App() {
         <SearchDialog
           query={searchInput}
           recentSearches={recentSearches}
+          savedSearches={savedSearches}
           scope={searchScope}
           notes={jumpNotes.length ? jumpNotes : notes}
           notebooks={notebooks}
@@ -3093,6 +3356,8 @@ export default function App() {
           onQueryChange={setSearchInput}
           onClearRecent={() => persistRecentSearches([])}
           onClearScope={() => setSearchScope(null)}
+          onSaveSearch={saveCurrentSearch}
+          onDeleteSearch={(id) => persistSavedSearches(deleteSavedSearch(savedSearches, id))}
           onClose={closeSearch}
           onSearch={runSearch}
           onSelect={(target) => {
@@ -3109,6 +3374,13 @@ export default function App() {
           }}
         />
       )}
+
+      <CommandPalette
+        open={showPalette}
+        actions={PALETTE_ACTIONS}
+        onRun={runPaletteAction}
+        onClose={() => setShowPalette(false)}
+      />
 
       {pendingConfirm && (
         <ConfirmDialog
