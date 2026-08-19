@@ -1,16 +1,43 @@
 #!/usr/bin/env bash
-# Idempotent dependency refresh for the Notebook workspace.
-# System libraries (GTK/WebKit for the Tauri desktop crate) are baked into the
-# base snapshot, so this script only prepares source-derived state.
+# Idempotent bootstrap for the Notebook workspace in a Cloud Agent.
+#
+# Runs from the repository root after checkout. Prepares everything needed to
+# build and run the API server, the CLI, the web UI, and the Tauri desktop
+# crate (`cargo build --workspace`).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# System libraries required to compile the `notebook-desktop` Tauri crate on
+# Linux (GTK 3 / WebKit2GTK 4.1, libsoup 3, appindicator, librsvg). The base
+# image already provides the Rust and Node toolchains. Only install when a
+# representative dev package is missing so repeat runs stay fast.
+if ! pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
+  echo "==> Installing Tauri/GTK system libraries"
+  sudo apt-get update
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    libwebkit2gtk-4.1-dev \
+    libgtk-3-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev \
+    libsoup-3.0-dev \
+    libjavascriptcoregtk-4.1-dev \
+    build-essential \
+    curl \
+    wget \
+    file \
+    libxdo-dev \
+    libssl-dev \
+    pkg-config
+else
+  echo "==> Tauri/GTK system libraries already present; skipping apt install"
+fi
+
 echo "==> Installing desktop UI dependencies (npm ci)"
 npm --prefix apps/desktop ci
 
-# The Tauri desktop crate embeds the built frontend via `frontendDist`, so the
-# web bundle must exist before `cargo build --workspace` can compile it.
+# The Tauri desktop crate embeds the built web bundle via `frontendDist`, so the
+# bundle must exist before `cargo build --workspace` can compile that crate.
 echo "==> Building web frontend bundle (apps/desktop/dist)"
 npm --prefix apps/desktop run build
 
