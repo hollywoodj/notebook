@@ -14,3 +14,6 @@ attachments/
 apps/desktop/release/
 apps/desktop/electron-resources/bin/*
 !apps/desktop/electron-resources/bin/.gitkeep
+
+# Tauri generated capability schemas (rebuilt by cargo)
+apps/desktop/src-tauri/gen/

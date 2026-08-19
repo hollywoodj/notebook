@@ -268,6 +268,7 @@ export default function App() {
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const sidebarFilterRef = useRef<HTMLInputElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
   const skipNextSave = useRef(false);
   const lastClickedNoteId = useRef<string | null>(null);
   const noteListRef = useRef<HTMLDivElement>(null);
@@ -970,6 +971,11 @@ export default function App() {
     refreshNotes,
     refreshMeta,
     loadNote,
+    focusTitle: () => {
+      // The editor mounts in the same commit that loadNote resolves, so wait a
+      // frame for the input to exist before reaching for it.
+      requestAnimationFrame(() => titleRef.current?.focus());
+    },
   });
 
   const setReminderPreset = async (kind: ReminderPreset | "clear") => {
@@ -2370,6 +2376,8 @@ export default function App() {
               </button>
             )}
             <select
+              className="list-sort"
+              aria-label="Sort notes by"
               value={prefs.sort_by}
               onChange={(e) => {
                 const sort_by = e.target.value as Preferences["sort_by"];
@@ -2707,6 +2715,7 @@ export default function App() {
             <div className="editor-header">
               <div className="editor-header-row">
                 <input
+                  ref={titleRef}
                   className="title-input"
                   value={activeNote.title}
                   onChange={(e) =>

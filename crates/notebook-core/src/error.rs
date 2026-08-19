@@ -10,6 +10,8 @@ pub enum NotebookError {
     NotFound(String),
     #[error("invalid input: {0}")]
     InvalidInput(String),
+    #[error("conflict: {0}")]
+    Conflict(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]

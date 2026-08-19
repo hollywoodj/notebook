@@ -100,7 +100,7 @@ pub fn note(service: &NotebookService, action: &NoteAction, json_out: bool) -> R
             if json_out {
                 println!("{}", serde_json::to_string_pretty(&note)?);
             } else {
-                println!("{} ({})", note.title, note.id);
+                println!("{} ({})", display_title(&note.title), note.id);
                 println!("Updated: {}", note.updated_at);
                 println!("\n{}", note.content);
             }
@@ -133,7 +133,7 @@ pub fn note(service: &NotebookService, action: &NoteAction, json_out: bool) -> R
             if json_out {
                 println!("{}", serde_json::to_string_pretty(&note)?);
             } else {
-                println!("Created note {} ({})", note.title, note.id);
+                println!("Created note {} ({})", display_title(&note.title), note.id);
             }
         }
         NoteAction::Update {
@@ -162,7 +162,7 @@ pub fn note(service: &NotebookService, action: &NoteAction, json_out: bool) -> R
             if json_out {
                 println!("{}", serde_json::to_string_pretty(&note)?);
             } else {
-                println!("Updated note {} ({})", note.title, note.id);
+                println!("Updated note {} ({})", display_title(&note.title), note.id);
             }
         }
         NoteAction::Delete { id } => {
@@ -174,7 +174,7 @@ pub fn note(service: &NotebookService, action: &NoteAction, json_out: bool) -> R
             if json_out {
                 println!("{}", serde_json::to_string_pretty(&note)?);
             } else {
-                println!("Restored note {} ({})", note.title, note.id);
+                println!("Restored note {} ({})", display_title(&note.title), note.id);
             }
         }
         NoteAction::Revisions { id } => {
@@ -379,7 +379,7 @@ fn print_notes(notes: &[notebook_core::NoteSummary], json_out: bool) {
         println!(
             "{} — {}{} ({})",
             note.updated_at.format("%Y-%m-%d"),
-            note.title,
+            display_title(&note.title),
             tags,
             note.id
         );
@@ -400,5 +400,15 @@ fn mime_guess(filename: &str) -> String {
         "text/html".into()
     } else {
         "application/octet-stream".into()
+    }
+}
+
+/// Notes may carry an empty title; show the same "Untitled" placeholder the
+/// desktop app uses rather than printing a blank column.
+fn display_title(title: &str) -> &str {
+    if title.trim().is_empty() {
+        "Untitled"
+    } else {
+        title
     }
 }

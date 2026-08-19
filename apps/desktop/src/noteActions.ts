@@ -68,6 +68,8 @@ export type NoteActionDeps = {
   refreshNotes: () => Promise<void>;
   refreshMeta: () => Promise<void>;
   loadNote: (id: string) => Promise<void> | void;
+  /** Put the caret in the title field, the way Evernote does on a new note. */
+  focusTitle: () => void;
 };
 
 export function createNoteActions(deps: NoteActionDeps) {
@@ -125,6 +127,7 @@ export function createNoteActions(deps: NoteActionDeps) {
     const note = await deps.api.createNote(nbId);
     await deps.refreshNotes();
     await deps.loadNote(note.id);
+    deps.focusTitle();
   };
 
   const createNote = async () => {

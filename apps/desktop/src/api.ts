@@ -305,7 +305,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({
         notebook_id: notebookId,
-        title: options?.title ?? "Untitled",
+        // Empty, not the literal "Untitled": the title input shows its value, so a
+        // placeholder string here forces the user to clear it before typing. The
+        // note list and window title already fall back to "Untitled" for display.
+        title: options?.title ?? "",
         content: options?.content ?? "<p></p>",
         tag_ids: options?.tag_ids,
         is_template: options?.is_template ?? false,

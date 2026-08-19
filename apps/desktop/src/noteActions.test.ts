@@ -47,6 +47,7 @@ function deps(overrides: Record<string, unknown> = {}) {
     refreshNotes: async () => {},
     refreshMeta: async () => {},
     loadNote: async () => {},
+    focusTitle: () => {},
     ...overrides,
   } as Parameters<typeof createNoteActions>[0];
 }
@@ -112,5 +113,23 @@ describe("createNoteActions", () => {
     );
     await actions.createBlankNote("nb-work");
     assert.deepEqual(loaded, ["n-new"]);
+  });
+
+  it("puts the caret in the title field after creating a blank note", async () => {
+    let focused = 0;
+    const actions = createNoteActions(
+      deps({
+        api: fakeApi({
+          createNote: async (notebookId) => ({ id: "n-new", notebook_id: notebookId }),
+        }),
+        notes: [],
+        loadNote: async () => {},
+        focusTitle: () => {
+          focused += 1;
+        },
+      })
+    );
+    await actions.createBlankNote("nb-work");
+    assert.equal(focused, 1);
   });
 });

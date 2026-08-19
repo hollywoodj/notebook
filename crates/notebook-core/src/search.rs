@@ -16,7 +16,13 @@ pub fn search_notes(service: &NotebookService, query: SearchQuery) -> Result<Sea
     let fts_query = query
         .q
         .split_whitespace()
-        .map(|term| format!("\"{term}\"*"))
+        .map(|term| {
+            // FTS5 string literals escape a double quote by doubling it. Without
+            // this a term containing `"` closes the literal early and SQLite
+            // fails the whole statement with "unterminated string".
+            let escaped = term.replace('"', "\"\"");
+            format!("\"{escaped}\"*")
+        })
         .collect::<Vec<_>>()
         .join(" AND ");
 

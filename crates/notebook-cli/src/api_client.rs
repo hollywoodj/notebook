@@ -165,7 +165,12 @@ impl ApiClient {
         let notes: Vec<NoteSummary> = self.get_json(&path)?;
         print_json_or(notes, json_out, |notes| {
             for note in notes {
-                println!("{} — {} ({})", note.updated_at, note.title, note.id);
+                println!(
+                    "{} — {} ({})",
+                    note.updated_at.format("%Y-%m-%d"),
+                    display_title(&note.title),
+                    note.id
+                );
             }
         })
     }
@@ -254,7 +259,7 @@ impl ApiClient {
         print_json_or(result, json_out, |r| {
             println!("Found {}", r.total);
             for note in &r.notes {
-                println!("{} — {}", note.title, note.id);
+                println!("{} — {}", display_title(&note.title), note.id);
             }
         })
     }
@@ -263,7 +268,7 @@ impl ApiClient {
         let notes: Vec<NoteSummary> = self.get_json("/api/v1/notes?trash=true")?;
         print_json_or(notes, json_out, |notes| {
             for note in notes {
-                println!("{} ({})", note.title, note.id);
+                println!("{} ({})", display_title(&note.title), note.id);
             }
         })
     }
@@ -281,7 +286,7 @@ impl ApiClient {
         let notes: Vec<NoteSummary> = self.get_json("/api/v1/shortcuts")?;
         print_json_or(notes, json_out, |notes| {
             for note in notes {
-                println!("{} ({})", note.title, note.id);
+                println!("{} ({})", display_title(&note.title), note.id);
             }
         })
     }
@@ -385,4 +390,14 @@ fn urlencoding(s: &str) -> String {
             c => format!("%{:02X}", c as u8),
         })
         .collect()
+}
+
+/// Notes may carry an empty title; show the same "Untitled" placeholder the
+/// desktop app uses rather than printing a blank column.
+fn display_title(title: &str) -> &str {
+    if title.trim().is_empty() {
+        "Untitled"
+    } else {
+        title
+    }
 }

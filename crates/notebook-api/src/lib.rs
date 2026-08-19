@@ -76,10 +76,11 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     let app = build_router(state);
 
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
-    tracing::info!("Notebook API listening on http://{addr}");
     tracing::info!("Database: {db_path}");
 
+    // Bind before announcing, so a port clash cannot print a success line first.
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    tracing::info!("Notebook API listening on http://{addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -721,14 +722,31 @@ impl AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match &self.0 {
-            notebook_core::NotebookError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
-            notebook_core::NotebookError::InvalidInput(msg) => {
-                (StatusCode::BAD_REQUEST, msg.clone())
+            // Callers build these as bare "note <id>" strings, so use the Display
+            // impl to keep the "not found: " / "invalid input: " prefix on the wire.
+            notebook_core::NotebookError::NotFound(_) => (StatusCode::NOT_FOUND, self.0.to_string()),
+            notebook_core::NotebookError::InvalidInput(_) => {
+                (StatusCode::BAD_REQUEST, self.0.to_string())
             }
-            _ => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                self.0.to_string(),
-            ),
+            notebook_core::NotebookError::Conflict(_) => {
+                (StatusCode::CONFLICT, self.0.to_string())
+            }
+            // Database and IO failures are internal detail; do not leak driver text.
+            notebook_core::NotebookError::Database(err) => {
+                tracing::error!("database error: {err}");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal server error".to_string(),
+                )
+            }
+            notebook_core::NotebookError::Io(err) => {
+                tracing::error!("io error: {err}");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal server error".to_string(),
+                )
+            }
+            _ => (StatusCode::INTERNAL_SERVER_ERROR, self.0.to_string()),
         };
         (status, Json(serde_json::json!({ "error": message }))).into_response()
     }

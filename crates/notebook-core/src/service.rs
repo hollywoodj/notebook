@@ -11,6 +11,29 @@ pub struct NotebookService {
     db: Database,
 }
 
+/// Longest accepted name for a notebook, stack, or tag.
+pub const MAX_NAME_LEN: usize = 255;
+
+/// Trim a user-supplied name and reject empty or absurdly long values.
+///
+/// Without this the API happily stores `""` and multi-kilobyte names, which
+/// render as blank sidebar rows and overflow the layout badly enough to
+/// swallow clicks on unrelated controls.
+pub fn validate_name(kind: &str, name: &str) -> Result<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(NotebookError::InvalidInput(format!(
+            "{kind} name cannot be empty"
+        )));
+    }
+    if trimmed.chars().count() > MAX_NAME_LEN {
+        return Err(NotebookError::InvalidInput(format!(
+            "{kind} name cannot be longer than {MAX_NAME_LEN} characters"
+        )));
+    }
+    Ok(trimmed.to_string())
+}
+
 impl NotebookService {
     pub fn new(db: Database) -> Self {
         Self { db }
@@ -72,6 +95,7 @@ impl NotebookService {
     }
 
     pub fn create_notebook(&self, req: CreateNotebookRequest) -> Result<Notebook> {
+        let name = validate_name("notebook", &req.name)?;
         let user_id = self.db.default_user_id()?;
         let id = Uuid::new_v4();
         let now = Self::now();
@@ -87,7 +111,7 @@ impl NotebookService {
                 id.to_string(),
                 user_id.to_string(),
                 req.stack_id.map(|s| s.to_string()),
-                req.name,
+                name,
                 if req.is_default.unwrap_or(false) { 1 } else { 0 },
                 now,
                 now
@@ -127,7 +151,7 @@ impl NotebookService {
     pub fn update_notebook(&self, id: Uuid, req: UpdateNotebookRequest) -> Result<Notebook> {
         let mut notebook = self.get_notebook(id)?;
         if let Some(name) = req.name {
-            notebook.name = name;
+            notebook.name = validate_name("notebook", &name)?;
         }
         if let Some(stack_id) = req.stack_id {
             notebook.stack_id = stack_id;
@@ -209,12 +233,13 @@ impl NotebookService {
     }
 
     pub fn create_stack(&self, req: CreateStackRequest) -> Result<Stack> {
+        let name = validate_name("stack", &req.name)?;
         let user_id = self.db.default_user_id()?;
         let id = Uuid::new_v4();
         let now = Self::now();
         self.db.connection().execute(
             "INSERT INTO stacks (id, user_id, name, sort_order, created_at, updated_at) VALUES (?1, ?2, ?3, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM stacks WHERE user_id = ?2), ?4, ?5)",
-            params![id.to_string(), user_id.to_string(), req.name, now, now],
+            params![id.to_string(), user_id.to_string(), name, now, now],
         )?;
         self.get_stack(id)
     }
@@ -301,12 +326,27 @@ impl NotebookService {
     }
 
     pub fn create_tag(&self, req: CreateTagRequest) -> Result<Tag> {
+        let name = validate_name("tag", &req.name)?;
         let user_id = self.db.default_user_id()?;
+        // (user_id, name) is UNIQUE. Report the clash as a conflict rather than
+        // letting the constraint surface as a 500 with raw SQLite text.
+        let existing: Option<String> = self
+            .db
+            .connection()
+            .query_row(
+                "SELECT id FROM tags WHERE user_id = ?1 AND name = ?2",
+                params![user_id.to_string(), name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if existing.is_some() {
+            return Err(NotebookError::Conflict(format!("tag \"{name}\" already exists")));
+        }
         let id = Uuid::new_v4();
         let now = Self::now();
         self.db.connection().execute(
             "INSERT INTO tags (id, user_id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![id.to_string(), user_id.to_string(), req.name, now, now],
+            params![id.to_string(), user_id.to_string(), name, now, now],
         )?;
         self.get_tag(id)
     }
@@ -359,6 +399,9 @@ impl NotebookService {
     }
 
     pub fn get_or_create_tag_by_name(&self, name: &str) -> Result<Tag> {
+        // Match create_tag's normalization so an untrimmed name cannot miss the
+        // lookup here and then collide on insert.
+        let name = validate_name("tag", name)?;
         let user_id = self.db.default_user_id()?;
         let existing: Option<String> = self
             .db
@@ -372,9 +415,7 @@ impl NotebookService {
         if let Some(id) = existing {
             return self.get_tag(Uuid::parse_str(&id).unwrap());
         }
-        self.create_tag(CreateTagRequest {
-            name: name.to_string(),
-        })
+        self.create_tag(CreateTagRequest { name })
     }
 
     // --- Notes ---
@@ -1302,5 +1343,86 @@ mod tests {
         assert_eq!(shortcuts.len(), 1);
         assert_eq!(shortcuts[0].1.id, first.id);
         assert_eq!(shortcuts[0].1.title, "Keep");
+    }
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+    use crate::models::{CreateNotebookRequest, CreateTagRequest, SearchQuery};
+
+    fn temp_service(name: &str) -> NotebookService {
+        let dir = std::env::temp_dir().join(format!("notebook-validation-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        NotebookService::new(Database::open(dir.join("test.db")).unwrap())
+    }
+
+    #[test]
+    fn notebook_names_are_trimmed_and_bounded() {
+        let service = temp_service("names");
+
+        let created = service
+            .create_notebook(CreateNotebookRequest {
+                name: "  Work  ".to_string(),
+                stack_id: None,
+                is_default: None,
+            })
+            .unwrap();
+        assert_eq!(created.name, "Work");
+
+        for bad in ["", "   "] {
+            let err = service.create_notebook(CreateNotebookRequest {
+                name: bad.to_string(),
+                stack_id: None,
+                is_default: None,
+            });
+            assert!(matches!(err, Err(NotebookError::InvalidInput(_))), "expected empty name to be rejected");
+        }
+
+        let too_long = "a".repeat(MAX_NAME_LEN + 1);
+        assert!(matches!(
+            service.create_notebook(CreateNotebookRequest {
+                name: too_long,
+                stack_id: None,
+                is_default: None,
+            }),
+            Err(NotebookError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn duplicate_tag_is_a_conflict_not_a_database_error() {
+        let service = temp_service("tags");
+        service
+            .create_tag(CreateTagRequest { name: "work".to_string() })
+            .unwrap();
+
+        let err = service.create_tag(CreateTagRequest { name: "work".to_string() });
+        assert!(
+            matches!(err, Err(NotebookError::Conflict(_))),
+            "duplicate tag should be a conflict, got {err:?}"
+        );
+
+        // The idempotent helper still returns the existing tag.
+        let existing = service.get_or_create_tag_by_name("  work  ").unwrap();
+        assert_eq!(existing.name, "work");
+    }
+
+    #[test]
+    fn search_terms_containing_quotes_do_not_break_fts() {
+        let service = temp_service("search");
+        for q in ["\"", "a b\" c", "he said \"hi\"", "''", "%"] {
+            let result = crate::search::search_notes(&service, SearchQuery {
+                q: q.to_string(),
+                notebook_id: None,
+                tag_id: None,
+                include_trash: None,
+                include_archived: None,
+                limit: None,
+                offset: None,
+            });
+            assert!(result.is_ok(), "search for {q:?} failed: {:?}", result.err());
+        }
     }
 }
