@@ -33,7 +33,6 @@ import {
   noteAppLink,
   toggleNoteExpanded,
   toggleNoteListHidden,
-  toggleSidebarRail,
 } from "./uiChrome.ts";
 
 export type AppMenuContext = {
@@ -791,11 +790,6 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
               ...ctx.paneLayout,
               sidebarCollapsed: !ctx.paneLayout.sidebarCollapsed,
             }),
-        },
-        {
-          label: ctx.paneLayout.sidebarRail ? "Pin Sidebar Open" : "Collapse Sidebar to Icons",
-          shortcut: "Ctrl/⌘ Alt S",
-          onSelect: () => ctx.persistPaneLayout(toggleSidebarRail(ctx.paneLayout)),
         },
         {
           label: ctx.paneLayout.listCollapsed ? "Show Note List" : "Hide Note List",

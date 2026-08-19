@@ -53,12 +53,12 @@ This log is for future sessions continuing the exact-clone work. Passes 1–10 e
 10. **Find** (Ctrl/⌘ F) vs **Find and Replace** (Ctrl/⌘ H) as separate Edit items
 
 ### Pass 5
-1. **Sidebar icon rail**: the sidebar rests at 56px of icons, so the list and editor never reflow
-2. Rail can be pinned open from the sidebar toggle, the View menu, or Ctrl/⌘ Alt S; the choice persists with the pane layout
-3. Sidebar splitter tracks the pointer, so one drag crosses between the rail and a pinned width in either direction
+1. **Sidebar icon rail** (later removed): the sidebar used to rest at 56px of icons
+2. Rail could be pinned open from the sidebar toggle, the View menu, or Ctrl/⌘ Alt S
+3. Sidebar splitter tracks the pointer so one drag follows the edge in either direction
 
 ### Pass 6 (this session)
-1. The rail **no longer widens under the pointer**. Evernote's collapsed sidebar keeps its width and only shows a tooltip, so hovering here does the same; the sidebar changes width only when you pin it, drag its edge, or hide it
+1. Hovering the sidebar **does not change its width**; Hide Sidebar is the way to tuck it away
 2. **Tags open in a panel** beside the sidebar, the way Shortcuts and Notebooks already did, instead of expanding inline and pushing Templates and Trash down
 3. Every panel shares one shape: title, filter, add button, close; the filter is named for its own section (`Filter notebooks`, `Filter tags`) and resets when you switch sections
 4. Clicking the section that is already open closes its panel; Escape and a click outside the sidebar close it too
@@ -171,7 +171,7 @@ This log is for future sessions continuing the exact-clone work. Passes 1–10 e
 
 ### Pass 13 (menu bar + OmniClone)
 1. Application menu bar tightened to Evernote’s 22px row height, 13px type, and tighter item/shortcut spacing
-2. Sidebar rail icons raised from 16px to 20px so they match the menu density
+2. Sidebar nav icons raised from 16px to 20px so they match the menu density
 3. Settings gear removed from the sidebar; Settings stays in File and the account menu
 4. OmniClone / OmniFocus integration: Copy Note Link opens `notebook://`, Send to OmniClone uses `omniclone:///add`
 
@@ -216,7 +216,6 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 ### Quality / parity bugs to re-check
 - Note-list splitter sometimes feels like it does not move until a larger drag (the sidebar splitter now tracks the pointer instead)
 - Hide Sidebar should be verified with a click, not only the menu label
-- A drag that collapses the sidebar to the rail leaves the remembered pinned width at the 180px minimum
 - Drag-and-drop notes onto notebooks/tags was implemented but QA skipped it
 - ArrowUp/ArrowDown with a single note cannot prove non-wrapping selection
 - “Add tag” vs Evernote’s “Add a tag”

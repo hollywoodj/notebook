@@ -152,10 +152,10 @@ describe("buildMenuBar", () => {
     );
   });
 
-  it("pairs pin-sidebar and hide-attachments with the current chrome", () => {
+  it("pairs hide-sidebar and hide-attachments with the current chrome", () => {
     const groups = buildMenuBar(
       stubMenu({
-        paneLayout: { ...defaultPaneLayout(), sidebarRail: true },
+        paneLayout: { ...defaultPaneLayout(), sidebarCollapsed: true },
         editorChrome: { ...defaultEditorChrome(), attachmentsExpanded: true },
         activeNote: { id: "n1" } as AppMenuContext["activeNote"],
       })
@@ -163,7 +163,9 @@ describe("buildMenuBar", () => {
     const view = groups.find((group) => group.label === "View");
     assert.ok(view);
     const viewLabels = labels(view.items);
-    assert.equal(viewLabels.includes("Pin Sidebar Open"), true);
+    assert.equal(viewLabels.includes("Show Sidebar"), true);
+    assert.equal(viewLabels.includes("Pin Sidebar Open"), false);
+    assert.equal(viewLabels.includes("Collapse Sidebar to Icons"), false);
     assert.equal(viewLabels.includes("Hide Attachments"), true);
     assert.equal(viewLabels.includes("Show Note Outline"), true);
     assert.equal(viewLabels.includes("Back"), true);
