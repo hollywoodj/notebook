@@ -126,6 +126,9 @@ export interface Preferences {
   list_view: "snippets" | "titles" | "cards";
   list_density: "comfortable" | "compact";
   sort_by: "updated" | "created" | "title" | "reminder";
+  sort_descending: boolean;
+  spell_language: string;
+  show_completed_reminders: boolean;
   new_note_behavior: "blank" | "ask";
   auto_save_ms: number;
   show_shortcuts: boolean;
@@ -153,6 +156,9 @@ export const defaultPreferences: Preferences = {
   list_view: "snippets",
   list_density: "comfortable",
   sort_by: "updated",
+  sort_descending: false,
+  spell_language: "en-US",
+  show_completed_reminders: true,
   new_note_behavior: "blank",
   auto_save_ms: 600,
   show_shortcuts: true,

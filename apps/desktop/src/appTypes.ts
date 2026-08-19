@@ -19,6 +19,7 @@ export type NoteTab = {
   noteId: string | null;
   title: string;
   filter: ViewFilter;
+  pinned?: boolean;
 };
 
 export type PendingConfirm = {

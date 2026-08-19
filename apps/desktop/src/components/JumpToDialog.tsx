@@ -13,14 +13,15 @@ export function JumpToDialog({
   notes: { id: string; title: string; notebook_name: string }[];
   notebooks: { id: string; name: string }[];
   tags: { id: string; name: string }[];
-  mode?: "all" | "notebook";
+  mode?: "all" | "notebook" | "tag";
   onClose: () => void;
   onSelect: (target: JumpTarget) => void;
 }) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const kinds: JumpKind[] | undefined = mode === "notebook" ? ["notebook"] : undefined;
+  const kinds: JumpKind[] | undefined =
+    mode === "notebook" ? ["notebook"] : mode === "tag" ? ["tag"] : undefined;
   const results = useMemo(
     () => jumpToMatches(query, notes, notebooks, tags, 12, kinds),
     [query, notes, notebooks, tags, kinds]
@@ -60,7 +61,9 @@ export function JumpToDialog({
       <div
         className="jump-dialog"
         role="dialog"
-        aria-label={mode === "notebook" ? "Go to notebook" : "Jump to"}
+        aria-label={
+          mode === "notebook" ? "Go to notebook" : mode === "tag" ? "Go to tag" : "Jump to"
+        }
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="jump-search">
@@ -71,7 +74,9 @@ export function JumpToDialog({
             placeholder={
               mode === "notebook"
                 ? "Go to a notebook"
-                : "Jump to a note, notebook, or tag"
+                : mode === "tag"
+                  ? "Go to a tag"
+                  : "Jump to a note, notebook, or tag"
             }
             onChange={(event) => setQuery(event.target.value)}
           />

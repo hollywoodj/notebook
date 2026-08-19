@@ -205,12 +205,19 @@ export function adjacentNoteId<T extends { id: string }>(
   currentId: string | null,
   direction: -1 | 1
 ): string | null {
+  return noteIdByOffset(notes, currentId, direction);
+}
+
+export function noteIdByOffset<T extends { id: string }>(
+  notes: T[],
+  currentId: string | null,
+  offset: number
+): string | null {
   if (notes.length === 0) return null;
-  if (!currentId) return notes[0].id;
+  if (!currentId) return notes[offset >= 0 ? 0 : notes.length - 1]?.id ?? null;
   const idx = notes.findIndex((note) => note.id === currentId);
   if (idx < 0) return notes[0].id;
-  const next = idx + direction;
-  if (next < 0 || next >= notes.length) return currentId;
+  const next = Math.min(notes.length - 1, Math.max(0, idx + offset));
   return notes[next].id;
 }
 
@@ -418,6 +425,9 @@ export type EditorCommand =
   | { type: "findNext" | "findPrev" }
   | { type: "imageSize"; width?: string }
   | { type: "imageCaption"; title?: string }
+  | { type: "imageAlign"; align: "left" | "center" | "right" }
+  | { type: "tasks"; action: "checkAll" | "uncheckAll" }
+  | { type: "unsetColor" }
   | {
       type: "tableAction";
       action: "insert" | "addRow" | "addColumn" | "deleteRow" | "deleteColumn" | "deleteTable";
@@ -628,11 +638,16 @@ export const ZOOM_MAX = 200;
 export const ZOOM_STEP = 10;
 export const DEFAULT_ZOOM = 100;
 
+export const LINE_HEIGHTS = [1, 1.15, 1.5, 2] as const;
+export type LineHeight = (typeof LINE_HEIGHTS)[number];
+
 export interface EditorChrome {
   toolbarHidden: boolean;
   attachmentsExpanded: boolean;
   zoom: number;
   outlineOpen: boolean;
+  statusBarHidden: boolean;
+  lineHeight: LineHeight;
 }
 
 export function defaultEditorChrome(): EditorChrome {
@@ -641,6 +656,8 @@ export function defaultEditorChrome(): EditorChrome {
     attachmentsExpanded: false,
     zoom: DEFAULT_ZOOM,
     outlineOpen: false,
+    statusBarHidden: false,
+    lineHeight: 1.5,
   };
 }
 
@@ -661,6 +678,13 @@ export function clampZoom(value: number): number {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, stepped));
 }
 
+export function parseLineHeight(value: unknown): LineHeight {
+  const numeric = Number(value);
+  return (LINE_HEIGHTS as readonly number[]).includes(numeric)
+    ? (numeric as LineHeight)
+    : 1.5;
+}
+
 export function parseEditorChrome(raw: string | null): EditorChrome {
   const fallback = defaultEditorChrome();
   if (!raw) return fallback;
@@ -671,6 +695,8 @@ export function parseEditorChrome(raw: string | null): EditorChrome {
       attachmentsExpanded: Boolean(parsed.attachmentsExpanded),
       zoom: clampZoom(Number(parsed.zoom ?? DEFAULT_ZOOM)),
       outlineOpen: Boolean(parsed.outlineOpen),
+      statusBarHidden: Boolean(parsed.statusBarHidden),
+      lineHeight: parseLineHeight(parsed.lineHeight),
     };
   } catch {
     return fallback;
@@ -868,7 +894,13 @@ export function rememberSearch(history: string[], query: string, limit = RECENT_
   );
 }
 
-export type NoteListFacet = "reminder" | "attachment" | "untagged";
+export type NoteListFacet =
+  | "reminder"
+  | "attachment"
+  | "untagged"
+  | "image"
+  | "url"
+  | "checklist";
 
 export function toggleListFacet(
   current: NoteListFacet[],
@@ -879,13 +911,32 @@ export function toggleListFacet(
     : [...current, facet];
 }
 
+export function noteHasUrl(note: {
+  source_url?: string | null;
+  snippet?: string;
+}): boolean {
+  if (note.source_url?.trim()) return true;
+  return /\bhttps?:\/\//i.test(note.snippet || "");
+}
+
 export function noteMatchesFacets(
-  note: { reminder_at: string | null; attachment_count: number; tag_names?: string[] },
+  note: {
+    reminder_at: string | null;
+    attachment_count: number;
+    tag_names?: string[];
+    thumbnail_url?: string | null;
+    source_url?: string | null;
+    snippet?: string;
+    checklist_total?: number;
+  },
   facets: NoteListFacet[]
 ): boolean {
   if (facets.includes("reminder") && !note.reminder_at) return false;
   if (facets.includes("attachment") && note.attachment_count <= 0) return false;
   if (facets.includes("untagged") && (note.tag_names?.length ?? 0) > 0) return false;
+  if (facets.includes("image") && !note.thumbnail_url) return false;
+  if (facets.includes("url") && !noteHasUrl(note)) return false;
+  if (facets.includes("checklist") && (note.checklist_total || 0) <= 0) return false;
   return true;
 }
 
@@ -1566,3 +1617,355 @@ export function viewTitleForFilter(
 export function plaintextFromClipboardHtml(html: string): string {
   return htmlToPlainText(html).replace(/\n/g, "<br>");
 }
+
+export function listCountLabel(visible: number, total: number): string {
+  const count = visible === 1 ? "1 note" : `${visible} notes`;
+  if (visible === total || total <= 0) return count;
+  return `${count} of ${total}`;
+}
+
+export function sortNotes<
+  T extends {
+    is_pinned: boolean;
+    title: string;
+    created_at: string;
+    updated_at: string;
+    reminder_at?: string | null;
+  },
+>(
+  notes: T[],
+  sortBy: "updated" | "created" | "title" | "reminder",
+  descending = false
+): T[] {
+  const dir = descending ? -1 : 1;
+  return [...notes].sort((a, b) => {
+    if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
+    let cmp = 0;
+    if (sortBy === "title") cmp = a.title.localeCompare(b.title);
+    else if (sortBy === "created") {
+      cmp = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    } else if (sortBy === "reminder") {
+      cmp = new Date(a.reminder_at || 0).getTime() - new Date(b.reminder_at || 0).getTime();
+    } else {
+      cmp = new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    }
+    return cmp * dir;
+  });
+}
+
+export function nextLineHeight(current: LineHeight, direction: 1 | -1): LineHeight {
+  const index = LINE_HEIGHTS.indexOf(current);
+  const next = Math.min(LINE_HEIGHTS.length - 1, Math.max(0, index + direction));
+  return LINE_HEIGHTS[next];
+}
+
+export const SPELLCHECK_LANGUAGES = [
+  { id: "en-US", label: "English (US)" },
+  { id: "en-GB", label: "English (UK)" },
+  { id: "de-DE", label: "German" },
+  { id: "fr-FR", label: "French" },
+  { id: "es-ES", label: "Spanish" },
+  { id: "it-IT", label: "Italian" },
+  { id: "pt-BR", label: "Portuguese (Brazil)" },
+  { id: "nl-NL", label: "Dutch" },
+  { id: "pl-PL", label: "Polish" },
+  { id: "ru-RU", label: "Russian" },
+  { id: "ja-JP", label: "Japanese" },
+  { id: "zh-CN", label: "Chinese (Simplified)" },
+  { id: "ko-KR", label: "Korean" },
+] as const;
+
+export const NOTE_COLORS = [
+  { id: "", label: "None", swatch: "transparent" },
+  { id: "red", label: "Red", swatch: "#f97066" },
+  { id: "orange", label: "Orange", swatch: "#f79009" },
+  { id: "yellow", label: "Yellow", swatch: "#f4c430" },
+  { id: "green", label: "Green", swatch: "#00a82d" },
+  { id: "blue", label: "Blue", swatch: "#2e90fa" },
+  { id: "purple", label: "Purple", swatch: "#7a5af8" },
+] as const;
+
+export type NoteColorId = (typeof NOTE_COLORS)[number]["id"];
+
+export const NOTE_COLORS_KEY = "notebook.noteColors";
+export const LOCKED_NOTES_KEY = "notebook.lockedNotes";
+export const RECENT_NOTES_KEY = "notebook.recentNotes";
+export const SIDEBAR_SECTIONS_KEY = "notebook.sidebarSections";
+
+export type RecentNote = { id: string; title: string };
+
+export function parseRecentNotes(raw: string | null): RecentNote[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && typeof item.id === "string")
+      .map((item) => ({
+        id: String(item.id),
+        title: String(item.title || "Untitled"),
+      }))
+      .slice(0, 12);
+  } catch {
+    return [];
+  }
+}
+
+export function rememberRecentNote(
+  list: RecentNote[],
+  note: RecentNote,
+  limit = 12
+): RecentNote[] {
+  if (!note.id) return list;
+  return [
+    { id: note.id, title: note.title.trim() || "Untitled" },
+    ...list.filter((item) => item.id !== note.id),
+  ].slice(0, limit);
+}
+
+export function parseIdList(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item) => typeof item === "string");
+  } catch {
+    return [];
+  }
+}
+
+export function parseNoteColorMap(raw: string | null): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const next: Record<string, string> = {};
+    for (const [id, value] of Object.entries(parsed)) {
+      if (typeof value === "string" && NOTE_COLORS.some((color) => color.id === value && value)) {
+        next[id] = value;
+      }
+    }
+    return next;
+  } catch {
+    return {};
+  }
+}
+
+export function setNoteColor(
+  map: Record<string, string>,
+  id: string,
+  color: string
+): Record<string, string> {
+  const next = { ...map };
+  if (!color) delete next[id];
+  else next[id] = color;
+  return next;
+}
+
+export const DEFAULT_SIDEBAR_SECTIONS = [
+  "notes",
+  "shortcuts",
+  "reminders",
+  "notebooks",
+  "tags",
+  "templates",
+  "archived",
+  "saved",
+  "trash",
+] as const;
+
+export type SidebarSectionId = (typeof DEFAULT_SIDEBAR_SECTIONS)[number];
+
+export function parseSidebarSections(raw: string | null): SidebarSectionId[] {
+  const fallback = [...DEFAULT_SIDEBAR_SECTIONS];
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return fallback;
+    const allowed = new Set<string>(DEFAULT_SIDEBAR_SECTIONS);
+    const seen = new Set<string>();
+    const ordered: SidebarSectionId[] = [];
+    for (const item of parsed) {
+      if (typeof item === "string" && allowed.has(item) && !seen.has(item)) {
+        ordered.push(item as SidebarSectionId);
+        seen.add(item);
+      }
+    }
+    for (const item of DEFAULT_SIDEBAR_SECTIONS) {
+      if (!seen.has(item)) ordered.push(item);
+    }
+    return ordered;
+  } catch {
+    return fallback;
+  }
+}
+
+export function moveSidebarSection(
+  sections: SidebarSectionId[],
+  id: SidebarSectionId,
+  direction: -1 | 1
+): SidebarSectionId[] {
+  const index = sections.indexOf(id);
+  if (index < 0) return sections;
+  const nextIndex = index + direction;
+  if (nextIndex < 0 || nextIndex >= sections.length) return sections;
+  const next = [...sections];
+  const [item] = next.splice(index, 1);
+  next.splice(nextIndex, 0, item);
+  return next;
+}
+
+export function sidebarSectionLabel(id: SidebarSectionId): string {
+  const labels: Record<SidebarSectionId, string> = {
+    notes: "Notes",
+    shortcuts: "Shortcuts",
+    reminders: "Reminders",
+    notebooks: "Notebooks",
+    tags: "Tags",
+    templates: "Templates",
+    archived: "Archived",
+    saved: "Saved searches",
+    trash: "Trash",
+  };
+  return labels[id];
+}
+
+export type CalendarDay = {
+  key: string;
+  day: number;
+  inMonth: boolean;
+  isToday: boolean;
+};
+
+export function isoDayKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+export function monthLabel(year: number, month: number): string {
+  return new Date(year, month, 1).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+export function shiftMonth(
+  year: number,
+  month: number,
+  delta: number
+): { year: number; month: number } {
+  const date = new Date(year, month + delta, 1);
+  return { year: date.getFullYear(), month: date.getMonth() };
+}
+
+export function monthGrid(
+  year: number,
+  month: number,
+  weekStartsOn: "sunday" | "monday",
+  now = new Date()
+): CalendarDay[] {
+  const first = new Date(year, month, 1);
+  const startWeekday = first.getDay();
+  const mondayOffset = weekStartsOn === "monday" ? (startWeekday + 6) % 7 : startWeekday;
+  const gridStart = new Date(year, month, 1 - mondayOffset);
+  const todayKey = isoDayKey(now);
+  const days: CalendarDay[] = [];
+  for (let i = 0; i < 42; i += 1) {
+    const date = new Date(gridStart);
+    date.setDate(gridStart.getDate() + i);
+    const key = isoDayKey(date);
+    days.push({
+      key,
+      day: date.getDate(),
+      inMonth: date.getMonth() === month,
+      isToday: key === todayKey,
+    });
+  }
+  return days;
+}
+
+export function reminderFallsOnDay(iso: string | null, dayKey: string): boolean {
+  if (!iso) return false;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return false;
+  return isoDayKey(date) === dayKey;
+}
+
+export function pinTabById<T extends { id: string; pinned?: boolean }>(
+  tabs: T[],
+  id: string
+): T[] {
+  return tabs.map((tab) => (tab.id === id ? { ...tab, pinned: !tab.pinned } : tab));
+}
+
+export function closeAllUnpinnedTabIds<T extends { id: string; pinned?: boolean }>(
+  tabs: T[]
+): string[] {
+  return tabs.filter((tab) => !tab.pinned).map((tab) => tab.id);
+}
+
+export function renameSavedSearch(
+  list: SavedSearch[],
+  id: string,
+  name: string
+): SavedSearch[] {
+  const cleaned = name.trim();
+  if (!cleaned) return list;
+  return list.map((item) => (item.id === id ? { ...item, name: cleaned } : item));
+}
+
+export const KEYBOARD_SHORTCUTS: [string, string][] = [
+  ["New note", "Ctrl/⌘ N"],
+  ["New note from template", "Ctrl/⌘ Shift N"],
+  ["Find in note", "Ctrl/⌘ F"],
+  ["Find and replace", "Ctrl/⌘ H"],
+  ["Search all notes", "Ctrl/⌘ K or Ctrl/⌘ Shift F"],
+  ["Collapse sidebar to icons / pin open", "Ctrl/⌘ Alt S"],
+  ["Hide / show note list", "Ctrl/⌘ Alt ←"],
+  ["Expand / restore note", "Ctrl/⌘ Alt →"],
+  ["Jump to note, notebook, or tag", "Ctrl/⌘ J"],
+  ["Go to notebook", "Ctrl/⌘ Alt J"],
+  ["Go to tag", "Ctrl/⌘ Alt T"],
+  ["Command palette", "Ctrl/⌘ Shift P"],
+  ["Keyboard shortcuts", "Ctrl/⌘ /"],
+  ["Back", "Ctrl/⌘ ["],
+  ["Forward", "Ctrl/⌘ ]"],
+  ["Next note", "↓ or J"],
+  ["Previous note", "↑ or K"],
+  ["First / last note", "Home / End"],
+  ["Page through notes", "PageDown / PageUp"],
+  ["Rename note", "F2"],
+  ["Print note", "Ctrl/⌘ P"],
+  ["Note info", "Ctrl/⌘ Shift I"],
+  ["Zoom in", "Ctrl/⌘ +"],
+  ["Zoom out", "Ctrl/⌘ -"],
+  ["Actual size", "Ctrl/⌘ 0"],
+  ["Settings", "Ctrl/⌘ ,"],
+  ["New tab", "Ctrl/⌘ Shift T"],
+  ["Open in new tab", "Ctrl/⌘ Alt O"],
+  ["Close tab", "Ctrl/⌘ W"],
+  ["Select all notes", "Ctrl/⌘ A"],
+  ["Range select notes", "Shift+click"],
+  ["Drag-select notes", "Click and drag"],
+  ["Toggle note selection", "Ctrl/⌘+click"],
+  ["Move selected notes to trash", "Delete"],
+  ["Bold", "Ctrl/⌘ B"],
+  ["Italic", "Ctrl/⌘ I"],
+  ["Underline", "Ctrl/⌘ U"],
+  ["Bulleted list", "Ctrl/⌘ Shift L"],
+  ["Numbered list", "Ctrl/⌘ Shift O"],
+  ["Checklist", "Ctrl/⌘ Shift C"],
+  ["Increase indent", "Tab"],
+  ["Decrease indent", "Shift+Tab"],
+  ["Find next / previous", "F3 / Shift+F3"],
+  ["Paste and match style", "Ctrl/⌘ Shift V"],
+  ["Reopen closed tab", "File menu or tab right-click"],
+];
+
+export function clampImageWidth(width: number): number {
+  if (!Number.isFinite(width)) return 320;
+  return Math.min(1200, Math.max(80, Math.round(width)));
+}
+

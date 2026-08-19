@@ -35,6 +35,8 @@ import { JumpToDialog } from "./components/JumpToDialog";
 import { SearchDialog } from "./components/SearchDialog";
 import { CommandPalette } from "./components/CommandPalette";
 import { NotebookPickerDialog } from "./components/NotebookPickerDialog";
+import { ShortcutOverlay } from "./components/ShortcutOverlay";
+import { ReminderCalendar } from "./components/ReminderCalendar";
 import {
   noteIdsInRange,
   pruneNoteIds,
@@ -65,8 +67,13 @@ import {
   COMPLETED_REMINDERS_KEY,
   LAST_SESSION_KEY,
   SAVED_SEARCHES_KEY,
+  RECENT_NOTES_KEY,
+  SIDEBAR_SECTIONS_KEY,
+  NOTE_COLORS_KEY,
+  LOCKED_NOTES_KEY,
   SIDEBAR_RAIL_WIDTH,
   adjacentNoteId,
+  noteIdByOffset,
   attachmentCountLabel,
   avatarColor,
   checklistProgressLabel,
@@ -110,6 +117,10 @@ import {
   parseRecentSearches,
   parseSavedSearches,
   parseSearchQuery,
+  parseRecentNotes,
+  parseSidebarSections,
+  parseNoteColorMap,
+  parseIdList,
   pushNavHistory,
   reminderFromPreset,
   reminderFromSnooze,
@@ -143,8 +154,17 @@ import {
   popClosedTab,
   readingTimeLabel,
   rememberClosedTab,
+  rememberRecentNote,
+  reminderFallsOnDay,
+  renameSavedSearch,
+  isoDayKey,
   trashToastCopy,
   viewTitleForFilter,
+  setNoteColor as applyNoteColor,
+  pinTabById,
+  closeAllUnpinnedTabIds,
+  listCountLabel,
+  sortNotes,
   type DateRangeFacet,
   type ListView,
   type NoteListFacet,
@@ -154,6 +174,8 @@ import {
   type SnoozePreset,
   type NavLocation,
   type PaletteAction,
+  type SidebarSectionId,
+  NOTE_COLORS,
 } from "./uiChrome";
 
 const PALETTE_ACTIONS: PaletteAction[] = [
@@ -176,6 +198,9 @@ const PALETTE_ACTIONS: PaletteAction[] = [
   { id: "archived", label: "Show archived notes" },
   { id: "info", label: "Note info", hint: "Ctrl/⌘ Shift I" },
   { id: "outline", label: "Toggle note outline" },
+  { id: "jump-tag", label: "Go to tag…", hint: "Ctrl/⌘ Alt T" },
+  { id: "shortcuts-overlay", label: "Keyboard shortcuts", hint: "Ctrl/⌘ /" },
+  { id: "lock-note", label: "Lock / unlock note" },
 ];
 
 export default function App() {
@@ -206,13 +231,38 @@ export default function App() {
     )
   );
   const [closedTabs, setClosedTabs] = useState<NoteTab[]>([]);
-  const [jumpMode, setJumpMode] = useState<"all" | "notebook">("all");
+  const [jumpMode, setJumpMode] = useState<"all" | "notebook" | "tag">("all");
   const [trashToast, setTrashToast] = useState<{ ids: string[]; message: string } | null>(null);
   const [collapsedListGroups, setCollapsedListGroups] = useState(() =>
     parseCollapsedStacks(
       typeof localStorage === "undefined" ? null : localStorage.getItem("notebook.collapsedListGroups")
     )
   );
+  const [recentNotes, setRecentNotes] = useState(() =>
+    parseRecentNotes(
+      typeof localStorage === "undefined" ? null : localStorage.getItem(RECENT_NOTES_KEY)
+    )
+  );
+  const [sidebarSections, setSidebarSections] = useState<SidebarSectionId[]>(() =>
+    parseSidebarSections(
+      typeof localStorage === "undefined" ? null : localStorage.getItem(SIDEBAR_SECTIONS_KEY)
+    )
+  );
+  const [lockedNoteIds, setLockedNoteIds] = useState(() =>
+    parseIdList(typeof localStorage === "undefined" ? null : localStorage.getItem(LOCKED_NOTES_KEY))
+  );
+  const [noteColors, setNoteColors] = useState(() =>
+    parseNoteColorMap(
+      typeof localStorage === "undefined" ? null : localStorage.getItem(NOTE_COLORS_KEY)
+    )
+  );
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() };
+  });
+  const [calendarDay, setCalendarDay] = useState<string | null>(null);
+  const [selectionWords, setSelectionWords] = useState(0);
   const [completedReminders, setCompletedReminders] = useState(() =>
     parseCompletedReminders(
       typeof localStorage === "undefined" ? null : localStorage.getItem(COMPLETED_REMINDERS_KEY)
@@ -482,24 +532,13 @@ export default function App() {
         break;
       }
     }
-    const sorted = [...list].sort((a, b) => {
-      if (filter.type === "reminders") {
-        return (
-          new Date(a.reminder_at || 0).getTime() - new Date(b.reminder_at || 0).getTime()
-        );
-      }
-      if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
-      if (prefs.sort_by === "title") return a.title.localeCompare(b.title);
-      if (prefs.sort_by === "created") {
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-      }
-      if (prefs.sort_by === "reminder") {
-        return new Date(a.reminder_at || 0).getTime() - new Date(b.reminder_at || 0).getTime();
-      }
-      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-    });
+    const sorted = sortNotes(
+      list,
+      filter.type === "reminders" ? "reminder" : prefs.sort_by,
+      Boolean(prefs.sort_descending)
+    );
     setNotes(sorted);
-  }, [filter, prefs.sort_by, searchScope]);
+  }, [filter, prefs.sort_by, prefs.sort_descending, searchScope]);
 
   const loadNote = useCallback(async (id: string, tabId?: string) => {
     skipNextSave.current = true;
@@ -509,6 +548,14 @@ export default function App() {
     setSelectedNoteIds(new Set([id]));
     lastClickedNoteId.current = id;
     setShowNoteMenu(false);
+    setRecentNotes((current) => {
+      const next = rememberRecentNote(current, {
+        id: note.id,
+        title: note.title || "Untitled",
+      });
+      localStorage.setItem(RECENT_NOTES_KEY, JSON.stringify(next));
+      return next;
+    });
     setTabs((current) =>
       current.map((tab) =>
         tab.id === targetTabId
@@ -1182,12 +1229,30 @@ export default function App() {
 
   const visibleNotes = useMemo(
     () =>
-      notes.filter(
-        (note) =>
-          noteMatchesFacets(note, listFacets) &&
-          noteMatchesDateRange(note.updated_at, listDateRange)
-      ),
-    [notes, listFacets, listDateRange]
+      notes.filter((note) => {
+        if (!noteMatchesFacets(note, listFacets)) return false;
+        if (!noteMatchesDateRange(note.updated_at, listDateRange)) return false;
+        if (
+          filter.type === "reminders" &&
+          prefs.show_completed_reminders === false &&
+          isReminderDone(completedReminders, note.id)
+        ) {
+          return false;
+        }
+        if (filter.type === "reminders" && calendarDay && !reminderFallsOnDay(note.reminder_at, calendarDay)) {
+          return false;
+        }
+        return true;
+      }),
+    [
+      notes,
+      listFacets,
+      listDateRange,
+      filter.type,
+      prefs.show_completed_reminders,
+      completedReminders,
+      calendarDay,
+    ]
   );
 
   const groupedNotes = useMemo(() => {
@@ -1392,12 +1457,45 @@ export default function App() {
           lastClickedNoteId.current = nextId;
           void loadNote(nextId);
         }
+      } else if (
+        (e.key === "Home" || e.key === "End" || e.key === "PageDown" || e.key === "PageUp") &&
+        !isTextInputFocused() &&
+        visibleNotes.length > 0
+      ) {
+        e.preventDefault();
+        const current =
+          lastClickedNoteId.current ||
+          (selectedNoteIds.size === 1 ? [...selectedNoteIds][0] : null);
+        const offset =
+          e.key === "Home"
+            ? -visibleNotes.length
+            : e.key === "End"
+              ? visibleNotes.length
+              : e.key === "PageDown"
+                ? 8
+                : -8;
+        const nextId = noteIdByOffset(visibleNotes, current, offset);
+        if (nextId) {
+          lastClickedNoteId.current = nextId;
+          void loadNote(nextId);
+        }
+      } else if (e.key === "F2" && !isTextInputFocused() && activeNote) {
+        e.preventDefault();
+        openRename({
+          kind: "note",
+          id: activeNote.id,
+          name: activeNote.title || "Untitled",
+        });
       } else if (meta && e.key === ",") {
         e.preventDefault();
         openSettings();
       } else if (meta && e.key === "/") {
         e.preventDefault();
-        openSettings("shortcuts");
+        setShowShortcuts((open) => !open);
+      } else if (meta && e.altKey && (e.key === "t" || e.key === "T")) {
+        e.preventDefault();
+        setJumpMode("tag");
+        setShowJump(true);
       } else if (meta && e.key === "t" && e.shiftKey) {
         e.preventDefault();
         openNewTab();
@@ -1566,6 +1664,20 @@ export default function App() {
           ...editorChrome,
           outlineOpen: !editorChrome.outlineOpen,
         });
+        break;
+      case "jump-tag":
+        setJumpMode("tag");
+        setShowJump(true);
+        break;
+      case "shortcuts-overlay":
+        setShowShortcuts(true);
+        break;
+      case "lock-note":
+        if (activeNote) {
+          const next = toggleCollapsedId(lockedNoteIds, activeNote.id);
+          setLockedNoteIds(next);
+          localStorage.setItem(LOCKED_NOTES_KEY, JSON.stringify(next));
+        }
         break;
       default:
         break;
@@ -1767,6 +1879,42 @@ export default function App() {
     },
     reopenClosedTab,
     canReopenClosedTab: closedTabs.length > 0,
+    recentNotes,
+    closeAllTabs: () => {
+      const ids = closeAllUnpinnedTabIds(tabsRef.current);
+      if (!ids.length) return;
+      ids.forEach((id) => closeTab(id));
+    },
+    pinActiveTab: () => {
+      setTabs((current) => {
+        const next = pinTabById(current, activeTabIdRef.current);
+        tabsRef.current = next;
+        return next;
+      });
+    },
+    isActiveTabPinned: Boolean(tabs.find((tab) => tab.id === activeTabId)?.pinned),
+    openSelectedInTabs: () => {
+      targetNoteIds().forEach((id) => void openInNewTab(id));
+    },
+    toggleNoteLocked: () => {
+      if (!activeNote) return;
+      const next = toggleCollapsedId(lockedNoteIds, activeNote.id);
+      setLockedNoteIds(next);
+      localStorage.setItem(LOCKED_NOTES_KEY, JSON.stringify(next));
+    },
+    isNoteLocked: Boolean(activeNote && lockedNoteIds.includes(activeNote.id)),
+    setNoteColor: (color: string) => {
+      if (!activeNote) return;
+      const next = applyNoteColor(noteColors, activeNote.id, color);
+      setNoteColors(next);
+      localStorage.setItem(NOTE_COLORS_KEY, JSON.stringify(next));
+    },
+    noteColor: activeNote ? noteColors[activeNote.id] || "" : "",
+    openShortcutsOverlay: () => setShowShortcuts(true),
+    collapseAllListGroups: () =>
+      persistCollapsedListGroups(collapseAllIds(groupedNotes.map((group) => group.key))),
+    expandAllListGroups: () => persistCollapsedListGroups([]),
+    canCollapseListGroups: groupedNotes.some((group) => group.label),
   };
   const contextMenuItems = (target: ContextTarget) => buildContextMenu(target, menuCtx);
   const menuGroups = buildMenuBar(menuCtx);
@@ -1806,7 +1954,12 @@ export default function App() {
     >
       <MenuBar groups={menuGroups} />
       <NoteTabBar
-        tabs={tabs}
+        tabs={tabs.map((tab) => ({
+          id: tab.id,
+          title: tab.title,
+          pinned: tab.pinned,
+          dirty: tab.id === activeTabId && saveState !== "saved",
+        }))}
         activeTabId={activeTabId}
         canGoBack={navPast.length > 0}
         canGoForward={navFuture.length > 0}
@@ -1826,6 +1979,16 @@ export default function App() {
             tabsRef.current.map((tab) => tab.id),
             id
           ).forEach((tabId) => closeTab(tabId));
+        }}
+        onCloseAll={() => {
+          closeAllUnpinnedTabIds(tabsRef.current).forEach((id) => closeTab(id));
+        }}
+        onPin={(id) => {
+          setTabs((current) => {
+            const next = pinTabById(current, id);
+            tabsRef.current = next;
+            return next;
+          });
         }}
         onNewTab={openNewTab}
         onReopenClosed={reopenClosedTab}
@@ -1940,152 +2103,179 @@ export default function App() {
         </div>
 
         <nav className="sidebar-nav scroll-pane">
-          <button
-            className={filter.type === "all" ? "nav-item active" : "nav-item"}
-            title="Notes"
-            onClick={() => {
-              setSidebarFlyout(null);
-              setFilter({ type: "all" });
-            }}
-          >
-            <Icon.Notes size={16} />
-            <span className="nav-label">Notes</span>
-            <span className="nav-count">{counts.notes}</span>
-          </button>
-          {prefs.show_shortcuts && (
-            <button
-              className={
-                (filter.type === "shortcuts" || sidebarFlyout === "shortcuts"
-                  ? "nav-item active"
-                  : "nav-item")
-              }
-              title="Shortcuts"
-              aria-expanded={sidebarFlyout === "shortcuts"}
-              onClick={() => {
-                openSidebarFlyout("shortcuts");
-                setFilter({ type: "shortcuts" });
-              }}
-            >
-              <Icon.Shortcuts size={16} />
-              <span className="nav-label">Shortcuts</span>
-              <span className="nav-count">{shortcutNotes.length}</span>
-            </button>
-          )}
-          {prefs.show_reminders && (
-            <button
-              className={filter.type === "reminders" ? "nav-item active" : "nav-item"}
-              title="Reminders"
-              onClick={() => {
-                setSidebarFlyout(null);
-                setFilter({ type: "reminders" });
-              }}
-            >
-              <Icon.Reminder size={16} />
-              <span className="nav-label">Reminders</span>
-              <span className="nav-count">{counts.reminders}</span>
-            </button>
-          )}
-
-          {prefs.show_notebooks && (
-            <button
-              className={
-                (filter.type === "notebook" || sidebarFlyout === "notebooks"
-                  ? "nav-item active"
-                  : "nav-item")
-              }
-              title="Notebooks"
-              aria-expanded={sidebarFlyout === "notebooks"}
-              onClick={() => openSidebarFlyout("notebooks")}
-            >
-              <Icon.Notebooks size={16} />
-              <span className="nav-label">Notebooks</span>
-              <span className="nav-count">{notebooks.length}</span>
-            </button>
-          )}
-
-          {prefs.show_tags && (
-            <button
-              className={
-                (filter.type === "tag" || sidebarFlyout === "tags"
-                  ? "nav-item active"
-                  : "nav-item")
-              }
-              title="Tags"
-              aria-expanded={sidebarFlyout === "tags"}
-              onClick={() => openSidebarFlyout("tags")}
-            >
-              <Icon.Tags size={16} />
-              <span className="nav-label">Tags</span>
-              <span className="nav-count">{tags.length}</span>
-            </button>
-          )}
-
-          {prefs.show_templates && (
-            <button
-              className={filter.type === "templates" ? "nav-item active" : "nav-item"}
-              title="Templates"
-              onClick={() => {
-                setSidebarFlyout(null);
-                setFilter({ type: "templates" });
-              }}
-            >
-              <Icon.Templates size={16} />
-              <span className="nav-label">Templates</span>
-              <span className="nav-count">{counts.templates}</span>
-            </button>
-          )}
-
-          <button
-            className={filter.type === "archived" ? "nav-item active" : "nav-item"}
-            title="Archived"
-            onClick={() => {
-              setSidebarFlyout(null);
-              setFilter({ type: "archived" });
-            }}
-          >
-            <Icon.Archive size={16} />
-            <span className="nav-label">Archived</span>
-          </button>
-
-          {savedSearches.length > 0 && (
-            <div className="saved-search-nav" aria-label="Saved searches">
-              {savedSearches.slice(0, 8).map((search) => (
+          {sidebarSections.map((section) => {
+            if (section === "notes") {
+              return (
                 <button
-                  key={search.id}
+                  key="notes"
+                  className={filter.type === "all" ? "nav-item active" : "nav-item"}
+                  title="Notes"
+                  onClick={() => {
+                    setSidebarFlyout(null);
+                    setFilter({ type: "all" });
+                  }}
+                >
+                  <Icon.Notes size={16} />
+                  <span className="nav-label">Notes</span>
+                  <span className="nav-count">{counts.notes}</span>
+                </button>
+              );
+            }
+            if (section === "shortcuts") {
+              return prefs.show_shortcuts ? (
+                <button
+                  key="shortcuts"
                   className={
-                    filter.type === "search" && filter.query === search.query
+                    filter.type === "shortcuts" || sidebarFlyout === "shortcuts"
                       ? "nav-item active"
                       : "nav-item"
                   }
-                  title={search.name}
+                  title="Shortcuts"
+                  aria-expanded={sidebarFlyout === "shortcuts"}
                   onClick={() => {
-                    setSidebarFlyout(null);
-                    setSearchInput(search.query);
-                    setFilter({ type: "search", query: search.query });
-                    setSearchOpen(true);
+                    openSidebarFlyout("shortcuts");
+                    setFilter({ type: "shortcuts" });
                   }}
                 >
-                  <Icon.Search size={16} />
-                  <span className="nav-label">{search.name}</span>
+                  <Icon.Shortcuts size={16} />
+                  <span className="nav-label">Shortcuts</span>
+                  <span className="nav-count">{shortcutNotes.length}</span>
                 </button>
-              ))}
-            </div>
-          )}
-
-          {prefs.show_trash && (
-            <button
-              className={filter.type === "trash" ? "nav-item active" : "nav-item"}
-              title="Trash"
-              onClick={() => {
-                setSidebarFlyout(null);
-                setFilter({ type: "trash" });
-              }}
-            >
-              <Icon.Trash size={16} />
-              <span className="nav-label">Trash</span>
-              <span className="nav-count">{counts.trash}</span>
-            </button>
-          )}
+              ) : null;
+            }
+            if (section === "reminders") {
+              return prefs.show_reminders ? (
+                <button
+                  key="reminders"
+                  className={filter.type === "reminders" ? "nav-item active" : "nav-item"}
+                  title="Reminders"
+                  onClick={() => {
+                    setSidebarFlyout(null);
+                    setFilter({ type: "reminders" });
+                  }}
+                >
+                  <Icon.Reminder size={16} />
+                  <span className="nav-label">Reminders</span>
+                  <span className="nav-count">{counts.reminders}</span>
+                </button>
+              ) : null;
+            }
+            if (section === "notebooks") {
+              return prefs.show_notebooks ? (
+                <button
+                  key="notebooks"
+                  className={
+                    filter.type === "notebook" || sidebarFlyout === "notebooks"
+                      ? "nav-item active"
+                      : "nav-item"
+                  }
+                  title="Notebooks"
+                  aria-expanded={sidebarFlyout === "notebooks"}
+                  onClick={() => openSidebarFlyout("notebooks")}
+                >
+                  <Icon.Notebooks size={16} />
+                  <span className="nav-label">Notebooks</span>
+                  <span className="nav-count">{notebooks.length}</span>
+                </button>
+              ) : null;
+            }
+            if (section === "tags") {
+              return prefs.show_tags ? (
+                <button
+                  key="tags"
+                  className={
+                    filter.type === "tag" || sidebarFlyout === "tags"
+                      ? "nav-item active"
+                      : "nav-item"
+                  }
+                  title="Tags"
+                  aria-expanded={sidebarFlyout === "tags"}
+                  onClick={() => openSidebarFlyout("tags")}
+                >
+                  <Icon.Tags size={16} />
+                  <span className="nav-label">Tags</span>
+                  <span className="nav-count">{tags.length}</span>
+                </button>
+              ) : null;
+            }
+            if (section === "templates") {
+              return prefs.show_templates ? (
+                <button
+                  key="templates"
+                  className={filter.type === "templates" ? "nav-item active" : "nav-item"}
+                  title="Templates"
+                  onClick={() => {
+                    setSidebarFlyout(null);
+                    setFilter({ type: "templates" });
+                  }}
+                >
+                  <Icon.Templates size={16} />
+                  <span className="nav-label">Templates</span>
+                  <span className="nav-count">{counts.templates}</span>
+                </button>
+              ) : null;
+            }
+            if (section === "archived") {
+              return (
+                <button
+                  key="archived"
+                  className={filter.type === "archived" ? "nav-item active" : "nav-item"}
+                  title="Archived"
+                  onClick={() => {
+                    setSidebarFlyout(null);
+                    setFilter({ type: "archived" });
+                  }}
+                >
+                  <Icon.Archive size={16} />
+                  <span className="nav-label">Archived</span>
+                </button>
+              );
+            }
+            if (section === "saved") {
+              return savedSearches.length > 0 ? (
+                <div key="saved" className="saved-search-nav" aria-label="Saved searches">
+                  {savedSearches.slice(0, 8).map((search) => (
+                    <button
+                      key={search.id}
+                      className={
+                        filter.type === "search" && filter.query === search.query
+                          ? "nav-item active"
+                          : "nav-item"
+                      }
+                      title={search.name}
+                      onClick={() => {
+                        setSidebarFlyout(null);
+                        setSearchInput(search.query);
+                        setFilter({ type: "search", query: search.query });
+                        setSearchOpen(true);
+                      }}
+                    >
+                      <Icon.Search size={16} />
+                      <span className="nav-label">{search.name}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null;
+            }
+            if (section === "trash") {
+              return prefs.show_trash ? (
+                <button
+                  key="trash"
+                  className={filter.type === "trash" ? "nav-item active" : "nav-item"}
+                  title="Trash"
+                  onClick={() => {
+                    setSidebarFlyout(null);
+                    setFilter({ type: "trash" });
+                  }}
+                >
+                  <Icon.Trash size={16} />
+                  <span className="nav-label">Trash</span>
+                  <span className="nav-count">{counts.trash}</span>
+                </button>
+              ) : null;
+            }
+            return null;
+          })}
         </nav>
         {sidebarFlyout && (
           <div className="sidebar-flyout" onMouseDown={(event) => event.stopPropagation()}>
@@ -2490,8 +2680,7 @@ export default function App() {
           <div>
             <h2>{viewTitle}</h2>
             <span className="count" title="Notes in this view">
-              {visibleNotes.length}
-              {visibleNotes.length !== notes.length ? ` of ${notes.length}` : ""}
+              {listCountLabel(visibleNotes.length, notes.length)}
             </span>
           </div>
           <div className="panel-tools">
@@ -2535,6 +2724,18 @@ export default function App() {
               <option value="title">Title</option>
               <option value="reminder">Reminder</option>
             </select>
+            <button
+              type="button"
+              className={prefs.sort_descending ? "icon-btn active" : "icon-btn"}
+              title={prefs.sort_descending ? "Newest first" : "Reverse sort"}
+              onClick={() => {
+                const sort_descending = !prefs.sort_descending;
+                setPrefs((p) => ({ ...p, sort_descending }));
+                api.updateSettings({ sort_descending }).catch(console.error);
+              }}
+            >
+              <Icon.Sort size={14} />
+            </button>
             <button
               type="button"
               className={prefs.list_density === "compact" ? "icon-btn active" : "icon-btn"}
@@ -2600,6 +2801,27 @@ export default function App() {
             </button>
             <button
               type="button"
+              className={listFacets.includes("image") ? "active" : ""}
+              onClick={() => setListFacets(toggleListFacet(listFacets, "image"))}
+            >
+              Has image
+            </button>
+            <button
+              type="button"
+              className={listFacets.includes("url") ? "active" : ""}
+              onClick={() => setListFacets(toggleListFacet(listFacets, "url"))}
+            >
+              Has URL
+            </button>
+            <button
+              type="button"
+              className={listFacets.includes("checklist") ? "active" : ""}
+              onClick={() => setListFacets(toggleListFacet(listFacets, "checklist"))}
+            >
+              Has checklist
+            </button>
+            <button
+              type="button"
               className={listDateRange === "today" ? "active" : ""}
               onClick={() => setListDateRange(listDateRange === "today" ? "any" : "today")}
             >
@@ -2631,6 +2853,34 @@ export default function App() {
               </button>
             )}
           </div>
+        )}
+        {filter.type === "reminders" && (
+          <>
+            <ReminderCalendar
+              year={calendarMonth.year}
+              month={calendarMonth.month}
+              weekStartsOn={prefs.week_starts_on}
+              selectedDay={calendarDay}
+              markedDays={notes
+                .filter((note) => note.reminder_at)
+                .map((note) => isoDayKey(new Date(note.reminder_at as string)))}
+              onChangeMonth={(year, month) => setCalendarMonth({ year, month })}
+              onSelectDay={setCalendarDay}
+            />
+            <div className="list-facets" role="group" aria-label="Reminder options">
+              <button
+                type="button"
+                className={prefs.show_completed_reminders === false ? "active" : ""}
+                onClick={() => {
+                  const show_completed_reminders = prefs.show_completed_reminders === false;
+                  setPrefs((p) => ({ ...p, show_completed_reminders }));
+                  api.updateSettings({ show_completed_reminders }).catch(console.error);
+                }}
+              >
+                Hide completed
+              </button>
+            </div>
+          </>
         )}
         {importStatus && <div className="import-status">{importStatus}</div>}
         {selectedNoteIds.size > 1 && (
@@ -2889,7 +3139,12 @@ export default function App() {
           </button>
         </div>
         {activeNote ? (
-          <div className="editor-body">
+          <div
+            className={
+              "editor-body" +
+              (noteColors[activeNote.id] ? ` note-color-${noteColors[activeNote.id]}` : "")
+            }
+          >
           <div className="editor-main">
             {activeNote.is_template && (
               <div className="template-banner">
@@ -2928,6 +3183,38 @@ export default function App() {
                   >
                     <Icon.Pin size={16} />
                   </button>
+                  <button
+                    type="button"
+                    className={lockedNoteIds.includes(activeNote.id) ? "icon-btn active" : "icon-btn"}
+                    title={lockedNoteIds.includes(activeNote.id) ? "Unlock note" : "Lock note"}
+                    onClick={() => {
+                      const next = toggleCollapsedId(lockedNoteIds, activeNote.id);
+                      setLockedNoteIds(next);
+                      localStorage.setItem(LOCKED_NOTES_KEY, JSON.stringify(next));
+                    }}
+                  >
+                    <Icon.Lock size={16} />
+                  </button>
+                  <div className="note-color-swatches" role="group" aria-label="Note color">
+                    {NOTE_COLORS.map((color) => (
+                      <button
+                        key={color.id || "none"}
+                        type="button"
+                        className={
+                          (noteColors[activeNote.id] || "") === color.id
+                            ? "note-color-dot is-active"
+                            : "note-color-dot"
+                        }
+                        style={{ background: color.swatch }}
+                        title={color.label}
+                        onClick={() => {
+                          const next = applyNoteColor(noteColors, activeNote.id, color.id);
+                          setNoteColors(next);
+                          localStorage.setItem(NOTE_COLORS_KEY, JSON.stringify(next));
+                        }}
+                      />
+                    ))}
+                  </div>
                   <button
                     type="button"
                     className={isShortcut ? "icon-btn active" : "icon-btn"}
@@ -3186,7 +3473,19 @@ export default function App() {
               </div>
               <div className="editor-header-meta">
                 <label className="notebook-crumb">
-                  <Icon.Notebooks size={14} />
+                  <button
+                    type="button"
+                    className="notebook-crumb-open"
+                    title="Show notes in this notebook"
+                    onClick={() => {
+                      const notebook = notebooks.find((item) => item.id === activeNote.notebook_id);
+                      if (!notebook) return;
+                      setSidebarFlyout(null);
+                      setFilter({ type: "notebook", id: notebook.id, name: notebook.name });
+                    }}
+                  >
+                    <Icon.Notebooks size={14} />
+                  </button>
                   <select
                     value={activeNote.notebook_id}
                     aria-label="Notebook"
@@ -3233,9 +3532,12 @@ export default function App() {
               noteId={activeNote.id}
               content={activeNote.content}
               spellCheck={prefs.spell_check}
+              spellLanguage={prefs.spell_language || "en-US"}
               fontFamily={prefs.font_family}
               fontSize={prefs.font_size}
               noteWidth={prefs.note_width}
+              lineHeight={editorChrome.lineHeight}
+              readOnly={lockedNoteIds.includes(activeNote.id)}
               pdfView={prefs.pdf_view || "expanded"}
               findTick={findTick}
               replaceTick={replaceTick}
@@ -3250,6 +3552,7 @@ export default function App() {
               zoom={editorChrome.zoom}
               outlineOpen={editorChrome.outlineOpen}
               onOpenNoteLink={(id) => void loadNote(id)}
+              onSelectionWords={setSelectionWords}
               onChange={(html) =>
                 setActiveNote({ ...activeNote, content: html })
               }
@@ -3282,11 +3585,15 @@ export default function App() {
                 await saveNote({ tag_ids: [...activeNote.tag_ids, tag.id] });
               }}
             />
+            {!editorChrome.statusBarHidden && (
             <div className="editor-status">
               <span>
                 {countWords(activeNote.content_plain)} word
                 {countWords(activeNote.content_plain) === 1 ? "" : "s"}
               </span>
+              {selectionWords > 0 && (
+                <span>{selectionWords} selected</span>
+              )}
               {readingTimeLabel(countWords(activeNote.content_plain)) && (
                 <span>{readingTimeLabel(countWords(activeNote.content_plain))}</span>
               )}
@@ -3308,6 +3615,7 @@ export default function App() {
               )}
               <span className="save-state">{saveState}</span>
             </div>
+            )}
           </div>
           {showInfo && (
             <NoteInfoPanel
@@ -3512,6 +3820,11 @@ export default function App() {
             await api.emptyTrash();
             await refreshNotes();
           }}
+          sidebarSections={sidebarSections}
+          onMoveSidebarSection={(sections) => {
+            setSidebarSections(sections);
+            localStorage.setItem(SIDEBAR_SECTIONS_KEY, JSON.stringify(sections));
+          }}
         />
       )}
 
@@ -3578,6 +3891,9 @@ export default function App() {
           onClearScope={() => setSearchScope(null)}
           onSaveSearch={saveCurrentSearch}
           onDeleteSearch={(id) => persistSavedSearches(deleteSavedSearch(savedSearches, id))}
+          onRenameSearch={(id, name) =>
+            persistSavedSearches(renameSavedSearch(savedSearches, id, name))
+          }
           onClose={closeSearch}
           onSearch={runSearch}
           onSelect={(target) => {
@@ -3643,6 +3959,10 @@ export default function App() {
             <Icon.Close size={14} />
           </button>
         </div>
+      )}
+
+      {showShortcuts && (
+        <ShortcutOverlay open={showShortcuts} onClose={() => setShowShortcuts(false)} />
       )}
 
       {contextMenu && (
