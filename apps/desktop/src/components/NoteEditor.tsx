@@ -1,4 +1,4 @@
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
 import Link from "@tiptap/extension-link";
@@ -17,7 +17,7 @@ import { TextStyle } from "@tiptap/extension-text-style";
 import type { Editor } from "@tiptap/core";
 import type { JSONContent } from "@tiptap/core";
 import { mergeAttributes } from "@tiptap/core";
-import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { api, Attachment, attachmentUrl } from "../api";
 import { Icon } from "./Icons";
 import {
@@ -38,6 +38,8 @@ import {
   nextMatchIndex,
   outlineToHtml,
   visibleToolbarCount,
+  clampImageWidth,
+  countWords,
   type EditorCommand,
 } from "../uiChrome";
 import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
@@ -62,9 +64,12 @@ interface Props {
   onChange: (html: string) => void;
   onAttach: (file: File) => Promise<Attachment>;
   spellCheck: boolean;
+  spellLanguage?: string;
   fontFamily: "default" | "serif" | "mono";
   fontSize: number;
   noteWidth: "readable" | "full";
+  lineHeight?: number;
+  readOnly?: boolean;
   pdfView?: "expanded" | "title";
   placeholder?: string;
   onUseAsTitle?: (filename: string) => void;
@@ -76,6 +81,7 @@ interface Props {
   zoom?: number;
   outlineOpen?: boolean;
   onOpenNoteLink?: (noteId: string) => void;
+  onSelectionWords?: (count: number) => void;
 }
 
 function formatSize(bytes: number) {
@@ -111,6 +117,58 @@ function openLinkDialog(editor: Editor) {
   return { href, text };
 }
 
+function ResizableImageView({ node, updateAttributes, selected }: NodeViewProps) {
+  const width = node.attrs.width as string | null;
+  const align = String(node.attrs.align || "left");
+  const caption = node.attrs.title as string | null;
+  const onResize = (event: ReactPointerEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const img = event.currentTarget.parentElement?.querySelector("img") as HTMLImageElement | null;
+    const startWidth = img?.getBoundingClientRect().width || 320;
+    const onMove = (ev: PointerEvent) => {
+      updateAttributes({ width: `${clampImageWidth(startWidth + ev.clientX - startX)}px` });
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+  return (
+    <NodeViewWrapper
+      as="figure"
+      className={"note-image-wrap" + (selected ? " is-selected" : "")}
+      data-align={align}
+    >
+      <div className="note-image-frame">
+        <img
+          src={node.attrs.src}
+          alt={node.attrs.alt || ""}
+          title={caption || ""}
+          style={width ? { width } : undefined}
+          onDoubleClick={() =>
+            window.dispatchEvent(
+              new CustomEvent("notebook:image-lightbox", { detail: { src: node.attrs.src } })
+            )
+          }
+        />
+        {selected ? (
+          <button
+            type="button"
+            className="image-handle se"
+            aria-label="Resize image"
+            onPointerDown={onResize}
+          />
+        ) : null}
+      </div>
+      {caption ? <figcaption>{caption}</figcaption> : null}
+    </NodeViewWrapper>
+  );
+}
+
 const CaptionImage = Image.extend({
   addAttributes() {
     return {
@@ -127,12 +185,23 @@ const CaptionImage = Image.extend({
         parseHTML: (element) => element.getAttribute("title"),
         renderHTML: (attributes) => (attributes.title ? { title: attributes.title } : {}),
       },
+      align: {
+        default: "left",
+        parseHTML: (element) =>
+          element.getAttribute("data-align") ||
+          (element as HTMLElement).style?.textAlign ||
+          "left",
+        renderHTML: (attributes) =>
+          attributes.align && attributes.align !== "left"
+            ? { "data-align": attributes.align }
+            : {},
+      },
     };
   },
   parseHTML() {
     return [
       {
-        tag: "figure.note-figure",
+        tag: "figure.note-figure, figure.note-image-wrap",
         getAttrs: (node) => {
           const el = node as HTMLElement;
           const img = el.querySelector("img");
@@ -142,6 +211,7 @@ const CaptionImage = Image.extend({
             alt: img.getAttribute("alt"),
             title: el.querySelector("figcaption")?.textContent || img.getAttribute("title"),
             width: img.getAttribute("width") || (img as HTMLElement).style?.width,
+            align: el.getAttribute("data-align") || "left",
           };
         },
       },
@@ -150,15 +220,21 @@ const CaptionImage = Image.extend({
   },
   renderHTML({ HTMLAttributes }) {
     const caption = HTMLAttributes.title;
+    const align = HTMLAttributes.align || HTMLAttributes["data-align"] || "left";
+    const imgAttrs = mergeAttributes(this.options.HTMLAttributes, HTMLAttributes);
+    delete imgAttrs.align;
     if (!caption) {
-      return ["img", mergeAttributes(this.options.HTMLAttributes, HTMLAttributes)];
+      return ["img", imgAttrs];
     }
     return [
       "figure",
-      { class: "note-figure" },
-      ["img", mergeAttributes(this.options.HTMLAttributes, HTMLAttributes)],
+      { class: "note-figure", "data-align": align },
+      ["img", imgAttrs],
       ["figcaption", {}, String(caption)],
     ];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(ResizableImageView);
   },
 });
 
@@ -189,9 +265,12 @@ export function NoteEditor({
   onChange,
   onAttach,
   spellCheck,
+  spellLanguage = "en-US",
   fontFamily,
   fontSize,
   noteWidth,
+  lineHeight = 1.5,
+  readOnly = false,
   pdfView = "expanded",
   placeholder = "Start writing, or pick a template…",
   onUseAsTitle,
@@ -203,6 +282,7 @@ export function NoteEditor({
   zoom = 100,
   outlineOpen = false,
   onOpenNoteLink,
+  onSelectionWords,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const queueFilesRef = useRef<(files: File[], position?: number) => void>(() => {});
@@ -224,6 +304,7 @@ export function NoteEditor({
   const [showOverflow, setShowOverflow] = useState(false);
   const [overflowIds, setOverflowIds] = useState<string[]>([]);
   const [editorMenu, setEditorMenu] = useState<{ x: number; y: number } | null>(null);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [linkDialog, setLinkDialog] = useState<{ href: string; text: string } | null>(null);
   const indentRef = useRef<(shift: boolean) => boolean>(() => false);
 
@@ -267,7 +348,13 @@ export function NoteEditor({
     ],
     content,
     autofocus: false,
+    editable: !readOnly,
     onUpdate: ({ editor }) => onChange(editor.getHTML()),
+    onSelectionUpdate: ({ editor }) => {
+      const { from, to } = editor.state.selection;
+      const text = from === to ? "" : editor.state.doc.textBetween(from, to, " ");
+      onSelectionWords?.(countWords(text));
+    },
     onFocus: () => setEditorFocused(true),
     onBlur: ({ editor: current, event }) => {
       const related = (event as FocusEvent | undefined)?.relatedTarget as Node | null;
@@ -282,10 +369,11 @@ export function NoteEditor({
       });
     },
     editorProps: {
-      attributes: {
-        class: "note-editor-content",
-        spellcheck: spellCheck ? "true" : "false",
-      },
+        attributes: {
+          class: "note-editor-content",
+          spellcheck: spellCheck ? "true" : "false",
+          lang: spellLanguage,
+        },
       handleKeyDown: (_view, event) => {
         if (event.key !== "Tab") return false;
         return indentRef.current(event.shiftKey);
@@ -354,10 +442,15 @@ export function NoteEditor({
           ...editor.options.editorProps.attributes,
           class: "note-editor-content",
           spellcheck: spellCheck ? "true" : "false",
+          lang: spellLanguage,
         },
       },
     });
-  }, [spellCheck, editor]);
+  }, [spellCheck, spellLanguage, editor]);
+
+  useEffect(() => {
+    editor?.setEditable(!readOnly);
+  }, [editor, readOnly]);
 
   useEffect(() => {
     if (!editor || restoredFilesRef.current) return;
@@ -409,6 +502,15 @@ export function NoteEditor({
     observer.observe(root, { childList: true, subtree: true });
     return () => observer.disconnect();
   }, [editor, content]);
+
+  useEffect(() => {
+    const onLightbox = (event: Event) => {
+      const src = (event as CustomEvent<{ src?: string }>).detail?.src;
+      if (src) setLightboxSrc(src);
+    };
+    window.addEventListener("notebook:image-lightbox", onLightbox);
+    return () => window.removeEventListener("notebook:image-lightbox", onLightbox);
+  }, []);
 
   useEffect(() => {
     if (!editor) return;
@@ -644,6 +746,25 @@ export function NoteEditor({
             chain.updateAttributes("image", { title: command.title || null }).run();
           }
           break;
+        case "imageAlign":
+          if (editor.isActive("image")) {
+            chain.updateAttributes("image", { align: command.align }).run();
+          }
+          break;
+        case "unsetColor":
+          chain.unsetColor().run();
+          break;
+        case "tasks": {
+          const checked = command.action === "checkAll";
+          const { tr } = editor.state;
+          editor.state.doc.descendants((node, pos) => {
+            if (node.type.name === "taskItem") {
+              tr.setNodeMarkup(pos, undefined, { ...node.attrs, checked });
+            }
+          });
+          if (tr.docChanged) editor.view.dispatch(tr);
+          break;
+        }
         case "tableAction":
           if (command.action === "insert") {
             chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
@@ -952,8 +1073,74 @@ export function NoteEditor({
               editor.chain().focus().updateAttributes("image", { title: next.trim() || null }).run();
             },
           },
+          {
+            label: "Align image",
+            children: [
+              {
+                label: "Left",
+                onSelect: () =>
+                  editor.chain().focus().updateAttributes("image", { align: "left" }).run(),
+              },
+              {
+                label: "Center",
+                onSelect: () =>
+                  editor.chain().focus().updateAttributes("image", { align: "center" }).run(),
+              },
+              {
+                label: "Right",
+                onSelect: () =>
+                  editor.chain().focus().updateAttributes("image", { align: "right" }).run(),
+              },
+            ],
+          },
+          {
+            label: "View image",
+            onSelect: () => setLightboxSrc(String(editor.getAttributes("image").src || "")),
+          },
+          {
+            label: "Copy image address",
+            onSelect: () =>
+              void navigator.clipboard.writeText(String(editor.getAttributes("image").src || "")),
+          },
+          {
+            label: "Save image as…",
+            onSelect: () => {
+              const src = String(editor.getAttributes("image").src || "");
+              if (!src) return;
+              const link = document.createElement("a");
+              link.href = src;
+              link.download = "image";
+              link.target = "_blank";
+              link.rel = "noopener";
+              link.click();
+            },
+          },
         ]
       : []),
+    {
+      label: "Check all tasks",
+      onSelect: () => {
+        const { tr } = editor.state;
+        editor.state.doc.descendants((node, pos) => {
+          if (node.type.name === "taskItem") {
+            tr.setNodeMarkup(pos, undefined, { ...node.attrs, checked: true });
+          }
+        });
+        if (tr.docChanged) editor.view.dispatch(tr);
+      },
+    },
+    {
+      label: "Uncheck all tasks",
+      onSelect: () => {
+        const { tr } = editor.state;
+        editor.state.doc.descendants((node, pos) => {
+          if (node.type.name === "taskItem") {
+            tr.setNodeMarkup(pos, undefined, { ...node.attrs, checked: false });
+          }
+        });
+        if (tr.docChanged) editor.view.dispatch(tr);
+      },
+    },
     {
       label: "Link…",
       onSelect: () => setLinkDialog(openLinkDialog(editor)),
@@ -1561,7 +1748,11 @@ export function NoteEditor({
       >
         <div
           className={`editor-page ${fontClass} ${noteWidth === "readable" ? "readable" : "full"}`}
-          style={{ fontSize: `${fontSize}px`, zoom: zoom / 100 }}
+          style={{
+            fontSize: `${fontSize}px`,
+            zoom: zoom / 100,
+            ["--editor-line-height" as string]: String(lineHeight),
+          }}
         >
           <EditorContent editor={editor} />
         </div>
@@ -1646,6 +1837,14 @@ export function NoteEditor({
             setLinkDialog(null);
           }}
         />
+      )}
+      {lightboxSrc && (
+        <div className="image-lightbox" onMouseDown={() => setLightboxSrc(null)}>
+          <img src={lightboxSrc} alt="" onMouseDown={(event) => event.stopPropagation()} />
+          <button type="button" className="image-lightbox-close" onClick={() => setLightboxSrc(null)}>
+            Close
+          </button>
+        </div>
       )}
     </div>
   );

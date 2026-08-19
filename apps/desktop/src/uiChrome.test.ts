@@ -94,6 +94,27 @@ import {
   viewTitleForFilter,
   hasActiveListFilters,
   groupNotesByReminder,
+  noteIdByOffset,
+  listCountLabel,
+  sortNotes,
+  nextLineHeight,
+  parseLineHeight,
+  rememberRecentNote,
+  parseRecentNotes,
+  parseSidebarSections,
+  moveSidebarSection,
+  sidebarSectionLabel,
+  monthGrid,
+  isoDayKey,
+  reminderFallsOnDay,
+  shiftMonth,
+  pinTabById,
+  closeAllUnpinnedTabIds,
+  renameSavedSearch,
+  setNoteColor,
+  parseNoteColorMap,
+  clampImageWidth,
+  noteHasUrl,
 } from "./uiChrome.ts";
 
 describe("clampPaneWidth", () => {
@@ -418,6 +439,8 @@ describe("editor chrome", () => {
       parseEditorChrome(JSON.stringify({ outlineOpen: true })).outlineOpen,
       true
     );
+    assert.equal(parseEditorChrome("{}").statusBarHidden, false);
+    assert.equal(parseEditorChrome(JSON.stringify({ statusBarHidden: true, lineHeight: 2 })).lineHeight, 2);
   });
 
   it("hides the formatting toolbar until the note body is focused", () => {
@@ -538,6 +561,15 @@ describe("note list facets", () => {
     assert.equal(noteMatchesFacets(notes[0], ["reminder"]), true);
     assert.equal(noteMatchesFacets(notes[0], ["attachment"]), false);
     assert.equal(noteMatchesFacets(notes[2], ["reminder", "attachment"]), true);
+    assert.equal(
+      noteMatchesFacets(
+        { reminder_at: null, attachment_count: 0, thumbnail_url: "x", checklist_total: 2 },
+        ["image", "checklist"]
+      ),
+      true
+    );
+    assert.equal(noteHasUrl({ snippet: "see https://example.com" }), true);
+    assert.equal(noteMatchesFacets({ reminder_at: null, attachment_count: 0, snippet: "hi" }, ["url"]), false);
   });
 });
 
@@ -829,5 +861,81 @@ describe("pass 11 chrome helpers", () => {
         ["none", 1],
       ]
     );
+  });
+});
+
+describe("pass 12 chrome helpers", () => {
+  it("pages through the note list and labels visible counts", () => {
+    const notes = [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }];
+    assert.equal(noteIdByOffset(notes, "a", 3), "d");
+    assert.equal(noteIdByOffset(notes, "b", -8), "a");
+    assert.equal(noteIdByOffset(notes, null, -1), "d");
+    assert.equal(listCountLabel(1, 1), "1 note");
+    assert.equal(listCountLabel(5, 12), "5 notes of 12");
+  });
+
+  it("keeps pinned notes first when reversing sort", () => {
+    const notes = [
+      { is_pinned: true, title: "Z", created_at: "2026-01-01", updated_at: "2026-08-01" },
+      { is_pinned: false, title: "A", created_at: "2026-01-02", updated_at: "2026-08-03" },
+      { is_pinned: false, title: "B", created_at: "2026-01-03", updated_at: "2026-08-02" },
+    ];
+    const newest = sortNotes(notes, "updated", false);
+    assert.equal(newest[0].title, "Z");
+    assert.equal(newest[1].title, "A");
+    const oldest = sortNotes(notes, "updated", true);
+    assert.equal(oldest[0].title, "Z");
+    assert.equal(oldest[1].title, "B");
+  });
+
+  it("steps line height and remembers recent notes", () => {
+    assert.equal(parseLineHeight(1.15), 1.15);
+    assert.equal(parseLineHeight(9), 1.5);
+    assert.equal(nextLineHeight(1.5, 1), 2);
+    assert.equal(nextLineHeight(1, -1), 1);
+    const recent = rememberRecentNote([{ id: "a", title: "A" }], { id: "b", title: "B" });
+    assert.deepEqual(recent.map((item) => item.id), ["b", "a"]);
+    assert.equal(parseRecentNotes(JSON.stringify(recent))[0].id, "b");
+  });
+
+  it("reorders sidebar sections and builds a reminder month grid", () => {
+    const sections = parseSidebarSections(JSON.stringify(["trash", "notes"]));
+    assert.equal(sections[0], "trash");
+    assert.equal(sections.includes("tags"), true);
+    assert.equal(sidebarSectionLabel("saved"), "Saved searches");
+    assert.deepEqual(moveSidebarSection(["notes", "tags", "trash"], "tags", -1), [
+      "tags",
+      "notes",
+      "trash",
+    ]);
+    const days = monthGrid(2026, 7, "sunday", new Date("2026-08-19T12:00:00"));
+    assert.equal(days.length, 42);
+    assert.equal(days.filter((day) => day.inMonth).length, 31);
+    assert.equal(days.find((day) => day.isToday)?.day, 19);
+    assert.equal(isoDayKey(new Date(2026, 7, 19)), "2026-08-19");
+    assert.equal(reminderFallsOnDay("2026-08-19T09:00:00", "2026-08-19"), true);
+    assert.deepEqual(shiftMonth(2026, 0, -1), { year: 2025, month: 11 });
+  });
+
+  it("pins tabs, closes unpinned tabs, and renames saved searches", () => {
+    const tabs = [
+      { id: "a", pinned: true },
+      { id: "b", pinned: false },
+      { id: "c" },
+    ];
+    assert.equal(pinTabById(tabs, "b").find((tab) => tab.id === "b")?.pinned, true);
+    assert.deepEqual(closeAllUnpinnedTabIds(tabs), ["b", "c"]);
+    const renamed = renameSavedSearch(
+      [{ id: "s1", name: "Old", query: "tag:work" }],
+      "s1",
+      "Work"
+    );
+    assert.equal(renamed[0].name, "Work");
+    assert.deepEqual(setNoteColor({}, "n1", "green"), { n1: "green" });
+    assert.deepEqual(parseNoteColorMap(JSON.stringify({ n1: "green", n2: "nope" })), {
+      n1: "green",
+    });
+    assert.equal(clampImageWidth(40), 80);
+    assert.equal(clampImageWidth(4000), 1200);
   });
 });

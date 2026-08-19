@@ -127,7 +127,7 @@ describe("Evernote sidebar chrome", () => {
 
   it("counts the current view rather than repeating the all-notes total", () => {
     assert.match(appSource, /title="Notes in this view"/);
-    assert.match(appSource, /\{visibleNotes\.length\}/);
+    assert.match(appSource, /listCountLabel\(visibleNotes\.length, notes\.length\)/);
     assert.match(appSource, /\{shortcutNotes\.length\}/);
     assert.match(appSource, /\{notebooks\.length\}/);
     assert.match(navSource, /notebook\.note_count \?\? 0/);

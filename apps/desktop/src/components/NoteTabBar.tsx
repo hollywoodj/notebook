@@ -7,6 +7,8 @@ import { useState } from "react";
 export type NoteTabItem = {
   id: string;
   title: string;
+  pinned?: boolean;
+  dirty?: boolean;
 };
 
 export function NoteTabBar({
@@ -21,6 +23,8 @@ export function NoteTabBar({
   onClose,
   onCloseOthers,
   onCloseToTheRight,
+  onCloseAll,
+  onPin,
   onNewTab,
   onReorder,
   onReopenClosed,
@@ -36,6 +40,8 @@ export function NoteTabBar({
   onClose: (id: string) => void;
   onCloseOthers?: (id: string) => void;
   onCloseToTheRight?: (id: string) => void;
+  onCloseAll?: () => void;
+  onPin?: (id: string) => void;
   onNewTab: () => void;
   onReorder: (fromId: string, toId: string) => void;
   onReopenClosed?: () => void;
@@ -73,7 +79,16 @@ export function NoteTabBar({
           disabled: tabs.findIndex((tab) => tab.id === menu.id) >= tabs.length - 1,
           onSelect: () => onCloseToTheRight?.(menu.id),
         },
+        {
+          label: "Close All Tabs",
+          disabled: tabs.length < 2 && Boolean(tabs[0]?.pinned),
+          onSelect: () => onCloseAll?.(),
+        },
         { type: "separator" },
+        {
+          label: tabs.find((tab) => tab.id === menu.id)?.pinned ? "Unpin Tab" : "Pin Tab",
+          onSelect: () => onPin?.(menu.id),
+        },
         {
           label: "Reopen Closed Tab",
           disabled: !canReopenClosedTab,
@@ -114,7 +129,11 @@ export function NoteTabBar({
               key={tab.id}
               role="tab"
               aria-selected={active}
-              className={active ? "note-tab is-active" : "note-tab"}
+              className={
+                (active ? "note-tab is-active" : "note-tab") +
+                (tab.pinned ? " is-pinned" : "") +
+                (tab.dirty ? " is-dirty" : "")
+              }
               title={tab.title}
               draggable
               onDragStart={(event) => onDragStart(event, tab.id)}
@@ -132,6 +151,8 @@ export function NoteTabBar({
                 }
               }}
             >
+              {tab.pinned ? <Icon.Pin size={11} /> : null}
+              {tab.dirty ? <span className="note-tab-dirty" aria-label="Unsaved" /> : null}
               <span className="note-tab-title">{tab.title}</span>
               <button
                 type="button"

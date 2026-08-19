@@ -137,6 +137,38 @@ This log is for future sessions continuing the exact-clone work. Passes 1–10 e
 29. **Go to Notebook** (Ctrl/⌘ Alt J)
 30. **Saved searches** listed in the sidebar
 
+### Pass 12 (this session)
+1. **Show / hide status bar**
+2. **Spellcheck wavy underline**
+3. **Spellcheck language**
+4. **Image resize handles**
+5. **Image lightbox** (double-click)
+6. **Image align** left / center / right
+7. **Has image / Has URL / Has checklist** chips
+8. **Reverse sort**
+9. **Collapse / expand all date groups**
+10. **List count** as “N notes”
+11. **Keyboard shortcuts overlay** (Ctrl/⌘ /)
+12. **Pin tab**
+13. **Recently viewed notes**
+14. **Go to Tag** (Ctrl/⌘ Alt T)
+15. **Home / End** in the note list
+16. **PageUp / PageDown** in the note list
+17. **Check all / Uncheck all tasks**
+18. **Line spacing**
+19. **Lock note**
+20. **Note color** banner
+21. **Sidebar section order**
+22. **Reminders calendar**
+23. **Hide completed reminders**
+24. **Open notebook from the header crumb**
+25. **Selection word count**
+26. **Unsaved dot** on the active tab
+27. **Close all tabs**
+28. **F2 to rename** a note
+29. **Open selected notes in new tabs**
+30. **Rename saved search**
+
 ## Where to look
 
 - Chrome helpers and tests: `apps/desktop/src/uiChrome.ts`, `apps/desktop/src/uiChrome.test.ts`
@@ -159,13 +191,10 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 - Drag to reorder notebooks and tags
 
 ### Editor
-- Image resize handles (presets and captions exist); drag corners still open
 - Paste from Word/Google Docs with fewer extra spans
-- Spellcheck underline styling; language picker
 - Audio notes / sketches / handwritten — out of scope unless requested
 
 ### Reminders & tasks
-- Dedicated reminders calendar view (list grouping, sort-by-reminder, and mark-done exist)
 - Evernote Tasks are a separate product surface; only add if cloning that explicitly
 
 ### Import / export / files
@@ -177,7 +206,6 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 
 ### Settings & theming
 - Custom highlight colors (seven swatches exist)
-- Sidebar section order
 
 ### Quality / parity bugs to re-check
 - Note-list splitter sometimes feels like it does not move until a larger drag (the sidebar splitter now tracks the pointer instead)

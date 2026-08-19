@@ -16,9 +16,11 @@ import {
   isTextInputFocused,
 } from "./appTypes.ts";
 import {
+  LINE_HEIGHTS,
+  NOTE_COLORS,
+  HIGHLIGHT_COLORS,
   type EditorChrome,
   type EditorCommand,
-  HIGHLIGHT_COLORS,
   type ListView,
   type PaneLayout,
   type SidebarFlyout,
@@ -127,9 +129,22 @@ export type AppMenuContext = {
   isReminderCompleted: (id: string) => boolean;
   tags: { id: string; name: string }[];
   addTagToSelected: (tagId: string) => void;
-  openJump: (mode?: "all" | "notebook") => void;
+  openJump: (mode?: "all" | "notebook" | "tag") => void;
   reopenClosedTab: () => void;
   canReopenClosedTab: boolean;
+  recentNotes: { id: string; title: string }[];
+  closeAllTabs: () => void;
+  pinActiveTab: () => void;
+  isActiveTabPinned: boolean;
+  openSelectedInTabs: () => void;
+  toggleNoteLocked: () => void;
+  isNoteLocked: boolean;
+  setNoteColor: (color: string) => void;
+  noteColor: string;
+  openShortcutsOverlay: () => void;
+  collapseAllListGroups: () => void;
+  expandAllListGroups: () => void;
+  canCollapseListGroups: boolean;
 };
 
 export function runEditorCommand(command: EditorCommand) {
@@ -224,6 +239,14 @@ export function buildContextMenu(
             {
               label: "Copy title",
               onSelect: () => ctx.copyNoteTitle(targets[0].title),
+            },
+          ]
+        : []),
+      ...(count > 1
+        ? [
+            {
+              label: `Open ${count} notes in new tabs`,
+              onSelect: ctx.openSelectedInTabs,
             },
           ]
         : []),
@@ -547,11 +570,29 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           shortcut: "Ctrl/⌘ W",
           onSelect: () => ctx.closeTab(ctx.activeTabId),
         },
+        {
+          label: "Close All Tabs",
+          onSelect: ctx.closeAllTabs,
+        },
+        {
+          label: ctx.isActiveTabPinned ? "Unpin Tab" : "Pin Tab",
+          onSelect: ctx.pinActiveTab,
+        },
         { type: "separator" },
         {
           label: "Reopen Closed Tab",
           disabled: !ctx.canReopenClosedTab,
           onSelect: ctx.reopenClosedTab,
+        },
+        {
+          label: "Open Recents",
+          disabled: ctx.recentNotes.length === 0,
+          children: ctx.recentNotes.length
+            ? ctx.recentNotes.map((note) => ({
+                label: note.title || "Untitled",
+                onSelect: () => void ctx.loadNote(note.id),
+              }))
+            : [{ label: "No recent notes", disabled: true }],
         },
         {
           label: "New Notebook…",
@@ -777,6 +818,33 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           onSelect: () => ctx.setShowInfo((open) => !open),
         },
         {
+          label: ctx.editorChrome.statusBarHidden ? "Show Status Bar" : "Hide Status Bar",
+          onSelect: () =>
+            ctx.persistEditorChrome({
+              ...ctx.editorChrome,
+              statusBarHidden: !ctx.editorChrome.statusBarHidden,
+            }),
+        },
+        {
+          label: "Line Spacing",
+          disabled: !ctx.activeNote,
+          children: LINE_HEIGHTS.map((height) => ({
+            label: height === 1 ? "Single" : height === 2 ? "Double" : String(height),
+            disabled: !ctx.activeNote,
+            onSelect: () =>
+              ctx.persistEditorChrome({ ...ctx.editorChrome, lineHeight: height }),
+          })),
+        },
+        {
+          label: "Collapse All Groups",
+          disabled: !ctx.canCollapseListGroups,
+          onSelect: ctx.collapseAllListGroups,
+        },
+        {
+          label: "Expand All Groups",
+          onSelect: ctx.expandAllListGroups,
+        },
+        {
           label: ctx.focusMode ? "Exit Focus Mode" : "Enter Focus Mode",
           shortcut: "F11",
           onSelect: () => ctx.setFocusMode((open) => !open),
@@ -791,6 +859,16 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: "Go to Notebook…",
           shortcut: "Ctrl/⌘ Alt J",
           onSelect: () => ctx.openJump("notebook"),
+        },
+        {
+          label: "Go to Tag…",
+          shortcut: "Ctrl/⌘ Alt T",
+          onSelect: () => ctx.openJump("tag"),
+        },
+        {
+          label: "Keyboard Shortcuts",
+          shortcut: "Ctrl/⌘ /",
+          onSelect: ctx.openShortcutsOverlay,
         },
         {
           label: "Command Palette…",
@@ -897,6 +975,20 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           shortcut: "Ctrl/⌘ ⇧ I",
           disabled: !ctx.activeNote,
           onSelect: () => ctx.setShowInfo(true),
+        },
+        {
+          label: ctx.isNoteLocked ? "Unlock Note" : "Lock Note",
+          disabled: !ctx.activeNote,
+          onSelect: ctx.toggleNoteLocked,
+        },
+        {
+          label: "Note Color",
+          disabled: !ctx.activeNote,
+          children: NOTE_COLORS.map((color) => ({
+            label: color.label,
+            disabled: !ctx.activeNote,
+            onSelect: () => ctx.setNoteColor(color.id),
+          })),
         },
         {
           label: "Rename Note…",
@@ -1249,6 +1341,16 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           shortcut: "Ctrl/⌘ ⇧ C",
           disabled: !ctx.activeNote,
           onSelect: () => runEditorCommand({ type: "taskList" }),
+        },
+        {
+          label: "Check All Tasks",
+          disabled: !ctx.activeNote,
+          onSelect: () => runEditorCommand({ type: "tasks", action: "checkAll" }),
+        },
+        {
+          label: "Uncheck All Tasks",
+          disabled: !ctx.activeNote,
+          onSelect: () => runEditorCommand({ type: "tasks", action: "uncheckAll" }),
         },
         {
           label: "Insert Checkbox",
