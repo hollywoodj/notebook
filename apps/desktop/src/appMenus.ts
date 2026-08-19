@@ -88,7 +88,7 @@ export type AppMenuContext = {
   pinSelectedNotes: (pinned: boolean) => void;
   duplicateSelectedNotes: () => void;
   mergeSelectedNotes: () => void;
-  exportSelectedNotes: (format: "html" | "enex" | "markdown") => void;
+  exportSelectedNotes: (format: "html" | "enex" | "markdown" | "pdf") => void;
   archiveSelectedNotes: (archived: boolean) => void;
   copyActiveNoteAs: (format: "rich" | "plain" | "markdown") => void;
   exportNotebook: (notebookId: string, name: string) => void;
@@ -103,6 +103,7 @@ export type AppMenuContext = {
   ) => Promise<boolean>;
   printActiveNote: () => void;
   copyActiveNoteLink: () => void;
+  copyNoteTitle: (title?: string) => void;
   setListView: (view: ListView) => void;
   importNotes: () => void;
   setNotebookDefault: (notebook: Notebook) => void | Promise<void>;
@@ -124,6 +125,11 @@ export type AppMenuContext = {
   toggleReminderDone: (id?: string) => void;
   openCommandPalette: () => void;
   isReminderCompleted: (id: string) => boolean;
+  tags: { id: string; name: string }[];
+  addTagToSelected: (tagId: string) => void;
+  openJump: (mode?: "all" | "notebook") => void;
+  reopenClosedTab: () => void;
+  canReopenClosedTab: boolean;
 };
 
 export function runEditorCommand(command: EditorCommand) {
@@ -206,6 +212,19 @@ export function buildContextMenu(
               label: "Open in New Tab",
               onSelect: () => void ctx.openInNewTab(targets[0].id),
             },
+            {
+              label: "Rename note…",
+              onSelect: () =>
+                ctx.openRename({
+                  kind: "note",
+                  id: targets[0].id,
+                  name: targets[0].title || "Untitled",
+                }),
+            },
+            {
+              label: "Copy title",
+              onSelect: () => ctx.copyNoteTitle(targets[0].title),
+            },
           ]
         : []),
       {
@@ -240,6 +259,22 @@ export function buildContextMenu(
         label: "Copy to notebook…",
         onSelect: () => ctx.setNotebookPicker("copy"),
       },
+      ...(count === 1
+        ? [
+            {
+              label: "Add tag",
+              children: ctx.tags.length
+                ? ctx.tags
+                    .filter((tag) => !targets[0].tag_ids.includes(tag.id))
+                    .slice(0, 12)
+                    .map((tag) => ({
+                      label: tag.name,
+                      onSelect: () => ctx.addTagToSelected(tag.id),
+                    }))
+                : [{ label: "No tags yet", disabled: true }],
+            },
+          ]
+        : []),
       ...(count > 1
         ? [
             {
@@ -259,6 +294,10 @@ export function buildContextMenu(
       {
         label: count > 1 ? "Export notes as Markdown" : "Export as Markdown",
         onSelect: () => void ctx.exportSelectedNotes("markdown"),
+      },
+      {
+        label: count > 1 ? "Export notes as PDF" : "Export as PDF",
+        onSelect: () => void ctx.exportSelectedNotes("pdf"),
       },
       ...(count === 1
         ? [
@@ -510,6 +549,11 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         },
         { type: "separator" },
         {
+          label: "Reopen Closed Tab",
+          disabled: !ctx.canReopenClosedTab,
+          onSelect: ctx.reopenClosedTab,
+        },
+        {
           label: "New Notebook…",
           onSelect: () => {
             ctx.setNewNotebookStackId(null);
@@ -540,6 +584,11 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: "Export as Markdown…",
           disabled: ctx.targetNoteIds().length === 0,
           onSelect: () => void ctx.exportSelectedNotes("markdown"),
+        },
+        {
+          label: "Export as PDF…",
+          disabled: ctx.targetNoteIds().length === 0,
+          onSelect: () => void ctx.exportSelectedNotes("pdf"),
         },
         {
           label: "Copy as",
@@ -599,6 +648,12 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         { label: "Cut", shortcut: "Ctrl/⌘ X", onSelect: () => runEditorCommand({ type: "cut" }) },
         { label: "Copy", shortcut: "Ctrl/⌘ C", onSelect: () => runEditorCommand({ type: "copy" }) },
         { label: "Paste", shortcut: "Ctrl/⌘ V", onSelect: () => runEditorCommand({ type: "paste" }) },
+        {
+          label: "Paste and Match Style",
+          shortcut: "Ctrl/⌘ ⇧ V",
+          disabled: !ctx.activeNote,
+          onSelect: () => runEditorCommand({ type: "pastePlain" }),
+        },
         { type: "separator" },
         {
           label: "Select All",
@@ -623,6 +678,18 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           disabled: !ctx.activeNote,
           onSelect: () => ctx.setReplaceTick((tick) => tick + 1),
         },
+        {
+          label: "Find Next",
+          shortcut: "F3",
+          disabled: !ctx.activeNote,
+          onSelect: () => runEditorCommand({ type: "findNext" }),
+        },
+        {
+          label: "Find Previous",
+          shortcut: "⇧ F3",
+          disabled: !ctx.activeNote,
+          onSelect: () => runEditorCommand({ type: "findPrev" }),
+        },
       ],
     },
     {
@@ -634,6 +701,7 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         { label: "Tags", onSelect: () => ctx.revealSidebarFlyout("tags") },
         { label: "Reminders", onSelect: () => { ctx.setSidebarFlyout(null); ctx.setFilter({ type: "reminders" }); } },
         { label: "Templates", onSelect: () => { ctx.setSidebarFlyout(null); ctx.setFilter({ type: "templates" }); } },
+        { label: "Archived", onSelect: () => { ctx.setSidebarFlyout(null); ctx.setFilter({ type: "archived" }); } },
         { type: "separator" },
         {
           label: "Back",
@@ -717,7 +785,12 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         {
           label: "Jump to…",
           shortcut: "Ctrl/⌘ J",
-          onSelect: () => ctx.setShowJump(true),
+          onSelect: () => ctx.openJump("all"),
+        },
+        {
+          label: "Go to Notebook…",
+          shortcut: "Ctrl/⌘ Alt J",
+          onSelect: () => ctx.openJump("notebook"),
         },
         {
           label: "Command Palette…",
@@ -826,6 +899,23 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           onSelect: () => ctx.setShowInfo(true),
         },
         {
+          label: "Rename Note…",
+          disabled: !ctx.activeNote,
+          onSelect: () => {
+            if (!ctx.activeNote) return;
+            ctx.openRename({
+              kind: "note",
+              id: ctx.activeNote.id,
+              name: ctx.activeNote.title || "Untitled",
+            });
+          },
+        },
+        {
+          label: "Copy Title",
+          disabled: !ctx.activeNote,
+          onSelect: () => ctx.copyNoteTitle(ctx.activeNote?.title),
+        },
+        {
           label: "Find in Note",
           shortcut: "Ctrl/⌘ F",
           disabled: !ctx.activeNote,
@@ -866,6 +956,11 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: "Export as Markdown…",
           disabled: ctx.targetNoteIds().length === 0,
           onSelect: () => void ctx.exportSelectedNotes("markdown"),
+        },
+        {
+          label: "Export as PDF…",
+          disabled: ctx.targetNoteIds().length === 0,
+          onSelect: () => void ctx.exportSelectedNotes("pdf"),
         },
         {
           label: "Set Reminder",
@@ -957,6 +1052,9 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
             { label: "18", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize", size: "18px" }) },
             { label: "24", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize", size: "24px" }) },
             { label: "Reset Size", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize" }) },
+            { type: "separator" },
+            { label: "Increase Size", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSizeStep", direction: 1 }) },
+            { label: "Decrease Size", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSizeStep", direction: -1 }) },
           ],
         },
         { type: "separator" },
@@ -1123,6 +1221,16 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           disabled: !ctx.activeNote,
           onSelect: () => runEditorCommand({ type: "openLinkDialog" }),
         },
+        {
+          label: "Remove Link",
+          disabled: !ctx.activeNote,
+          onSelect: () => runEditorCommand({ type: "unlink" }),
+        },
+        {
+          label: "Insert Table of Contents",
+          disabled: !ctx.activeNote,
+          onSelect: () => runEditorCommand({ type: "insertToc" }),
+        },
         { type: "separator" },
         {
           label: "Bulleted List",
@@ -1192,7 +1300,17 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         {
           label: "Insert Date and Time",
           disabled: !ctx.activeNote,
+          onSelect: () => runEditorCommand({ type: "insertDateTime" }),
+        },
+        {
+          label: "Insert Date",
+          disabled: !ctx.activeNote,
           onSelect: () => runEditorCommand({ type: "insertDate" }),
+        },
+        {
+          label: "Insert Time",
+          disabled: !ctx.activeNote,
+          onSelect: () => runEditorCommand({ type: "insertTime" }),
         },
         { type: "separator" },
         {

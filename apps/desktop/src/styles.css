@@ -1440,12 +1440,37 @@ button {
 }
 
 .list-group-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
   padding: 10px 18px 6px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.list-group-label .count {
+  margin-left: auto;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.group-chevron {
+  display: inline-block;
+  font-size: 10px;
+  transition: transform 0.12s ease;
+}
+
+.group-chevron.is-collapsed {
+  transform: rotate(-90deg);
 }
 
 .note-card-snippet {
@@ -1883,6 +1908,10 @@ button {
 }
 
 .note-outline-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -2028,6 +2057,7 @@ button {
 
 .note-editor-content pre,
 .ProseMirror pre {
+  position: relative;
   background: var(--code-bg);
   border-radius: 8px;
   padding: 12px 14px;
@@ -2035,6 +2065,41 @@ button {
   font-family: var(--editor-mono);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.code-copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  color: var(--text-muted);
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.ProseMirror pre:hover .code-copy-btn,
+.code-copy-btn:focus {
+  opacity: 1;
+}
+
+.note-figure {
+  margin: 12px 0;
+}
+
+.note-figure img {
+  max-width: 100%;
+  height: auto;
+}
+
+.note-figure figcaption {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 .note-editor-content pre code,
@@ -3127,6 +3192,35 @@ kbd {
   font-size: 12px;
   color: var(--text-muted);
   min-width: 72px;
+}
+
+.find-in-note .ghost-btn.small.active {
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.trash-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 10px 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  z-index: 50;
+  font-size: 13px;
+}
+
+.saved-search-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 6px;
 }
 
 .note-tag-bar {

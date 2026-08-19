@@ -79,6 +79,21 @@ import {
   parseLastSession,
   noteMailtoHref,
   paletteMatches,
+  countCharacters,
+  readingTimeLabel,
+  insertDateStamp,
+  insertTimeStamp,
+  nextFontSize,
+  outlineToHtml,
+  formatRelativeTime,
+  trashToastCopy,
+  rememberClosedTab,
+  popClosedTab,
+  closeOtherTabIds,
+  closeTabsToTheRight,
+  viewTitleForFilter,
+  hasActiveListFilters,
+  groupNotesByReminder,
 } from "./uiChrome.ts";
 
 describe("clampPaneWidth", () => {
@@ -210,6 +225,11 @@ describe("findMatchOffsets", () => {
     assert.deepEqual(findMatchOffsets("Note note NOTE", "note"), [0, 5, 10]);
     assert.deepEqual(findMatchOffsets("aaaa", "aa"), [0, 2]);
     assert.deepEqual(findMatchOffsets("hello", "z"), []);
+  });
+
+  it("honors match case and whole word", () => {
+    assert.deepEqual(findMatchOffsets("Note note NOTE", "Note", { caseSensitive: true }), [0]);
+    assert.deepEqual(findMatchOffsets("notebook note noted", "note", { wholeWord: true }), [9]);
   });
 });
 
@@ -587,6 +607,23 @@ describe("search operators", () => {
     );
     assert.equal(noteMatchesSearchOperators(note, parseSearchQuery("tag:home")), false);
     assert.equal(noteMatchesSearchOperators(note, parseSearchQuery("intitle:missing")), false);
+    const extra = parseSearchQuery("invoice -home untagged:true created:today resource:image");
+    assert.deepEqual(extra.minus, ["home"]);
+    assert.equal(extra.untagged, true);
+    assert.equal(extra.created, "today");
+    assert.equal(extra.resource, "image");
+    assert.equal(
+      noteMatchesSearchOperators(
+        { ...note, tag_names: [], created_at: "2026-08-19T10:00:00Z", thumbnail_url: "x" },
+        parseSearchQuery("untagged:true resource:image"),
+        new Date("2026-08-19T12:00:00")
+      ),
+      true
+    );
+    assert.equal(
+      noteMatchesSearchOperators(note, parseSearchQuery("invoice -urgent")),
+      false
+    );
   });
 });
 
@@ -727,5 +764,70 @@ describe("session restore, email, and command palette", () => {
     ];
     assert.equal(paletteMatches("sear", actions)[0].id, "search");
     assert.equal(paletteMatches("", actions).length, 2);
+  });
+});
+
+describe("pass 11 chrome helpers", () => {
+  it("counts characters and reading time", () => {
+    assert.equal(countCharacters("hello world"), 11);
+    assert.equal(readingTimeLabel(0), null);
+    assert.equal(readingTimeLabel(50), "1 min read");
+    assert.equal(readingTimeLabel(400), "2 min read");
+  });
+
+  it("steps font sizes and stamps date/time", () => {
+    assert.equal(nextFontSize("16px", 1), "18px");
+    assert.equal(nextFontSize("16px", -1), "14px");
+    assert.equal(nextFontSize(undefined, 1), "18px");
+    assert.match(insertDateStamp(new Date("2026-08-19T15:04:00")), /2026/);
+    assert.match(insertTimeStamp(new Date("2026-08-19T15:04:00")), /4/);
+  });
+
+  it("builds a table of contents and relative times", () => {
+    assert.match(
+      outlineToHtml([
+        { level: 1, text: "Intro" },
+        { level: 2, text: "Details" },
+      ]),
+      /Table of Contents/
+    );
+    assert.equal(formatRelativeTime(new Date().toISOString()), "Just now");
+    assert.equal(
+      formatRelativeTime(new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()),
+      "3 hours ago"
+    );
+  });
+
+  it("tracks closed tabs and trash copy", () => {
+    const stacked = rememberClosedTab(["a"], "b");
+    assert.deepEqual(stacked, ["b", "a"]);
+    assert.deepEqual(popClosedTab(stacked), { item: "b", remaining: ["a"] });
+    assert.deepEqual(closeOtherTabIds(["a", "b", "c"], "b"), ["a", "c"]);
+    assert.deepEqual(closeTabsToTheRight(["a", "b", "c"], "a"), ["b", "c"]);
+    assert.equal(trashToastCopy(1, "Hello"), "“Hello” moved to Trash");
+    assert.equal(trashToastCopy(3, "Hello"), "3 notes moved to Trash");
+  });
+
+  it("titles views, groups by reminder, and detects active filters", () => {
+    assert.equal(viewTitleForFilter({ type: "archived" }), "Archived");
+    assert.equal(viewTitleForFilter({ type: "tag", name: "work" }), "#work");
+    assert.equal(hasActiveListFilters(["untagged"], "any"), true);
+    assert.equal(hasActiveListFilters([], "any"), false);
+    const grouped = groupNotesByReminder(
+      [
+        { reminder_at: "2026-08-18T09:00:00Z" },
+        { reminder_at: "2026-08-19T09:00:00Z" },
+        { reminder_at: null },
+      ],
+      new Date("2026-08-19T12:00:00")
+    );
+    assert.deepEqual(
+      grouped.map((group) => [group.key, group.notes.length]),
+      [
+        ["overdue", 1],
+        ["today", 1],
+        ["none", 1],
+      ]
+    );
   });
 });

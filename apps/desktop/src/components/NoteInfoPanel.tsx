@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { api, Note, NoteRevision, Preferences } from "../api";
 import {
+  countCharacters,
+  countWords,
   formatReminderLabel,
   fromDatetimeLocalValue,
   noteAppLink,
+  readingTimeLabel,
   toDatetimeLocalValue,
 } from "../uiChrome";
 import { Icon } from "./Icons";
@@ -51,6 +54,14 @@ export function NoteInfoPanel({
           <div>
             <dt>Updated</dt>
             <dd>{formatReminderLabel(note.updated_at, dateFormat)}</dd>
+          </div>
+          <div>
+            <dt>Characters</dt>
+            <dd>{countCharacters(note.content_plain || "")}</dd>
+          </div>
+          <div>
+            <dt>Reading time</dt>
+            <dd>{readingTimeLabel(countWords(note.content_plain || "")) || "—"}</dd>
           </div>
         </dl>
 

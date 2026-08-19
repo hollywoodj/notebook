@@ -135,6 +135,16 @@ import {
   windowTitleForNote,
   deleteSavedSearch,
   upsertSavedSearch,
+  closeOtherTabIds,
+  closeTabsToTheRight,
+  countCharacters,
+  formatRelativeTime,
+  hasActiveListFilters,
+  popClosedTab,
+  readingTimeLabel,
+  rememberClosedTab,
+  trashToastCopy,
+  viewTitleForFilter,
   type DateRangeFacet,
   type ListView,
   type NoteListFacet,
@@ -163,6 +173,7 @@ const PALETTE_ACTIONS: PaletteAction[] = [
   { id: "reminders", label: "Show reminders" },
   { id: "shortcuts", label: "Show shortcuts" },
   { id: "all-notes", label: "All notes" },
+  { id: "archived", label: "Show archived notes" },
   { id: "info", label: "Note info", hint: "Ctrl/⌘ Shift I" },
   { id: "outline", label: "Toggle note outline" },
 ];
@@ -192,6 +203,14 @@ export default function App() {
   const [savedSearches, setSavedSearches] = useState(() =>
     parseSavedSearches(
       typeof localStorage === "undefined" ? null : localStorage.getItem(SAVED_SEARCHES_KEY)
+    )
+  );
+  const [closedTabs, setClosedTabs] = useState<NoteTab[]>([]);
+  const [jumpMode, setJumpMode] = useState<"all" | "notebook">("all");
+  const [trashToast, setTrashToast] = useState<{ ids: string[]; message: string } | null>(null);
+  const [collapsedListGroups, setCollapsedListGroups] = useState(() =>
+    parseCollapsedStacks(
+      typeof localStorage === "undefined" ? null : localStorage.getItem("notebook.collapsedListGroups")
     )
   );
   const [completedReminders, setCompletedReminders] = useState(() =>
@@ -426,19 +445,19 @@ export default function App() {
     let list: NoteSummary[] = [];
     switch (filter.type) {
       case "all":
-        list = await api.listNotes({ templates: false });
+        list = await api.listNotes({ templates: false, archived: false });
         break;
       case "notebook":
-        list = await api.listNotes({ notebookId: filter.id, templates: false });
+        list = await api.listNotes({ notebookId: filter.id, templates: false, archived: false });
         break;
       case "tag":
-        list = await api.listNotes({ tagId: filter.id, templates: false });
+        list = await api.listNotes({ tagId: filter.id, templates: false, archived: false });
         break;
       case "shortcuts":
         list = await api.listShortcuts();
         break;
       case "reminders":
-        list = (await api.listNotes({ templates: false })).filter((note) => note.reminder_at);
+        list = (await api.listNotes({ templates: false, archived: false })).filter((note) => note.reminder_at);
         break;
       case "templates":
         list = await api.listNotes({ templates: true });
@@ -446,12 +465,15 @@ export default function App() {
       case "trash":
         list = await api.listNotes({ trash: true });
         break;
+      case "archived":
+        list = await api.listNotes({ templates: false, archived: true });
+        break;
       case "search": {
         const parsed = parseSearchQuery(filter.query);
         if (parsed.text) {
           list = (await api.search(parsed.text)).notes;
         } else {
-          list = await api.listNotes({ templates: false });
+          list = await api.listNotes({ templates: false, archived: false });
         }
         list = list.filter((note) => noteMatchesSearchOperators(note, parsed));
         if (searchScope) {
@@ -470,6 +492,9 @@ export default function App() {
       if (prefs.sort_by === "title") return a.title.localeCompare(b.title);
       if (prefs.sort_by === "created") {
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+      if (prefs.sort_by === "reminder") {
+        return new Date(a.reminder_at || 0).getTime() - new Date(b.reminder_at || 0).getTime();
       }
       return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
     });
@@ -520,6 +545,8 @@ export default function App() {
       nextFilter = { type: "templates" };
     } else if (location.filter.type === "trash") {
       nextFilter = { type: "trash" };
+    } else if (location.filter.type === "archived") {
+      nextFilter = { type: "archived" };
     }
     setFilter(nextFilter);
     if (nextFilter.type === "search") setSearchInput(nextFilter.query);
@@ -619,6 +646,9 @@ export default function App() {
       const currentTabs = tabsRef.current;
       const closing = currentTabs.find((tab) => tab.id === tabId);
       if (!closing) return;
+      if (closing.noteId) {
+        setClosedTabs((stack) => rememberClosedTab(stack, closing));
+      }
       ignoreNavRef.current = true;
 
       if (currentTabs.length === 1) {
@@ -978,6 +1008,16 @@ export default function App() {
     },
   });
 
+  const deleteSelectedNotesWithUndo = async () => {
+    const ids = await deleteSelectedNotes();
+    if (!ids?.length) return;
+    const first = notes.find((note) => note.id === ids[0]);
+    setTrashToast({ ids, message: trashToastCopy(ids.length, first?.title || "Untitled") });
+    window.setTimeout(() => {
+      setTrashToast((current) => (current && current.ids[0] === ids[0] ? null : current));
+    }, 6000);
+  };
+
   const setReminderPreset = async (kind: ReminderPreset | "clear") => {
     if (!activeNote) return;
     setShowReminderMenu(false);
@@ -1159,11 +1199,9 @@ export default function App() {
     }
     return groupNotesForList(
       visibleNotes,
-      prefs.sort_by === "title"
-        ? "title"
-        : prefs.sort_by === "created"
-          ? "created"
-          : "updated"
+      prefs.sort_by === "title" || prefs.sort_by === "created" || prefs.sort_by === "reminder"
+        ? prefs.sort_by
+        : "updated"
     );
   }, [visibleNotes, prefs.sort_by, filter.type, completedReminders]);
 
@@ -1293,9 +1331,20 @@ export default function App() {
       } else if (e.key === "Escape" && hoverPreview) {
         e.preventDefault();
         hideHoverPreview();
+      } else if (meta && e.key === "j" && e.altKey) {
+        e.preventDefault();
+        setJumpMode("notebook");
+        setShowJump(true);
       } else if (meta && e.key === "j") {
         e.preventDefault();
+        setJumpMode("all");
         setShowJump(true);
+      } else if (e.key === "F3") {
+        e.preventDefault();
+        dispatchEditorCommand({ type: e.shiftKey ? "findPrev" : "findNext" });
+      } else if (meta && e.shiftKey && (e.key === "v" || e.key === "V") && activeNote) {
+        e.preventDefault();
+        dispatchEditorCommand({ type: "pastePlain" });
       } else if (meta && (e.key === "p" || e.key === "P") && e.shiftKey) {
         e.preventDefault();
         setShowPalette(true);
@@ -1389,7 +1438,7 @@ export default function App() {
         targetNoteIds().length > 0
       ) {
         e.preventDefault();
-        void deleteSelectedNotes();
+        void deleteSelectedNotesWithUndo();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1419,22 +1468,7 @@ export default function App() {
     );
   }
 
-  const viewTitle =
-    filter.type === "all"
-      ? "Notes"
-      : filter.type === "notebook"
-        ? filter.name
-        : filter.type === "tag"
-          ? `#${filter.name}`
-          : filter.type === "shortcuts"
-            ? "Shortcuts"
-            : filter.type === "reminders"
-              ? "Reminders"
-              : filter.type === "templates"
-              ? "Templates"
-              : filter.type === "trash"
-                ? "Trash"
-                : `Search: ${filter.query}`;
+  const viewTitle = viewTitleForFilter(filter);
 
   const isShortcut = activeNote ? shortcutIds.has(activeNote.id) : false;
   const allSelectedPinned =
@@ -1472,6 +1506,7 @@ export default function App() {
         openGlobalSearch();
         break;
       case "jump":
+        setJumpMode("all");
         setShowJump(true);
         break;
       case "settings":
@@ -1519,6 +1554,10 @@ export default function App() {
         setSidebarFlyout(null);
         setFilter({ type: "all" });
         break;
+      case "archived":
+        setSidebarFlyout(null);
+        setFilter({ type: "archived" });
+        break;
       case "info":
         if (activeNote) setShowInfo((open) => !open);
         break;
@@ -1531,6 +1570,52 @@ export default function App() {
       default:
         break;
     }
+  };
+
+  const copyNoteTitle = (title?: string) => {
+    void copyTextToClipboard((title || "").trim() || "Untitled");
+  };
+
+  const addTagToSelected = async (tagId: string) => {
+    for (const id of targetNoteIds()) {
+      const note = notes.find((item) => item.id === id);
+      const current = note?.tag_ids || (activeNote?.id === id ? activeNote.tag_ids : []);
+      if (current.includes(tagId)) continue;
+      await api.updateNote(id, { tag_ids: [...current, tagId] });
+    }
+    await refreshNotes();
+    if (activeNote) await loadNote(activeNote.id);
+  };
+
+  const reopenClosedTab = () => {
+    const popped = popClosedTab(closedTabs);
+    if (!popped) return;
+    setClosedTabs(popped.remaining);
+    ignoreNavRef.current = true;
+    rememberCurrentTab();
+    const tab = { ...popped.item, id: popped.item.id || makeNoteTab().id };
+    setTabs((current) => {
+      const next = [...current, tab];
+      tabsRef.current = next;
+      return next;
+    });
+    activeTabIdRef.current = tab.id;
+    setActiveTabId(tab.id);
+    setFilter(tab.filter);
+    if (tab.noteId) {
+      void loadNote(tab.noteId, tab.id).finally(() => {
+        ignoreNavRef.current = false;
+      });
+      return;
+    }
+    skipNextSave.current = true;
+    setActiveNote(null);
+    ignoreNavRef.current = false;
+  };
+
+  const persistCollapsedListGroups = (ids: string[]) => {
+    setCollapsedListGroups(ids);
+    localStorage.setItem("notebook.collapsedListGroups", JSON.stringify(ids));
   };
 
   const menuCtx: AppMenuContext = {
@@ -1582,7 +1667,7 @@ export default function App() {
     persistEditorChrome,
     revealSidebarFlyout,
     restoreSelectedNotes,
-    deleteSelectedNotes,
+    deleteSelectedNotes: () => void deleteSelectedNotesWithUndo(),
     shortcutSelectedNotes,
     pinSelectedNotes,
     duplicateSelectedNotes,
@@ -1596,6 +1681,7 @@ export default function App() {
     printActiveNote,
     copyActiveNoteLink,
     copyActiveNoteAs,
+    copyNoteTitle,
     exportNotebook,
     snoozeReminder,
     searchInNotebook,
@@ -1673,6 +1759,14 @@ export default function App() {
     toggleReminderDone,
     openCommandPalette: () => setShowPalette(true),
     isReminderCompleted: (id) => isReminderDone(completedReminders, id),
+    tags,
+    addTagToSelected: (tagId) => void addTagToSelected(tagId),
+    openJump: (mode = "all") => {
+      setJumpMode(mode);
+      setShowJump(true);
+    },
+    reopenClosedTab,
+    canReopenClosedTab: closedTabs.length > 0,
   };
   const contextMenuItems = (target: ContextTarget) => buildContextMenu(target, menuCtx);
   const menuGroups = buildMenuBar(menuCtx);
@@ -1716,11 +1810,25 @@ export default function App() {
         activeTabId={activeTabId}
         canGoBack={navPast.length > 0}
         canGoForward={navFuture.length > 0}
+        canReopenClosedTab={closedTabs.length > 0}
         onBack={goBack}
         onForward={goForward}
         onSelect={(id) => void switchToTab(id)}
         onClose={closeTab}
+        onCloseOthers={(id) => {
+          closeOtherTabIds(
+            tabsRef.current.map((tab) => tab.id),
+            id
+          ).forEach((tabId) => closeTab(tabId));
+        }}
+        onCloseToTheRight={(id) => {
+          closeTabsToTheRight(
+            tabsRef.current.map((tab) => tab.id),
+            id
+          ).forEach((tabId) => closeTab(tabId));
+        }}
         onNewTab={openNewTab}
+        onReopenClosed={reopenClosedTab}
         onReorder={(fromId, toId) => {
           setTabs((current) => {
             const next = reorderById(current, fromId, toId);
@@ -1925,6 +2033,43 @@ export default function App() {
               <span className="nav-label">Templates</span>
               <span className="nav-count">{counts.templates}</span>
             </button>
+          )}
+
+          <button
+            className={filter.type === "archived" ? "nav-item active" : "nav-item"}
+            title="Archived"
+            onClick={() => {
+              setSidebarFlyout(null);
+              setFilter({ type: "archived" });
+            }}
+          >
+            <Icon.Archive size={16} />
+            <span className="nav-label">Archived</span>
+          </button>
+
+          {savedSearches.length > 0 && (
+            <div className="saved-search-nav" aria-label="Saved searches">
+              {savedSearches.slice(0, 8).map((search) => (
+                <button
+                  key={search.id}
+                  className={
+                    filter.type === "search" && filter.query === search.query
+                      ? "nav-item active"
+                      : "nav-item"
+                  }
+                  title={search.name}
+                  onClick={() => {
+                    setSidebarFlyout(null);
+                    setSearchInput(search.query);
+                    setFilter({ type: "search", query: search.query });
+                    setSearchOpen(true);
+                  }}
+                >
+                  <Icon.Search size={16} />
+                  <span className="nav-label">{search.name}</span>
+                </button>
+              ))}
+            </div>
           )}
 
           {prefs.show_trash && (
@@ -2388,7 +2533,20 @@ export default function App() {
               <option value="updated">Updated</option>
               <option value="created">Created</option>
               <option value="title">Title</option>
+              <option value="reminder">Reminder</option>
             </select>
+            <button
+              type="button"
+              className={prefs.list_density === "compact" ? "icon-btn active" : "icon-btn"}
+              title={prefs.list_density === "compact" ? "Comfortable density" : "Compact density"}
+              onClick={() => {
+                const list_density = prefs.list_density === "compact" ? "comfortable" : "compact";
+                setPrefs((p) => ({ ...p, list_density }));
+                api.updateSettings({ list_density }).catch(console.error);
+              }}
+            >
+              <Icon.Compact size={14} />
+            </button>
             <div className="view-toggle" role="group" aria-label="Note list view">
               <button
                 type="button"
@@ -2435,6 +2593,13 @@ export default function App() {
             </button>
             <button
               type="button"
+              className={listFacets.includes("untagged") ? "active" : ""}
+              onClick={() => setListFacets(toggleListFacet(listFacets, "untagged"))}
+            >
+              Untagged
+            </button>
+            <button
+              type="button"
               className={listDateRange === "today" ? "active" : ""}
               onClick={() => setListDateRange(listDateRange === "today" ? "any" : "today")}
             >
@@ -2454,6 +2619,17 @@ export default function App() {
             >
               This month
             </button>
+            {hasActiveListFilters(listFacets, listDateRange) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setListFacets([]);
+                  setListDateRange("any");
+                }}
+              >
+                Clear filters
+              </button>
+            )}
           </div>
         )}
         {importStatus && <div className="import-status">{importStatus}</div>}
@@ -2468,7 +2644,7 @@ export default function App() {
                   </button>
                   <button
                     className="ghost-btn small danger-text"
-                    onClick={() => void deleteSelectedNotes()}
+                    onClick={() => void deleteSelectedNotesWithUndo()}
                   >
                     Delete forever
                   </button>
@@ -2495,7 +2671,7 @@ export default function App() {
                   </button>
                   <button
                     className="ghost-btn small danger-text"
-                    onClick={() => void deleteSelectedNotes()}
+                    onClick={() => void deleteSelectedNotesWithUndo()}
                   >
                     Move to Trash
                   </button>
@@ -2515,8 +2691,24 @@ export default function App() {
         >
           {groupedNotes.map((group) => (
             <div className="note-list-group" key={group.key}>
-              {group.label ? <div className="list-group-label">{group.label}</div> : null}
-              {group.notes.map((note) => (
+              {group.label ? (
+                <button
+                  type="button"
+                  className="list-group-label"
+                  onClick={() =>
+                    persistCollapsedListGroups(toggleCollapsedId(collapsedListGroups, group.key))
+                  }
+                >
+                  <span className={collapsedListGroups.includes(group.key) ? "group-chevron is-collapsed" : "group-chevron"}>
+                    ▾
+                  </span>
+                  {group.label}
+                  <span className="count">{group.notes.length}</span>
+                </button>
+              ) : null}
+              {collapsedListGroups.includes(group.key)
+                ? null
+                : group.notes.map((note) => (
             <button
               key={note.id}
               className={
@@ -2564,7 +2756,9 @@ export default function App() {
                 {note.title || "Untitled"}
               </div>
               <div className="note-card-meta">
-                {formatDate(note.updated_at, prefs.date_format)}
+                <span title={formatDate(note.updated_at, prefs.date_format)}>
+                  {formatRelativeTime(note.updated_at)}
+                </span>
                 {note.notebook_name ? ` · ${note.notebook_name}` : ""}
               </div>
               {(note.reminder_at ||
@@ -3093,6 +3287,10 @@ export default function App() {
                 {countWords(activeNote.content_plain)} word
                 {countWords(activeNote.content_plain) === 1 ? "" : "s"}
               </span>
+              {readingTimeLabel(countWords(activeNote.content_plain)) && (
+                <span>{readingTimeLabel(countWords(activeNote.content_plain))}</span>
+              )}
+              <span>{countCharacters(activeNote.content_plain)} characters</span>
               <span>{editorChrome.zoom}%</span>
               {activeNote.reminder_at && (
                 <span
@@ -3223,6 +3421,18 @@ export default function App() {
               }
             } else if (renameTarget.kind === "stack") {
               await api.updateStack(renameTarget.id, { name });
+            } else if (renameTarget.kind === "note") {
+              await api.updateNote(renameTarget.id, { title: name });
+              if (activeNote?.id === renameTarget.id) {
+                setActiveNote({ ...activeNote, title: name });
+              }
+              setTabs((current) =>
+                current.map((tab) =>
+                  tab.noteId === renameTarget.id
+                    ? { ...tab, title: noteTabLabel(name, true) }
+                    : tab
+                )
+              );
             } else {
               await api.updateTag(renameTarget.id, { name });
               if (filter.type === "tag" && filter.id === renameTarget.id) {
@@ -3337,6 +3547,7 @@ export default function App() {
           notes={jumpNotes.length ? jumpNotes : notes}
           notebooks={notebooks}
           tags={tags}
+          mode={jumpMode}
           onClose={() => setShowJump(false)}
           onSelect={(target) => {
             setShowJump(false);
@@ -3405,6 +3616,33 @@ export default function App() {
             setPendingConfirm(null);
           }}
         />
+      )}
+
+      {trashToast && (
+        <div className="trash-toast" role="status">
+          <span>{trashToast.message}</span>
+          <button
+            type="button"
+            className="ghost-btn small"
+            onClick={async () => {
+              for (const id of trashToast.ids) {
+                await api.restoreNote(id);
+              }
+              setTrashToast(null);
+              await refreshNotes();
+            }}
+          >
+            Undo
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            title="Dismiss"
+            onClick={() => setTrashToast(null)}
+          >
+            <Icon.Close size={14} />
+          </button>
+        </div>
       )}
 
       {contextMenu && (

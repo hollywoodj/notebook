@@ -63,7 +63,10 @@ const SHORTCUTS = [
   ["Checklist", "Ctrl/⌘ Shift C"],
   ["Increase indent", "Tab"],
   ["Decrease indent", "Shift+Tab"],
-  ["Focus mode", "F11"],
+  ["Find next / previous", "F3 / Shift+F3"],
+  ["Paste and match style", "Ctrl/⌘ Shift V"],
+  ["Go to notebook", "Ctrl/⌘ Alt J"],
+  ["Reopen closed tab", "File menu or tab right-click"],
 ];
 
 export function SettingsModal({
@@ -349,6 +352,7 @@ export function SettingsModal({
                     <option value="updated">Date updated</option>
                     <option value="created">Date created</option>
                     <option value="title">Title</option>
+                    <option value="reminder">Reminder</option>
                   </select>
                 </SettingsRow>
                 <SettingsRow
