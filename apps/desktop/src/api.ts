@@ -140,6 +140,9 @@ export interface Preferences {
   show_reminders: boolean;
   default_notebook_id: string | null;
   pdf_view: "expanded" | "title";
+  omniclone_enabled: boolean;
+  omniclone_scheme: "omniclone" | "omnifocus" | "both";
+  omniclone_send_due: boolean;
 }
 
 export const defaultPreferences: Preferences = {
@@ -170,6 +173,9 @@ export const defaultPreferences: Preferences = {
   show_reminders: true,
   default_notebook_id: null,
   pdf_view: "expanded",
+  omniclone_enabled: true,
+  omniclone_scheme: "omniclone",
+  omniclone_send_due: true,
 };
 
 export interface SidebarCounts {

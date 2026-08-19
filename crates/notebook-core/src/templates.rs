@@ -214,6 +214,9 @@ pub fn default_preferences() -> serde_json::Value {
         "show_import": true,
         "show_reminders": true,
         "default_notebook_id": null,
-        "pdf_view": "expanded"
+        "pdf_view": "expanded",
+        "omniclone_enabled": true,
+        "omniclone_scheme": "omniclone",
+        "omniclone_send_due": true
     })
 }

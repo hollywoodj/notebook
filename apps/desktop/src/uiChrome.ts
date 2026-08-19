@@ -5,6 +5,8 @@ export const LIST_MAX = 560;
 export const DEFAULT_SIDEBAR_WIDTH = 248;
 export const DEFAULT_LIST_WIDTH = 320;
 export const SIDEBAR_RAIL_WIDTH = 56;
+/** Collapsed-rail glyphs. Evernote’s are ~20px; 16px reads undersized in the 56px rail. */
+export const SIDEBAR_NAV_ICON_SIZE = 20;
 /** Dragging the sidebar edge inside this width snaps it back to the icon rail. */
 export const SIDEBAR_RAIL_SNAP = 140;
 export const PANE_LAYOUT_KEY = "notebook.paneLayout";
@@ -1943,6 +1945,8 @@ export const KEYBOARD_SHORTCUTS: [string, string][] = [
   ["Zoom out", "Ctrl/⌘ -"],
   ["Actual size", "Ctrl/⌘ 0"],
   ["Settings", "Ctrl/⌘ ,"],
+  ["Copy note link", "⌃⌥⌘ C"],
+  ["Send to OmniClone", "Note menu or Share"],
   ["New tab", "Ctrl/⌘ Shift T"],
   ["Open in new tab", "Ctrl/⌘ Alt O"],
   ["Close tab", "Ctrl/⌘ W"],

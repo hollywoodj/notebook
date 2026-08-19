@@ -188,3 +188,32 @@ describe("Evernote list and account chrome", () => {
     assert.match(editorSource, /IMAGE_SIZE_PRESETS/);
   });
 });
+
+describe("menu bar, sidebar icons, and OmniClone", () => {
+  it("keeps Settings in File and the account menu, not on the sidebar rail", () => {
+    assert.equal(appSource.includes('title="Settings"'), false);
+    assert.equal(appSource.includes("Icon.Gear"), false);
+    assert.match(menuSource, /label: "Settings…"/);
+    assert.match(appSource, /account-popover/);
+  });
+
+  it("uses 20px sidebar nav icons and a 22px application menu bar", () => {
+    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    const chrome = readFileSync(new URL("./uiChrome.ts", import.meta.url), "utf8");
+    assert.match(chrome, /export const SIDEBAR_NAV_ICON_SIZE = 20/);
+    assert.match(appSource, /Icon\.Notes size=\{SIDEBAR_NAV_ICON_SIZE\}/);
+    assert.match(styles, /\.app-menu-bar \{[\s\S]*height: 22px/);
+    assert.match(styles, /\.app-menu-trigger \{[\s\S]*height: 22px/);
+    assert.match(styles, /\.nav-item > svg \{[\s\S]*width: 20px/);
+  });
+
+  it("sends notes to OmniClone the way Evernote shares into OmniFocus", () => {
+    assert.match(menuSource, /Send to OmniClone/);
+    assert.match(menuSource, /Send Checkboxes to OmniClone/);
+    assert.match(menuSource, /OmniClone Integration/);
+    assert.match(appSource, /sendUrlsForNote/);
+    assert.match(appSource, /parseNotebookUrl/);
+    const settings = readFileSync(new URL("./components/SettingsModal.tsx", import.meta.url), "utf8");
+    assert.match(settings, /id: "integrations"/);
+  });
+});

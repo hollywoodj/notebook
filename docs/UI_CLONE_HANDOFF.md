@@ -169,6 +169,12 @@ This log is for future sessions continuing the exact-clone work. Passes 1–10 e
 29. **Open selected notes in new tabs**
 30. **Rename saved search**
 
+### Pass 13 (menu bar + OmniClone)
+1. Application menu bar tightened to Evernote’s 22px row height, 13px type, and tighter item/shortcut spacing
+2. Sidebar rail icons raised from 16px to 20px so they match the menu density
+3. Settings gear removed from the sidebar; Settings stays in File and the account menu
+4. OmniClone / OmniFocus integration: Copy Note Link opens `notebook://`, Send to OmniClone uses `omniclone:///add`
+
 ## Where to look
 
 - Chrome helpers and tests: `apps/desktop/src/uiChrome.ts`, `apps/desktop/src/uiChrome.test.ts`
