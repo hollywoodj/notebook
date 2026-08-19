@@ -56,6 +56,9 @@ export function SearchDialog({
   useEffect(() => {
     inputRef.current?.focus();
     inputRef.current?.select();
+  }, []);
+
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
