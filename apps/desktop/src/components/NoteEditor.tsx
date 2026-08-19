@@ -16,6 +16,7 @@ import { Color } from "@tiptap/extension-color";
 import { TextStyle } from "@tiptap/extension-text-style";
 import type { Editor } from "@tiptap/core";
 import type { JSONContent } from "@tiptap/core";
+import { mergeAttributes } from "@tiptap/core";
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, Attachment, attachmentUrl } from "../api";
 import { Icon } from "./Icons";
@@ -25,12 +26,17 @@ import {
   EDITOR_FONTS,
   EDITOR_FONT_SIZES,
   HIGHLIGHT_COLORS,
+  IMAGE_SIZE_PRESETS,
   TEXT_COLORS,
   attachmentsLabel,
   escapeHtml,
   findMatchOffsets,
   formattingToolbarVisible,
+  insertDateStamp,
+  insertTimeStamp,
+  nextFontSize,
   nextMatchIndex,
+  outlineToHtml,
   visibleToolbarCount,
   type EditorCommand,
 } from "../uiChrome";
@@ -105,6 +111,57 @@ function openLinkDialog(editor: Editor) {
   return { href, text };
 }
 
+const CaptionImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      width: {
+        default: null,
+        parseHTML: (element) =>
+          element.getAttribute("width") || (element as HTMLElement).style?.width || null,
+        renderHTML: (attributes) =>
+          attributes.width ? { width: attributes.width, style: `width: ${attributes.width}` } : {},
+      },
+      title: {
+        default: null,
+        parseHTML: (element) => element.getAttribute("title"),
+        renderHTML: (attributes) => (attributes.title ? { title: attributes.title } : {}),
+      },
+    };
+  },
+  parseHTML() {
+    return [
+      {
+        tag: "figure.note-figure",
+        getAttrs: (node) => {
+          const el = node as HTMLElement;
+          const img = el.querySelector("img");
+          if (!img) return false;
+          return {
+            src: img.getAttribute("src"),
+            alt: img.getAttribute("alt"),
+            title: el.querySelector("figcaption")?.textContent || img.getAttribute("title"),
+            width: img.getAttribute("width") || (img as HTMLElement).style?.width,
+          };
+        },
+      },
+      { tag: "img[src]" },
+    ];
+  },
+  renderHTML({ HTMLAttributes }) {
+    const caption = HTMLAttributes.title;
+    if (!caption) {
+      return ["img", mergeAttributes(this.options.HTMLAttributes, HTMLAttributes)];
+    }
+    return [
+      "figure",
+      { class: "note-figure" },
+      ["img", mergeAttributes(this.options.HTMLAttributes, HTMLAttributes)],
+      ["figcaption", {}, String(caption)],
+    ];
+  },
+});
+
 function textOffsetToPos(
   doc: {
     descendants: (
@@ -160,6 +217,8 @@ export function NoteEditor({
   const [findCount, setFindCount] = useState(0);
   const [replaceQuery, setReplaceQuery] = useState("");
   const [showReplace, setShowReplace] = useState(false);
+  const [findCaseSensitive, setFindCaseSensitive] = useState(false);
+  const [findWholeWord, setFindWholeWord] = useState(false);
   const [showColors, setShowColors] = useState(false);
   const [showTextColors, setShowTextColors] = useState(false);
   const [showOverflow, setShowOverflow] = useState(false);
@@ -191,7 +250,7 @@ export function NoteEditor({
       TaskItem.configure({ nested: true }),
       InlineCheckbox,
       Placeholder.configure({ placeholder }),
-      Image.configure({ allowBase64: true }),
+      CaptionImage.configure({ allowBase64: true }),
       FileAttachment,
       Table.configure({ resizable: true }),
       TableRow,
@@ -322,6 +381,37 @@ export function NoteEditor({
 
   useEffect(() => {
     if (!editor) return;
+    const root = editor.view.dom as HTMLElement;
+    const decorate = () => {
+      root.querySelectorAll("pre").forEach((pre) => {
+        if (pre.querySelector(".code-copy-btn")) return;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "code-copy-btn";
+        button.textContent = "Copy";
+        button.addEventListener("mousedown", (event) => event.preventDefault());
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const text = pre.querySelector("code")?.textContent || pre.textContent || "";
+          void navigator.clipboard.writeText(text.replace(/\s*Copy\s*$/, "")).then(() => {
+            button.textContent = "Copied";
+            window.setTimeout(() => {
+              button.textContent = "Copy";
+            }, 1200);
+          });
+        });
+        pre.appendChild(button);
+      });
+    };
+    decorate();
+    const observer = new MutationObserver(decorate);
+    observer.observe(root, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [editor, content]);
+
+  useEffect(() => {
+    if (!editor) return;
     const root = editor.view.dom;
     const onUseTitle = (event: Event) => {
       const filename = (event as CustomEvent<{ filename?: string }>).detail?.filename;
@@ -358,7 +448,10 @@ export function NoteEditor({
   useEffect(() => {
     if (!editor || !showFind) return;
     const text = editor.state.doc.textBetween(0, editor.state.doc.content.size, "", "");
-    const offsets = findMatchOffsets(text, findQuery);
+    const offsets = findMatchOffsets(text, findQuery, {
+      caseSensitive: findCaseSensitive,
+      wholeWord: findWholeWord,
+    });
     setFindCount(offsets.length);
     if (!offsets.length) {
       setFindIndex(0);
@@ -370,7 +463,7 @@ export function NoteEditor({
     const to = from + findQuery.trim().length;
     editor.commands.setTextSelection({ from, to });
     editor.commands.scrollIntoView();
-  }, [editor, findQuery, findIndex, showFind]);
+  }, [editor, findQuery, findIndex, showFind, findCaseSensitive, findWholeWord]);
 
   const replaceCurrent = () => {
     if (!editor || !findQuery.trim()) return;
@@ -415,6 +508,17 @@ export function NoteEditor({
         case "paste":
           document.execCommand("paste");
           break;
+        case "pastePlain": {
+          void navigator.clipboard.readText().then((text) => {
+            if (!text) return;
+            editor
+              .chain()
+              .focus()
+              .insertContent(escapeHtml(text).replace(/\n/g, "<br>"))
+              .run();
+          });
+          break;
+        }
         case "selectAll":
           chain.selectAll().run();
           break;
@@ -445,6 +549,12 @@ export function NoteEditor({
           chain.setHorizontalRule().run();
           break;
         case "insertDate":
+          chain.insertContent(insertDateStamp()).run();
+          break;
+        case "insertTime":
+          chain.insertContent(insertTimeStamp()).run();
+          break;
+        case "insertDateTime":
           chain.insertContent(new Date().toLocaleString()).run();
           break;
         case "insertTable":
@@ -493,6 +603,46 @@ export function NoteEditor({
         case "fontSize":
           if (command.size) chain.setFontSize(command.size).run();
           else chain.unsetFontSize().run();
+          break;
+        case "fontSizeStep": {
+          const current = String(editor.getAttributes("textStyle").fontSize || "");
+          chain.setFontSize(nextFontSize(current, command.direction)).run();
+          break;
+        }
+        case "findNext":
+          setShowFind(true);
+          setFindIndex((current) => nextMatchIndex(findCount, current, 1));
+          break;
+        case "findPrev":
+          setShowFind(true);
+          setFindIndex((current) => nextMatchIndex(findCount, current, -1));
+          break;
+        case "unlink":
+          chain.unsetLink().run();
+          break;
+        case "insertToc": {
+          const headings: { level: number; text: string }[] = [];
+          editor.state.doc.descendants((node) => {
+            if (node.type.name === "heading") {
+              headings.push({
+                level: Number(node.attrs.level || 1),
+                text: node.textContent || "Untitled heading",
+              });
+            }
+          });
+          const html = outlineToHtml(headings);
+          if (html) chain.insertContentAt(1, html).run();
+          break;
+        }
+        case "imageSize":
+          if (editor.isActive("image")) {
+            chain.updateAttributes("image", { width: command.width || null }).run();
+          }
+          break;
+        case "imageCaption":
+          if (editor.isActive("image")) {
+            chain.updateAttributes("image", { title: command.title || null }).run();
+          }
           break;
         case "tableAction":
           if (command.action === "insert") {
@@ -740,6 +890,14 @@ export function NoteEditor({
     { label: "Cut", shortcut: "Ctrl/⌘ X", onSelect: () => document.execCommand("cut") },
     { label: "Copy", shortcut: "Ctrl/⌘ C", onSelect: () => document.execCommand("copy") },
     { label: "Paste", shortcut: "Ctrl/⌘ V", onSelect: () => document.execCommand("paste") },
+    {
+      label: "Paste and Match Style",
+      onSelect: () =>
+        void navigator.clipboard.readText().then((text) => {
+          if (!text) return;
+          editor.chain().focus().insertContent(escapeHtml(text).replace(/\n/g, "<br>")).run();
+        }),
+    },
     { type: "separator" },
     { label: "Bold", onSelect: () => editor.chain().focus().toggleBold().run() },
     { label: "Italic", onSelect: () => editor.chain().focus().toggleItalic().run() },
@@ -768,6 +926,31 @@ export function NoteEditor({
             label: "Copy link",
             onSelect: () =>
               void navigator.clipboard.writeText(String(editor.getAttributes("link").href || "")),
+          },
+          {
+            label: "Remove link",
+            onSelect: () => editor.chain().focus().unsetLink().run(),
+          },
+        ]
+      : []),
+    ...(editor.isActive("image")
+      ? [
+          {
+            label: "Image size",
+            children: IMAGE_SIZE_PRESETS.map((preset) => ({
+              label: preset.label,
+              onSelect: () =>
+                editor.chain().focus().updateAttributes("image", { width: preset.width || null }).run(),
+            })),
+          },
+          {
+            label: "Add caption…",
+            onSelect: () => {
+              const current = String(editor.getAttributes("image").title || "");
+              const next = window.prompt("Image caption", current);
+              if (next === null) return;
+              editor.chain().focus().updateAttributes("image", { title: next.trim() || null }).run();
+            },
           },
         ]
       : []),
@@ -850,6 +1033,30 @@ export function NoteEditor({
               }
             }}
           />
+          <button
+            type="button"
+            className={findCaseSensitive ? "ghost-btn small active" : "ghost-btn small"}
+            title="Match case"
+            aria-pressed={findCaseSensitive}
+            onClick={() => {
+              setFindCaseSensitive((on) => !on);
+              setFindIndex(0);
+            }}
+          >
+            Aa
+          </button>
+          <button
+            type="button"
+            className={findWholeWord ? "ghost-btn small active" : "ghost-btn small"}
+            title="Whole word"
+            aria-pressed={findWholeWord}
+            onClick={() => {
+              setFindWholeWord((on) => !on);
+              setFindIndex(0);
+            }}
+          >
+            W
+          </button>
           {showReplace && (
             <input
               value={replaceQuery}
@@ -957,6 +1164,26 @@ export function NoteEditor({
               </option>
             ))}
           </select>
+        )}
+        {wrap(
+          "font-smaller",
+          btn(
+            "Decrease font size",
+            () =>
+              editor.chain().focus().setFontSize(nextFontSize(currentFontSize, -1)).run(),
+            false,
+            <span className="toolbar-text">A−</span>
+          )
+        )}
+        {wrap(
+          "font-larger",
+          btn(
+            "Increase font size",
+            () =>
+              editor.chain().focus().setFontSize(nextFontSize(currentFontSize, 1)).run(),
+            false,
+            <span className="toolbar-text">A+</span>
+          )
         )}
         <span className="toolbar-sep" />
         {wrap("h1", btn(
@@ -1341,7 +1568,29 @@ export function NoteEditor({
       </div>
       {outlineOpen && (
         <aside className="note-outline" aria-label="Note outline">
-          <div className="note-outline-title">Outline</div>
+          <div className="note-outline-title">
+            Outline
+            <button
+              type="button"
+              className="ghost-btn small"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                const headings: { level: number; text: string }[] = [];
+                editor.state.doc.descendants((node) => {
+                  if (node.type.name === "heading") {
+                    headings.push({
+                      level: Number(node.attrs.level || 1),
+                      text: node.textContent || "Untitled heading",
+                    });
+                  }
+                });
+                const html = outlineToHtml(headings);
+                if (html) editor.chain().focus().insertContentAt(1, html).run();
+              }}
+            >
+              Insert
+            </button>
+          </div>
           {(() => {
             const headings: { level: number; text: string; pos: number }[] = [];
             editor.state.doc.descendants((node, pos) => {

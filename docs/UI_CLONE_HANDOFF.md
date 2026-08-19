@@ -105,6 +105,38 @@ This log is for future sessions continuing the exact-clone work. Passes 1–10 e
 9. **Group search results by notebook**
 10. **Command palette** (Ctrl/⌘ Shift P) for actions, distinct from Jump to
 
+### Pass 11 (this session)
+1. **Match case** in Find
+2. **Whole word** in Find
+3. **Find Next / Previous** (F3 / Shift+F3, Edit menu)
+4. **Paste and Match Style**
+5. **Insert Date** and **Insert Time** as separate Format items
+6. **Extra highlight colors** (orange, purple, gray)
+7. **Increase / decrease font size**
+8. **Remove Link**
+9. **Insert Table of Contents** from the outline
+10. **Copy** button on code blocks
+11. **Image size presets** (Small / Medium / Large / Original)
+12. **Image captions**
+13. Search operators **created:** / **updated:** / **resource:** / **untagged:** / **-minus**
+14. **Untagged** filter chip
+15. **Archived** notes view (hidden from All Notes)
+16. **Sort by reminder**
+17. **Collapse date groups** in the note list
+18. **List density toggle** in the list header
+19. **Clear filters**
+20. **Relative dates** in list rows
+21. **Tab context menu** (Close / Close Others / Close to the Right / Reopen Closed Tab)
+22. **Rename note**
+23. **Copy title**
+24. **Add tag** submenu on a note
+25. **Reading time** in the status bar
+26. **Character count** in note info
+27. **Export as PDF**
+28. **Undo trash** toast
+29. **Go to Notebook** (Ctrl/⌘ Alt J)
+30. **Saved searches** listed in the sidebar
+
 ## Where to look
 
 - Chrome helpers and tests: `apps/desktop/src/uiChrome.ts`, `apps/desktop/src/uiChrome.test.ts`
@@ -127,28 +159,24 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 - Drag to reorder notebooks and tags
 
 ### Editor
-- Justify alignment, inline code, superscript/subscript, and callouts exist; remaining: image resize handles and captions
-- Insert checkbox without converting the whole block to a task list (inline checkbox exists)
+- Image resize handles (presets and captions exist); drag corners still open
 - Paste from Word/Google Docs with fewer extra spans
 - Spellcheck underline styling; language picker
 - Audio notes / sketches / handwritten — out of scope unless requested
 
 ### Reminders & tasks
-- Dedicated reminders calendar view (list grouping and mark-done exist)
+- Dedicated reminders calendar view (list grouping, sort-by-reminder, and mark-done exist)
 - Evernote Tasks are a separate product surface; only add if cloning that explicitly
 
 ### Import / export / files
-- Export selected notes as PDF
 - PDF annotate / ink — not needed for a notes clone unless requested
 
 ### Keyboard & power user
-- Go to notebook (`Ctrl/⌘ Alt J` style)
 - Customizable shortcuts
 - Nest remaining menus the way Format now nests Align / Table / Color / Callout
 
 ### Settings & theming
-- Note list density + view persisted together more cleanly (`list_view` now exists; `show_snippets` is derived)
-- Custom highlight colors
+- Custom highlight colors (seven swatches exist)
 - Sidebar section order
 
 ### Quality / parity bugs to re-check
@@ -171,4 +199,4 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 - Web clipper, calendar, home dashboard widgets
 - iOS/Android clients (API-first is already in the README)
 
-When closing the next ten, keep stacking on this branch style: helpers in `uiChrome.ts` with tests, visible chrome in `App.tsx` / `NoteEditor.tsx` / `styles.css`, and a short PR list of the ten items.
+When closing the next ten, keep stacking on this branch style: helpers in `uiChrome.ts` with tests, visible chrome in `App.tsx` / `NoteEditor.tsx` / `styles.css`, and a short PR list of the items.

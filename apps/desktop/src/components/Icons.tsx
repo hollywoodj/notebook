@@ -310,4 +310,16 @@ export const Icon = {
       <rect x="13" y="13" width="7" height="6" rx="1" />
     </I>
   ),
+  Archive: (p: IconProps) => (
+    <I {...p}>
+      <path d="M4 7h16l-1 12H5L4 7z" />
+      <path d="M3 7V5h18v2" />
+      <path d="M10 12h4" />
+    </I>
+  ),
+  Compact: (p: IconProps) => (
+    <I {...p}>
+      <path d="M5 7h14M5 12h14M5 17h14" />
+    </I>
+  ),
 };

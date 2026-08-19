@@ -159,15 +159,36 @@ export function countWords(text: string): number {
   return trimmed.split(/\s+/).filter(Boolean).length;
 }
 
-export function findMatchOffsets(text: string, query: string): number[] {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return [];
-  const hay = text.toLowerCase();
+export type FindMatchOptions = {
+  caseSensitive?: boolean;
+  wholeWord?: boolean;
+};
+
+function isWordChar(ch: string | undefined): boolean {
+  return Boolean(ch && /[A-Za-z0-9_]/.test(ch));
+}
+
+export function findMatchOffsets(
+  text: string,
+  query: string,
+  options: FindMatchOptions = {}
+): number[] {
+  const raw = query.trim();
+  if (!raw) return [];
+  const needle = options.caseSensitive ? raw : raw.toLowerCase();
+  const hay = options.caseSensitive ? text : text.toLowerCase();
   const offsets: number[] = [];
   let from = 0;
   while (from <= hay.length - needle.length) {
     const idx = hay.indexOf(needle, from);
     if (idx < 0) break;
+    if (
+      options.wholeWord &&
+      (isWordChar(hay[idx - 1]) || isWordChar(hay[idx + needle.length]))
+    ) {
+      from = idx + 1;
+      continue;
+    }
     offsets.push(idx);
     from = idx + needle.length;
   }
@@ -276,6 +297,9 @@ export const HIGHLIGHT_COLORS = [
   { id: "green", label: "Green", color: "#c6f6d5" },
   { id: "pink", label: "Pink", color: "#ffcce5" },
   { id: "blue", label: "Blue", color: "#cde4ff" },
+  { id: "orange", label: "Orange", color: "#ffd8a8" },
+  { id: "purple", label: "Purple", color: "#e9d5ff" },
+  { id: "gray", label: "Gray", color: "#e2e8f0" },
 ] as const;
 
 export const TEXT_COLORS = [
@@ -323,63 +347,77 @@ export type JumpTarget = {
   subtitle: string;
 };
 
+export type JumpKind = JumpTarget["kind"];
+
 export function jumpToMatches(
   query: string,
   notes: { id: string; title: string; notebook_name: string }[],
   notebooks: { id: string; name: string }[],
   tags: { id: string; name: string }[],
-  limit = 12
+  limit = 12,
+  kinds?: JumpKind[]
 ): JumpTarget[] {
   const needle = query.trim().toLowerCase();
   const matches = (text: string) => !needle || text.toLowerCase().includes(needle);
+  const allow = (kind: JumpKind) => !kinds?.length || kinds.includes(kind);
   const results: JumpTarget[] = [];
-  for (const notebook of notebooks) {
-    if (matches(notebook.name)) {
-      results.push({
-        kind: "notebook",
-        id: notebook.id,
-        title: notebook.name,
-        subtitle: "Notebook",
-      });
+  if (allow("notebook")) {
+    for (const notebook of notebooks) {
+      if (matches(notebook.name)) {
+        results.push({
+          kind: "notebook",
+          id: notebook.id,
+          title: notebook.name,
+          subtitle: "Notebook",
+        });
+      }
     }
   }
-  for (const tag of tags) {
-    if (matches(tag.name)) {
-      results.push({
-        kind: "tag",
-        id: tag.id,
-        title: `#${tag.name}`,
-        subtitle: "Tag",
-      });
+  if (allow("tag")) {
+    for (const tag of tags) {
+      if (matches(tag.name)) {
+        results.push({
+          kind: "tag",
+          id: tag.id,
+          title: `#${tag.name}`,
+          subtitle: "Tag",
+        });
+      }
     }
   }
-  for (const note of notes) {
-    if (matches(note.title) || matches(note.notebook_name)) {
-      results.push({
-        kind: "note",
-        id: note.id,
-        title: note.title || "Untitled",
-        subtitle: note.notebook_name,
-      });
+  if (allow("note")) {
+    for (const note of notes) {
+      if (matches(note.title) || matches(note.notebook_name)) {
+        results.push({
+          kind: "note",
+          id: note.id,
+          title: note.title || "Untitled",
+          subtitle: note.notebook_name,
+        });
+      }
     }
   }
   return results.slice(0, limit);
 }
 
 export type EditorCommand =
-  | { type: "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll" }
+  | { type: "undo" | "redo" | "cut" | "copy" | "paste" | "pastePlain" | "selectAll" }
   | { type: "bold" | "italic" | "underline" | "strike" | "clear" }
   | { type: "highlight"; color?: string }
   | { type: "color"; color?: string }
-  | { type: "horizontalRule" | "insertDate" | "insertTable" }
+  | { type: "horizontalRule" | "insertDate" | "insertTime" | "insertDateTime" | "insertTable" | "insertToc" }
   | { type: "heading"; level: 1 | 2 | 3 }
   | { type: "bulletList" | "orderedList" | "taskList" | "blockquote" | "codeBlock" | "inlineCode" | "inlineCheckbox" }
   | { type: "align"; align: "left" | "center" | "right" | "justify" }
   | { type: "indent" | "outdent" }
   | { type: "link"; href?: string; text?: string }
-  | { type: "openLinkDialog" }
+  | { type: "openLinkDialog" | "unlink" }
   | { type: "fontFamily"; family?: string }
   | { type: "fontSize"; size?: string }
+  | { type: "fontSizeStep"; direction: 1 | -1 }
+  | { type: "findNext" | "findPrev" }
+  | { type: "imageSize"; width?: string }
+  | { type: "imageCaption"; title?: string }
   | {
       type: "tableAction";
       action: "insert" | "addRow" | "addColumn" | "deleteRow" | "deleteColumn" | "deleteTable";
@@ -398,13 +436,60 @@ function startOfLocalDay(date: Date): number {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }
 
-export function groupNotesForList<
-  T extends { is_pinned: boolean; created_at: string; updated_at: string },
->(
+export function groupNotesByReminder<T extends { reminder_at?: string | null }>(
   notes: T[],
-  sortBy: "updated" | "created" | "title",
   now = new Date()
 ): NoteListGroup<T>[] {
+  const today = startOfLocalDay(now);
+  const tomorrow = today + 86_400_000;
+  const buckets: Record<string, T[]> = {
+    overdue: [],
+    today: [],
+    tomorrow: [],
+    later: [],
+    none: [],
+  };
+  for (const note of notes) {
+    if (!note.reminder_at) {
+      buckets.none.push(note);
+      continue;
+    }
+    const stamp = startOfLocalDay(new Date(note.reminder_at));
+    if (Number.isNaN(stamp)) {
+      buckets.none.push(note);
+    } else if (stamp < today) buckets.overdue.push(note);
+    else if (stamp === today) buckets.today.push(note);
+    else if (stamp === tomorrow) buckets.tomorrow.push(note);
+    else buckets.later.push(note);
+  }
+  return (
+    [
+      ["overdue", "Overdue"],
+      ["today", "Today"],
+      ["tomorrow", "Tomorrow"],
+      ["later", "Later"],
+      ["none", "No reminder"],
+    ] as const
+  )
+    .filter(([key]) => buckets[key].length > 0)
+    .map(([key, label]) => ({ key, label, notes: buckets[key] }));
+}
+
+export function groupNotesForList<
+  T extends {
+    is_pinned: boolean;
+    created_at: string;
+    updated_at: string;
+    reminder_at?: string | null;
+  },
+>(
+  notes: T[],
+  sortBy: "updated" | "created" | "title" | "reminder",
+  now = new Date()
+): NoteListGroup<T>[] {
+  if (sortBy === "reminder") {
+    return groupNotesByReminder(notes, now);
+  }
   if (sortBy === "title") {
     const pinned = notes.filter((note) => note.is_pinned);
     const rest = notes.filter((note) => !note.is_pinned);
@@ -611,7 +696,8 @@ export type EmptyView =
   | "reminders"
   | "templates"
   | "trash"
-  | "search";
+  | "search"
+  | "archived";
 
 export function emptyStateCopy(
   view: EmptyView,
@@ -658,6 +744,11 @@ export function emptyStateCopy(
         body: name
           ? `No notes matched “${name}”. Try another search.`
           : "Try another search.",
+      };
+    case "archived":
+      return {
+        title: "No archived notes",
+        body: "Archive a note to tuck it out of All Notes without sending it to Trash.",
       };
     default:
       return {
@@ -777,7 +868,7 @@ export function rememberSearch(history: string[], query: string, limit = RECENT_
   );
 }
 
-export type NoteListFacet = "reminder" | "attachment";
+export type NoteListFacet = "reminder" | "attachment" | "untagged";
 
 export function toggleListFacet(
   current: NoteListFacet[],
@@ -789,12 +880,20 @@ export function toggleListFacet(
 }
 
 export function noteMatchesFacets(
-  note: { reminder_at: string | null; attachment_count: number },
+  note: { reminder_at: string | null; attachment_count: number; tag_names?: string[] },
   facets: NoteListFacet[]
 ): boolean {
   if (facets.includes("reminder") && !note.reminder_at) return false;
   if (facets.includes("attachment") && note.attachment_count <= 0) return false;
+  if (facets.includes("untagged") && (note.tag_names?.length ?? 0) > 0) return false;
   return true;
+}
+
+export function hasActiveListFilters(
+  facets: NoteListFacet[],
+  range: DateRangeFacet
+): boolean {
+  return facets.length > 0 || range !== "any";
 }
 
 export function checklistProgressLabel(done: number, total: number): string | null {
@@ -880,6 +979,8 @@ export function noteMatchesDateRange(
   return stamp >= today - 30 * 86_400_000;
 }
 
+export type SearchResource = "image" | "attachment" | "pdf";
+
 export type ParsedSearch = {
   text: string;
   notebook?: string;
@@ -887,12 +988,34 @@ export type ParsedSearch = {
   intitle?: string;
   reminder?: boolean;
   todo?: boolean;
+  created?: DateRangeFacet;
+  updated?: DateRangeFacet;
+  resource?: SearchResource;
+  untagged?: boolean;
+  minus: string[];
 };
 
-const SEARCH_OPERATOR = /(?:^|\s)(notebook|tag|intitle|reminder|todo):(?:"([^"]*)"|(\S+))/gi;
+const SEARCH_OPERATOR =
+  /(?:^|\s)(notebook|tag|intitle|reminder|todo|created|updated|resource|untagged):(?:"([^"]*)"|(\S+))/gi;
+
+function parseDateRangeToken(value: string): DateRangeFacet | undefined {
+  const token = value.trim().toLowerCase();
+  if (token === "today") return "today";
+  if (token === "week" || token === "thisweek") return "week";
+  if (token === "month" || token === "thismonth") return "month";
+  return undefined;
+}
+
+function parseResourceToken(value: string): SearchResource | undefined {
+  const token = value.trim().toLowerCase();
+  if (token === "image" || token === "images" || token === "img") return "image";
+  if (token === "pdf" || token === "pdfs") return "pdf";
+  if (token === "attachment" || token === "file" || token === "true") return "attachment";
+  return undefined;
+}
 
 export function parseSearchQuery(raw: string): ParsedSearch {
-  const parsed: ParsedSearch = { text: raw };
+  const parsed: ParsedSearch = { text: raw, minus: [] };
   const leftover = raw.replace(SEARCH_OPERATOR, (_match, key, quoted, bare) => {
     const value = (quoted ?? bare ?? "").trim();
     const name = String(key).toLowerCase();
@@ -901,9 +1024,22 @@ export function parseSearchQuery(raw: string): ParsedSearch {
     if (name === "intitle" && value) parsed.intitle = value;
     if (name === "reminder") parsed.reminder = !/^(false|no|0)$/i.test(value);
     if (name === "todo") parsed.todo = !/^(false|no|0)$/i.test(value);
+    if (name === "created") parsed.created = parseDateRangeToken(value) || "any";
+    if (name === "updated") parsed.updated = parseDateRangeToken(value) || "any";
+    if (name === "resource") parsed.resource = parseResourceToken(value);
+    if (name === "untagged") parsed.untagged = !/^(false|no|0)$/i.test(value);
     return " ";
   });
-  parsed.text = leftover.replace(/\s+/g, " ").trim();
+  const tokens = leftover.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  const kept: string[] = [];
+  for (const token of tokens) {
+    if (token.startsWith("-") && token.length > 1) {
+      parsed.minus.push(token.slice(1));
+    } else {
+      kept.push(token);
+    }
+  }
+  parsed.text = kept.join(" ");
   return parsed;
 }
 
@@ -913,9 +1049,15 @@ export function noteMatchesSearchOperators(
     notebook_name: string;
     tag_names: string[];
     reminder_at: string | null;
+    created_at?: string;
+    updated_at?: string;
+    attachment_count?: number;
+    thumbnail_url?: string | null;
+    snippet?: string;
     checklist_total?: number;
   },
-  parsed: ParsedSearch
+  parsed: ParsedSearch,
+  now = new Date()
 ): boolean {
   if (
     parsed.notebook &&
@@ -936,6 +1078,31 @@ export function noteMatchesSearchOperators(
   if (parsed.reminder === false && note.reminder_at) return false;
   if (parsed.todo === true && !(note.checklist_total || 0)) return false;
   if (parsed.todo === false && (note.checklist_total || 0) > 0) return false;
+  if (parsed.untagged === true && note.tag_names.length > 0) return false;
+  if (parsed.untagged === false && note.tag_names.length === 0) return false;
+  if (parsed.created && parsed.created !== "any") {
+    if (!note.created_at || !noteMatchesDateRange(note.created_at, parsed.created, now)) {
+      return false;
+    }
+  }
+  if (parsed.updated && parsed.updated !== "any") {
+    if (!note.updated_at || !noteMatchesDateRange(note.updated_at, parsed.updated, now)) {
+      return false;
+    }
+  }
+  if (parsed.resource === "attachment" && !(note.attachment_count || 0)) return false;
+  if (parsed.resource === "image") {
+    const blob = `${note.thumbnail_url || ""} ${note.snippet || ""}`.toLowerCase();
+    if (!blob.includes("<img") && !note.thumbnail_url) return false;
+  }
+  if (parsed.resource === "pdf") {
+    const blob = `${note.snippet || ""} ${note.title || ""}`.toLowerCase();
+    if (!blob.includes("pdf") && !(note.attachment_count || 0)) return false;
+  }
+  const hay = `${note.title} ${note.snippet || ""} ${note.notebook_name} ${note.tag_names.join(" ")}`.toLowerCase();
+  for (const term of parsed.minus) {
+    if (hay.includes(term.toLowerCase())) return false;
+  }
   return true;
 }
 
@@ -1259,4 +1426,143 @@ export function paletteMatches(query: string, actions: PaletteAction[], limit = 
   return actions
     .filter((action) => !needle || action.label.toLowerCase().includes(needle) || action.hint?.toLowerCase().includes(needle))
     .slice(0, limit);
+}
+
+export function countCharacters(text: string): number {
+  return text.replace(/\s+/g, " ").trim().length;
+}
+
+export function readingTimeLabel(wordCount: number): string | null {
+  if (!Number.isFinite(wordCount) || wordCount <= 0) return null;
+  const minutes = Math.max(1, Math.round(wordCount / 200));
+  return minutes === 1 ? "1 min read" : `${minutes} min read`;
+}
+
+export function insertDateStamp(now = new Date()): string {
+  return now.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+export function insertTimeStamp(now = new Date()): string {
+  return now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+export function nextFontSize(current: string | undefined, direction: 1 | -1): string {
+  const sizes = [...EDITOR_FONT_SIZES];
+  const parsed = Number.parseInt(String(current || ""), 10);
+  const fallback = 16;
+  const value = Number.isFinite(parsed) ? parsed : fallback;
+  let index = sizes.findIndex((size) => size >= value);
+  if (index < 0) index = sizes.length - 1;
+  if (sizes[index] !== value && direction < 0) index = Math.max(0, index - 1);
+  const next = sizes[Math.min(sizes.length - 1, Math.max(0, index + direction))];
+  return `${next}px`;
+}
+
+export const IMAGE_SIZE_PRESETS = [
+  { id: "small", label: "Small", width: "25%" },
+  { id: "medium", label: "Medium", width: "50%" },
+  { id: "large", label: "Large", width: "75%" },
+  { id: "original", label: "Original", width: "" },
+] as const;
+
+export function outlineToHtml(headings: { level: number; text: string }[]): string {
+  if (!headings.length) return "";
+  const items = headings
+    .map((heading) => {
+      const pad = "&nbsp;".repeat(Math.max(0, heading.level - 1) * 4);
+      return `<li>${pad}${escapeHtml(heading.text)}</li>`;
+    })
+    .join("");
+  return `<h2>Table of Contents</h2><ul>${items}</ul>`;
+}
+
+export function formatRelativeTime(iso: string, now = new Date()): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const delta = now.getTime() - date.getTime();
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (delta < minute) return "Just now";
+  if (delta < hour) {
+    const mins = Math.floor(delta / minute);
+    return mins === 1 ? "1 minute ago" : `${mins} minutes ago`;
+  }
+  if (delta < day) {
+    const hours = Math.floor(delta / hour);
+    return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
+  }
+  if (delta < 2 * day && startOfLocalDay(date) === startOfLocalDay(now) - day) {
+    return "Yesterday";
+  }
+  if (delta < 7 * day) {
+    const days = Math.floor(delta / day);
+    return days === 1 ? "1 day ago" : `${days} days ago`;
+  }
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+export function printHtmlDocument(title: string, content: string) {
+  const html = notesToHtmlDocument(title, content);
+  const frame = window.open("", "_blank", "noopener,noreferrer");
+  if (!frame) {
+    window.print();
+    return;
+  }
+  frame.document.write(html);
+  frame.document.title = title || "Untitled";
+  frame.document.close();
+  frame.focus();
+  window.setTimeout(() => frame.print(), 50);
+}
+
+export function trashToastCopy(count: number, title: string): string {
+  if (count > 1) return `${count} notes moved to Trash`;
+  const cleaned = title.trim() || "Untitled";
+  return `“${cleaned}” moved to Trash`;
+}
+
+export const CLOSED_TABS_LIMIT = 12;
+
+export function rememberClosedTab<T>(stack: T[], closed: T, limit = CLOSED_TABS_LIMIT): T[] {
+  return [closed, ...stack].slice(0, limit);
+}
+
+export function popClosedTab<T>(stack: T[]): { item: T; remaining: T[] } | null {
+  if (!stack.length) return null;
+  return { item: stack[0], remaining: stack.slice(1) };
+}
+
+export function closeOtherTabIds(tabIds: string[], keepId: string): string[] {
+  return tabIds.filter((id) => id !== keepId);
+}
+
+export function closeTabsToTheRight(tabIds: string[], fromId: string): string[] {
+  const index = tabIds.indexOf(fromId);
+  if (index < 0) return [];
+  return tabIds.slice(index + 1);
+}
+
+export function viewTitleForFilter(
+  filter: { type: string; name?: string; query?: string }
+): string {
+  if (filter.type === "all") return "Notes";
+  if (filter.type === "notebook") return filter.name || "Notebook";
+  if (filter.type === "tag") return `#${filter.name || "tag"}`;
+  if (filter.type === "shortcuts") return "Shortcuts";
+  if (filter.type === "reminders") return "Reminders";
+  if (filter.type === "templates") return "Templates";
+  if (filter.type === "trash") return "Trash";
+  if (filter.type === "archived") return "Archived";
+  if (filter.type === "search") return `Search: ${filter.query || ""}`;
+  return "Notes";
+}
+
+export function plaintextFromClipboardHtml(html: string): string {
+  return htmlToPlainText(html).replace(/\n/g, "<br>");
 }

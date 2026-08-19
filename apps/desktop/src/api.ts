@@ -101,6 +101,7 @@ export type ViewFilter =
   | { type: "reminders" }
   | { type: "templates" }
   | { type: "trash" }
+  | { type: "archived" }
   | { type: "search"; query: string };
 
 export interface Account {
@@ -124,7 +125,7 @@ export interface Preferences {
   show_snippets: boolean;
   list_view: "snippets" | "titles" | "cards";
   list_density: "comfortable" | "compact";
-  sort_by: "updated" | "created" | "title";
+  sort_by: "updated" | "created" | "title" | "reminder";
   new_note_behavior: "blank" | "ask";
   auto_save_ms: number;
   show_shortcuts: boolean;

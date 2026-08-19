@@ -1,6 +1,8 @@
 import { DragEvent } from "react";
 import { Icon } from "./Icons";
 import { NOTE_TAB_DRAG_TYPE } from "../uiChrome";
+import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
+import { useState } from "react";
 
 export type NoteTabItem = {
   id: string;
@@ -12,24 +14,34 @@ export function NoteTabBar({
   activeTabId,
   canGoBack,
   canGoForward,
+  canReopenClosedTab,
   onBack,
   onForward,
   onSelect,
   onClose,
+  onCloseOthers,
+  onCloseToTheRight,
   onNewTab,
   onReorder,
+  onReopenClosed,
 }: {
   tabs: NoteTabItem[];
   activeTabId: string;
   canGoBack: boolean;
   canGoForward: boolean;
+  canReopenClosedTab?: boolean;
   onBack: () => void;
   onForward: () => void;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
+  onCloseOthers?: (id: string) => void;
+  onCloseToTheRight?: (id: string) => void;
   onNewTab: () => void;
   onReorder: (fromId: string, toId: string) => void;
+  onReopenClosed?: () => void;
 }) {
+  const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+
   const onDragStart = (event: DragEvent<HTMLDivElement>, id: string) => {
     event.dataTransfer.setData(NOTE_TAB_DRAG_TYPE, id);
     event.dataTransfer.effectAllowed = "move";
@@ -47,6 +59,28 @@ export function NoteTabBar({
     event.preventDefault();
     onReorder(fromId, toId);
   };
+
+  const menuItems: ContextMenuEntry[] = menu
+    ? [
+        { label: "Close Tab", onSelect: () => onClose(menu.id) },
+        {
+          label: "Close Other Tabs",
+          disabled: tabs.length < 2,
+          onSelect: () => onCloseOthers?.(menu.id),
+        },
+        {
+          label: "Close Tabs to the Right",
+          disabled: tabs.findIndex((tab) => tab.id === menu.id) >= tabs.length - 1,
+          onSelect: () => onCloseToTheRight?.(menu.id),
+        },
+        { type: "separator" },
+        {
+          label: "Reopen Closed Tab",
+          disabled: !canReopenClosedTab,
+          onSelect: () => onReopenClosed?.(),
+        },
+      ]
+    : [];
 
   return (
     <div className="note-tab-bar" onMouseDown={(event) => event.stopPropagation()}>
@@ -87,6 +121,10 @@ export function NoteTabBar({
               onDragOver={onDragOver}
               onDrop={(event) => onDrop(event, tab.id)}
               onClick={() => onSelect(tab.id)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setMenu({ x: event.clientX, y: event.clientY, id: tab.id });
+              }}
               onAuxClick={(event) => {
                 if (event.button === 1) {
                   event.preventDefault();
@@ -120,6 +158,9 @@ export function NoteTabBar({
       >
         <Icon.Plus size={16} />
       </button>
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />
+      )}
     </div>
   );
 }

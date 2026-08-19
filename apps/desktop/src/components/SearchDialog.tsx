@@ -127,7 +127,7 @@ export function SearchDialog({
           <input
             ref={inputRef}
             value={query}
-            placeholder="Search notes  notebook: tag: intitle:"
+            placeholder="Search notes  notebook: tag: created: resource:"
             aria-label="Search notes"
             onChange={(event) => onQueryChange(event.target.value)}
           />
