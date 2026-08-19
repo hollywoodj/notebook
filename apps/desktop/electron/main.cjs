@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
@@ -10,6 +10,20 @@ const DEV_URL = "http://127.0.0.1:1420";
 
 let apiProcess = null;
 let mainWindow = null;
+let pendingOpenUrl =
+  process.argv.find((item) => String(item).startsWith("notebook:")) ?? null;
+
+function sendOpenUrl(url) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("open-url", url);
+  } else {
+    pendingOpenUrl = url;
+  }
+}
+
+function isAllowedExternalUrl(url) {
+  return /^(https?:|mailto:|omniclone:|omnifocus:|notebook:)/i.test(String(url || ""));
+}
 
 function apiBinaryName() {
   return process.platform === "win32" ? "notebook-api.exe" : "notebook-api";
@@ -128,6 +142,10 @@ async function createWindow() {
     mainWindow.setMenuBarVisibility(false);
     mainWindow.removeMenu();
     mainWindow.show();
+    if (pendingOpenUrl) {
+      sendOpenUrl(pendingOpenUrl);
+      pendingOpenUrl = null;
+    }
   });
 
   if (app.isPackaged) {
@@ -148,12 +166,36 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, argv) => {
+    const url = argv.find((item) => String(item).startsWith("notebook:"));
+    if (url) sendOpenUrl(url);
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
   });
+
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    sendOpenUrl(url);
+  });
+
+  ipcMain.handle("open-external", async (_event, url) => {
+    if (!isAllowedExternalUrl(url)) {
+      throw new Error("Blocked external URL");
+    }
+    await shell.openExternal(String(url));
+  });
+
+  if (process.defaultApp) {
+    if (process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient("notebook", process.execPath, [
+        path.resolve(process.argv[1]),
+      ]);
+    }
+  } else {
+    app.setAsDefaultProtocolClient("notebook");
+  }
 
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);

@@ -17,6 +17,7 @@ export type SettingsSection =
   | "shortcuts"
   | "account"
   | "import"
+  | "integrations"
   | "advanced"
   | "about";
 
@@ -28,6 +29,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: typeof Icon.Applicat
   { id: "shortcuts", label: "Keyboard shortcuts", icon: Icon.Keyboard },
   { id: "account", label: "Account", icon: Icon.Account },
   { id: "import", label: "Import & Export", icon: Icon.Import },
+  { id: "integrations", label: "Integrations", icon: Icon.Link },
   { id: "advanced", label: "Advanced", icon: Icon.Advanced },
   { id: "about", label: "About", icon: Icon.Info },
 ];
@@ -517,6 +519,47 @@ export function SettingsModal({
                   <button className="ghost-btn" onClick={onRestoreTemplates}>
                     Restore templates
                   </button>
+                </SettingsRow>
+              </>
+            )}
+
+            {section === "integrations" && (
+              <>
+                <SettingsRow
+                  title="OmniClone"
+                  hint="Same as Evernote → OmniFocus: Copy Note Link pastes a notebook:// link into a task note, and Send to OmniClone creates an Inbox action with that link."
+                >
+                  <Toggle
+                    on={prefs.omniclone_enabled !== false}
+                    onChange={(v) => onSavePrefs({ omniclone_enabled: v })}
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  title="Send actions to"
+                  hint="OmniClone uses omniclone:///add. OmniFocus uses the same URL scheme with omnifocus:///add."
+                >
+                  <select
+                    value={prefs.omniclone_scheme || "omniclone"}
+                    onChange={(e) =>
+                      onSavePrefs({
+                        omniclone_scheme: e.target.value as Preferences["omniclone_scheme"],
+                      })
+                    }
+                    disabled={prefs.omniclone_enabled === false}
+                  >
+                    <option value="omniclone">OmniClone</option>
+                    <option value="omnifocus">OmniFocus</option>
+                    <option value="both">Both</option>
+                  </select>
+                </SettingsRow>
+                <SettingsRow
+                  title="Use reminder as due date"
+                  hint="When a note has a reminder, Send to OmniClone sets that time as the action’s due date."
+                >
+                  <Toggle
+                    on={prefs.omniclone_send_due !== false}
+                    onChange={(v) => onSavePrefs({ omniclone_send_due: v })}
+                  />
                 </SettingsRow>
               </>
             )}

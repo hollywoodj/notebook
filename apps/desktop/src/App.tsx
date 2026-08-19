@@ -72,6 +72,7 @@ import {
   NOTE_COLORS_KEY,
   LOCKED_NOTES_KEY,
   SIDEBAR_RAIL_WIDTH,
+  SIDEBAR_NAV_ICON_SIZE,
   adjacentNoteId,
   noteIdByOffset,
   attachmentCountLabel,
@@ -177,6 +178,12 @@ import {
   type SidebarSectionId,
   NOTE_COLORS,
 } from "./uiChrome";
+import {
+  parseNotebookUrl,
+  sendUrlsForChecklists,
+  sendUrlsForNote,
+  type OmniCloneSchemePref,
+} from "./omniFocus";
 
 const PALETTE_ACTIONS: PaletteAction[] = [
   { id: "new-note", label: "New note", hint: "Ctrl/⌘ N" },
@@ -186,6 +193,7 @@ const PALETTE_ACTIONS: PaletteAction[] = [
   { id: "templates", label: "Browse templates" },
   { id: "print", label: "Print note", hint: "Ctrl/⌘ P" },
   { id: "email", label: "Email note…" },
+  { id: "send-omniclone", label: "Send to OmniClone" },
   { id: "theme", label: "Toggle theme" },
   { id: "focus", label: "Focus mode", hint: "F11" },
   { id: "back", label: "Go back", hint: "Ctrl/⌘ [" },
@@ -1176,6 +1184,75 @@ export default function App() {
     await navigator.clipboard.writeText(noteAppLink(activeNote.id));
   };
 
+  const openAppUrl = async (url: string): Promise<boolean> => {
+    try {
+      if (window.notebookDesktop?.openExternal) {
+        await window.notebookDesktop.openExternal(url);
+        return true;
+      }
+    } catch {
+      /* fall through to clipboard */
+    }
+    await copyTextToClipboard(url);
+    return false;
+  };
+
+  const sendToOmniClone = async (mode: "note" | "checklists" = "note") => {
+    if (prefs.omniclone_enabled === false) {
+      openSettings("integrations");
+      return;
+    }
+    const ids = targetNoteIds();
+    if (!ids.length) return;
+    const urls: string[] = [];
+    for (const id of ids) {
+      const note =
+        activeNote?.id === id
+          ? activeNote
+          : await api.getNote(id).catch(() => null);
+      if (!note) continue;
+      const schemePref = (prefs.omniclone_scheme || "omniclone") as OmniCloneSchemePref;
+      if (mode === "checklists") {
+        urls.push(
+          ...sendUrlsForChecklists({
+            title: note.title,
+            noteId: note.id,
+            html: note.content,
+            schemePref,
+          })
+        );
+      } else {
+        urls.push(
+          ...sendUrlsForNote({
+            title: note.title,
+            noteId: note.id,
+            snippet: note.content_plain || htmlToPlainText(note.content),
+            reminderAt: note.reminder_at,
+            schemePref,
+            sendDue: prefs.omniclone_send_due !== false,
+          })
+        );
+      }
+    }
+    if (!urls.length) return;
+    let opened = 0;
+    for (const url of urls) {
+      const ok = await openAppUrl(url);
+      if (ok) opened += 1;
+      else break;
+    }
+    setImportStatus(
+      opened === 0
+        ? "Copied OmniClone add link. Open OmniClone, or paste it into OmniFocus."
+        : mode === "checklists"
+          ? "Sent checkboxes to OmniClone."
+          : ids.length > 1
+            ? `Sent ${ids.length} notes to OmniClone.`
+            : "Sent note to OmniClone."
+    );
+    window.setTimeout(() => setImportStatus(null), 4500);
+  };
+
   const dropNoteIds = (event: DragEvent) => {
     event.preventDefault();
     setDropTarget(null);
@@ -1489,6 +1566,18 @@ export default function App() {
       } else if (meta && e.key === ",") {
         e.preventDefault();
         openSettings();
+      } else if (
+        e.ctrlKey &&
+        e.altKey &&
+        (e.key === "c" || e.key === "C") &&
+        !e.shiftKey &&
+        activeNote
+      ) {
+        const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+        if (!isMac || e.metaKey) {
+          e.preventDefault();
+          void copyActiveNoteLink();
+        }
       } else if (meta && e.key === "/") {
         e.preventDefault();
         setShowShortcuts((open) => !open);
@@ -1542,6 +1631,18 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
+
+  useEffect(() => {
+    if (!ready) return;
+    const openLinkedNote = (raw: string) => {
+      const parsed = parseNotebookUrl(raw);
+      if (parsed?.kind === "note") void loadNote(parsed.id);
+    };
+    openLinkedNote(window.location.href);
+    openLinkedNote(window.location.hash);
+    const unsub = window.notebookDesktop?.onOpenUrl?.(openLinkedNote);
+    return () => unsub?.();
+  }, [ready, loadNote]);
 
   if (error) {
     return (
@@ -1618,6 +1719,9 @@ export default function App() {
         break;
       case "email":
         void emailActiveNote();
+        break;
+      case "send-omniclone":
+        void sendToOmniClone("note");
         break;
       case "theme":
         toggleTheme();
@@ -1792,6 +1896,7 @@ export default function App() {
     confirm,
     printActiveNote,
     copyActiveNoteLink,
+    sendToOmniClone,
     copyActiveNoteAs,
     copyNoteTitle,
     exportNotebook,
@@ -2019,7 +2124,7 @@ export default function App() {
             aria-pressed={!sidebarRail}
             onClick={() => persistPaneLayout(toggleSidebarRail(paneLayout))}
           >
-            <Icon.Sidebar size={18} />
+            <Icon.Sidebar size={SIDEBAR_NAV_ICON_SIZE} />
           </button>
           <button
             type="button"
@@ -2027,7 +2132,7 @@ export default function App() {
             title="Search"
             onClick={() => openGlobalSearch()}
           >
-            <Icon.Search size={18} />
+            <Icon.Search size={SIDEBAR_NAV_ICON_SIZE} />
           </button>
           <button
             type="button"
@@ -2035,7 +2140,7 @@ export default function App() {
             title="New note"
             onClick={() => void createNote()}
           >
-            <Icon.Plus size={18} />
+            <Icon.Plus size={SIDEBAR_NAV_ICON_SIZE} />
           </button>
           <div className="menu-anchor">
             <button
@@ -2044,7 +2149,7 @@ export default function App() {
               title="More actions"
               onClick={() => setShowNewMenu((v) => !v)}
             >
-              <Icon.More size={18} />
+              <Icon.More size={SIDEBAR_NAV_ICON_SIZE} />
             </button>
             {showNewMenu && (
               <div className="menu-popover right">
@@ -2115,7 +2220,7 @@ export default function App() {
                     setFilter({ type: "all" });
                   }}
                 >
-                  <Icon.Notes size={16} />
+                  <Icon.Notes size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Notes</span>
                   <span className="nav-count">{counts.notes}</span>
                 </button>
@@ -2137,7 +2242,7 @@ export default function App() {
                     setFilter({ type: "shortcuts" });
                   }}
                 >
-                  <Icon.Shortcuts size={16} />
+                  <Icon.Shortcuts size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Shortcuts</span>
                   <span className="nav-count">{shortcutNotes.length}</span>
                 </button>
@@ -2154,7 +2259,7 @@ export default function App() {
                     setFilter({ type: "reminders" });
                   }}
                 >
-                  <Icon.Reminder size={16} />
+                  <Icon.Reminder size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Reminders</span>
                   <span className="nav-count">{counts.reminders}</span>
                 </button>
@@ -2173,7 +2278,7 @@ export default function App() {
                   aria-expanded={sidebarFlyout === "notebooks"}
                   onClick={() => openSidebarFlyout("notebooks")}
                 >
-                  <Icon.Notebooks size={16} />
+                  <Icon.Notebooks size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Notebooks</span>
                   <span className="nav-count">{notebooks.length}</span>
                 </button>
@@ -2192,7 +2297,7 @@ export default function App() {
                   aria-expanded={sidebarFlyout === "tags"}
                   onClick={() => openSidebarFlyout("tags")}
                 >
-                  <Icon.Tags size={16} />
+                  <Icon.Tags size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Tags</span>
                   <span className="nav-count">{tags.length}</span>
                 </button>
@@ -2209,7 +2314,7 @@ export default function App() {
                     setFilter({ type: "templates" });
                   }}
                 >
-                  <Icon.Templates size={16} />
+                  <Icon.Templates size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Templates</span>
                   <span className="nav-count">{counts.templates}</span>
                 </button>
@@ -2226,7 +2331,7 @@ export default function App() {
                     setFilter({ type: "archived" });
                   }}
                 >
-                  <Icon.Archive size={16} />
+                  <Icon.Archive size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Archived</span>
                 </button>
               );
@@ -2250,7 +2355,7 @@ export default function App() {
                         setSearchOpen(true);
                       }}
                     >
-                      <Icon.Search size={16} />
+                      <Icon.Search size={SIDEBAR_NAV_ICON_SIZE} />
                       <span className="nav-label">{search.name}</span>
                     </button>
                   ))}
@@ -2268,7 +2373,7 @@ export default function App() {
                     setFilter({ type: "trash" });
                   }}
                 >
-                  <Icon.Trash size={16} />
+                  <Icon.Trash size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Trash</span>
                   <span className="nav-count">{counts.trash}</span>
                 </button>
@@ -2600,14 +2705,6 @@ export default function App() {
               </div>
             )}
           </div>
-          <button
-            type="button"
-            className="icon-btn"
-            title="Settings"
-            onClick={() => openSettings()}
-          >
-            <Icon.Gear size={16} />
-          </button>
         </div>
         <input
           ref={importRef}
@@ -3311,6 +3408,30 @@ export default function App() {
                           }}
                         >
                           Email note…
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            void sendToOmniClone("note");
+                          }}
+                        >
+                          Send to OmniClone
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            void sendToOmniClone("checklists");
+                          }}
+                        >
+                          Send Checkboxes to OmniClone
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            void copyActiveNoteLink();
+                          }}
+                        >
+                          Copy note link
                         </button>
                         {!activeNote.is_template && (
                           <button

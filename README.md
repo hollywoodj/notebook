@@ -22,6 +22,7 @@ Built for **macOS and Windows** (Tauri desktop), with a **REST API** and **CLI**
 | REST API | ✅ |
 | CLI (local + remote API) | ✅ |
 | Desktop app (Mac/Windows via Tauri) | ✅ |
+| OmniClone / OmniFocus send | ✅ |
 | AI assistant / AI search | ❌ intentionally omitted |
 
 ## Architecture
@@ -259,9 +260,19 @@ curl -X POST "http://127.0.0.1:8799/api/v1/import/enex?notebook_name=Imported" \
 
 ### Desktop
 
-Use **Import Evernote (.enex)** in the sidebar. Notebook exports with images can be large; the desktop app imports those files directly from disk instead of uploading them through the browser.
+Use **File → Import Notes…** or **Tools → Import from Evernote…**. Notebook exports with images can be large; the desktop app imports those files directly from disk instead of uploading them through the browser.
 
 The API accepts Evernote files up to **2 GB**. Grouped / notebook `.enex` exports that previously failed with **Failed to fetch** were hitting the old 2 MB HTTP body limit.
+
+## OmniClone / OmniFocus
+
+This is the Evernote ↔ OmniFocus workflow from [Inside OmniFocus](https://inside.omnifocus.com/evernote) and [the OmniFocus URL scheme](https://inside.omnifocus.com/url-schemes), pointed at [OmniClone](https://github.com/hollywoodj/omniclone).
+
+1. **Copy Note Link** (`⌃⌥⌘ C`, Note menu, or right-click) copies `notebook://note/{id}`. Paste that into an OmniClone / OmniFocus action note. Clicking it opens this app to the note.
+2. **Share → Send to OmniClone** creates an Inbox action named after the note, with the app link in the note field. If the note has a reminder, that time is sent as `due=` (same parameters as `omnifocus:///add?name=&note=&due=`).
+3. **Send Checkboxes to OmniClone** sends unchecked checklist items as Inbox actions (one `add`, or TaskPaper `paste` for several), each linking back to the note — the TaskClone / Mail Drop pattern.
+
+Settings → Integrations chooses OmniClone (`omniclone:///…`), OmniFocus (`omnifocus:///…`), or both.
 
 ### Import mapping
 

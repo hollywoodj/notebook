@@ -105,6 +105,7 @@ export type AppMenuContext = {
   ) => Promise<boolean>;
   printActiveNote: () => void;
   copyActiveNoteLink: () => void;
+  sendToOmniClone: (mode?: "note" | "checklists") => void;
   copyNoteTitle: (title?: string) => void;
   setListView: (view: ListView) => void;
   importNotes: () => void;
@@ -374,8 +375,17 @@ export function buildContextMenu(
         ? [
             {
               label: "Copy note link",
+              shortcut: "⌃⌥⌘ C",
               onSelect: () =>
                 void navigator.clipboard.writeText(noteAppLink(targets[0].id)),
+            },
+            {
+              label: "Send to OmniClone",
+              onSelect: () => ctx.sendToOmniClone("note"),
+            },
+            {
+              label: "Send Checkboxes to OmniClone",
+              onSelect: () => ctx.sendToOmniClone("checklists"),
             },
             {
               label: "Email note…",
@@ -664,7 +674,24 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           onSelect: ctx.emailActiveNote,
         },
         {
+          label: "Share",
+          disabled: !ctx.activeNote,
+          children: [
+            {
+              label: "Send to OmniClone",
+              disabled: !ctx.activeNote,
+              onSelect: () => ctx.sendToOmniClone("note"),
+            },
+            {
+              label: "Send Checkboxes to OmniClone",
+              disabled: !ctx.activeNote,
+              onSelect: () => ctx.sendToOmniClone("checklists"),
+            },
+          ],
+        },
+        {
           label: "Copy Note Link",
+          shortcut: "⌃⌥⌘ C",
           disabled: !ctx.activeNote,
           onSelect: () => void ctx.copyActiveNoteLink(),
         },
@@ -1073,6 +1100,28 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           onSelect: ctx.emailActiveNote,
         },
         {
+          label: "Share",
+          disabled: !ctx.activeNote,
+          children: [
+            {
+              label: "Send to OmniClone",
+              disabled: !ctx.activeNote,
+              onSelect: () => ctx.sendToOmniClone("note"),
+            },
+            {
+              label: "Send Checkboxes to OmniClone",
+              disabled: !ctx.activeNote,
+              onSelect: () => ctx.sendToOmniClone("checklists"),
+            },
+          ],
+        },
+        {
+          label: "Copy Note Link",
+          shortcut: "⌃⌥⌘ C",
+          disabled: !ctx.activeNote,
+          onSelect: () => void ctx.copyActiveNoteLink(),
+        },
+        {
           label: `Merge ${ctx.selectedNoteIds.size} Notes`,
           disabled: ctx.selectedNoteIds.size < 2,
           onSelect: () => void ctx.mergeSelectedNotes(),
@@ -1428,6 +1477,10 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         {
           label: "Import from Evernote…",
           onSelect: ctx.importNotes,
+        },
+        {
+          label: "OmniClone Integration…",
+          onSelect: () => ctx.openSettings("integrations"),
         },
         {
           label: "Restore Built-in Templates",

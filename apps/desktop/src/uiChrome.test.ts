@@ -7,6 +7,7 @@ import {
   countWords,
   decodeNoteDrag,
   defaultPaneLayout,
+  SIDEBAR_NAV_ICON_SIZE,
   emptyStateCopy,
   encodeNoteDrag,
   findMatchOffsets,
@@ -146,6 +147,7 @@ describe("parsePaneLayout", () => {
     assert.equal(parsePaneLayout(null).sidebarRail, true);
     assert.equal(parsePaneLayout(JSON.stringify({ listWidth: 400 })).sidebarRail, true);
     assert.equal(parsePaneLayout(JSON.stringify({ sidebarRail: false })).sidebarRail, false);
+    assert.equal(SIDEBAR_NAV_ICON_SIZE, 20);
   });
 });
 

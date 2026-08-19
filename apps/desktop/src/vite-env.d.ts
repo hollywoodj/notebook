@@ -11,6 +11,8 @@ interface ImportMeta {
 interface NotebookDesktopBridge {
   isElectron: boolean;
   getPathForFile?: (file: File) => string | null;
+  openExternal?: (url: string) => Promise<void>;
+  onOpenUrl?: (cb: (url: string) => void) => () => void;
 }
 
 interface Window {

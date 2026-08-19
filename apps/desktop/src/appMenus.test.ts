@@ -76,6 +76,7 @@ function stubMenu(overrides: Partial<AppMenuContext> = {}): AppMenuContext {
     confirm: async () => true,
     printActiveNote: noop,
     copyActiveNoteLink: noop,
+    sendToOmniClone: noop,
     copyActiveNoteAs: noop,
     copyNoteTitle: noop,
     exportNotebook: noop,
@@ -139,6 +140,12 @@ describe("buildMenuBar", () => {
     assert.ok(tools);
     assert.equal(labels(file.items).includes("Import Notes…"), true);
     assert.equal(labels(tools.items).includes("Import from Evernote…"), true);
+    const share = file.items.find((item) => "label" in item && item.label === "Share");
+    assert.ok(share && "children" in share && share.children);
+    assert.equal(labels(share.children).includes("Send to OmniClone"), true);
+    assert.equal(labels(share.children).includes("Send Checkboxes to OmniClone"), true);
+    assert.equal(labels(file.items).includes("Copy Note Link"), true);
+    assert.equal(labels(tools.items).includes("OmniClone Integration…"), true);
     assert.equal(
       groups.some((group) => labels(group.items).includes("Evernote (.enex)")),
       false
@@ -230,6 +237,8 @@ describe("buildContextMenu", () => {
       stubMenu()
     );
     assert.equal(labels(normal).includes("Open in New Tab"), true);
+    assert.equal(labels(normal).includes("Send to OmniClone"), true);
+    assert.equal(labels(normal).includes("Copy note link"), true);
     assert.equal(labels(normal).includes("Move to trash"), true);
     assert.equal(labels(normal).includes("Export as Markdown"), true);
     assert.equal(labels(normal).includes("Copy as"), true);
