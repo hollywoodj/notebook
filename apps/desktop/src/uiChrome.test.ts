@@ -7,7 +7,6 @@ import {
   countWords,
   decodeNoteDrag,
   defaultPaneLayout,
-  SIDEBAR_NAV_ICON_SIZE,
   emptyStateCopy,
   encodeNoteDrag,
   findMatchOffsets,
@@ -17,7 +16,6 @@ import {
   jumpToMatches,
   hasVisibleSidebarNotebooks,
   isNoteExpanded,
-  isSidebarRail,
   matchesSidebarFilter,
   mergeNoteBodies,
   nextMatchIndex,
@@ -56,7 +54,6 @@ import {
   toggleListFacet,
   toggleNoteExpanded,
   toggleNoteListHidden,
-  toggleSidebarRail,
   visibleToolbarCount,
   windowTitleForNote,
   createNoteTab,
@@ -141,52 +138,18 @@ describe("parsePaneLayout", () => {
     assert.equal(layout.sidebarCollapsed, true);
     assert.equal(layout.listCollapsed, true);
   });
-
-  it("starts on the icon rail unless the layout pinned the sidebar open", () => {
-    assert.equal(defaultPaneLayout().sidebarRail, true);
-    assert.equal(parsePaneLayout(null).sidebarRail, true);
-    assert.equal(parsePaneLayout(JSON.stringify({ listWidth: 400 })).sidebarRail, true);
-    assert.equal(parsePaneLayout(JSON.stringify({ sidebarRail: false })).sidebarRail, false);
-    assert.equal(SIDEBAR_NAV_ICON_SIZE, 20);
-  });
 });
 
-describe("sidebar icon rail", () => {
-  it("pins the sidebar open and back to icons", () => {
-    const pinned = toggleSidebarRail(defaultPaneLayout());
-    assert.equal(pinned.sidebarRail, false);
-    assert.equal(isSidebarRail(pinned), false);
-    assert.equal(isSidebarRail(toggleSidebarRail(pinned)), true);
-  });
-
-  it("shows the icon rail only while the sidebar is visible", () => {
+describe("sidebar resize", () => {
+  it("clamps the dragged edge and brings a hidden sidebar back", () => {
+    const layout = defaultPaneLayout();
+    assert.equal(resizeSidebarTo(layout, 300).sidebarWidth, 300);
+    assert.equal(resizeSidebarTo(layout, 160).sidebarWidth, 180);
+    assert.equal(resizeSidebarTo(layout, 900).sidebarWidth, 420);
     const hidden = { ...defaultPaneLayout(), sidebarCollapsed: true };
-    assert.equal(isSidebarRail(hidden), false);
-    assert.equal(toggleSidebarRail(hidden).sidebarCollapsed, false);
-  });
-
-  it("keeps the rail until the sidebar edge is dragged clear of it", () => {
-    const rail = defaultPaneLayout();
-    assert.equal(resizeSidebarTo(rail, 100).sidebarRail, true);
-    const released = resizeSidebarTo(rail, 220);
-    assert.equal(released.sidebarRail, false);
-    assert.equal(released.sidebarWidth, 220);
-  });
-
-  it("snaps a pinned sidebar back to the rail when dragged narrow", () => {
-    const pinned = toggleSidebarRail(defaultPaneLayout());
-    assert.equal(resizeSidebarTo(pinned, 300).sidebarWidth, 300);
-    assert.equal(resizeSidebarTo(pinned, 160).sidebarWidth, 180);
-    assert.equal(resizeSidebarTo(pinned, 160).sidebarRail, false);
-    assert.equal(resizeSidebarTo(pinned, 120).sidebarRail, true);
-    assert.equal(resizeSidebarTo(pinned, 900).sidebarWidth, 420);
-  });
-
-  it("brings a hidden sidebar back when its edge is dragged", () => {
-    const hidden = { ...defaultPaneLayout(), sidebarCollapsed: true };
-    assert.equal(resizeSidebarTo(hidden, 100).sidebarCollapsed, false);
-    assert.equal(resizeSidebarTo(hidden, 100).sidebarRail, true);
-    assert.equal(resizeSidebarTo(hidden, 260).sidebarWidth, 260);
+    const shown = resizeSidebarTo(hidden, 260);
+    assert.equal(shown.sidebarCollapsed, false);
+    assert.equal(shown.sidebarWidth, 260);
   });
 });
 

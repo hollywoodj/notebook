@@ -103,26 +103,28 @@ describe("Evernote sidebar chrome", () => {
     assert.equal(appSource.includes("nav-section"), false);
   });
 
-  it("holds the icon rail at its width instead of popping the sidebar open", () => {
-    assert.match(appSource, /const sidebarRail = isSidebarRail\(paneLayout\)/);
-    assert.match(appSource, /sidebarRail \? " sidebar-rail" : ""/);
-    assert.match(appSource, /className="sidebar"/);
+  it("keeps the sidebar at its labeled width instead of collapsing to an icon rail", () => {
+    assert.equal(appSource.includes("isSidebarRail"), false);
+    assert.equal(appSource.includes("sidebar-rail"), false);
+    assert.equal(appSource.includes("toggleSidebarRail"), false);
+    assert.equal(appSource.includes("sidebarRail"), false);
     assert.equal(appSource.includes("rail-open"), false);
     assert.equal(appSource.includes("sidebarHovered"), false);
     assert.equal(appSource.includes("sidebarFocused"), false);
 
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
-    assert.match(styles, /\.app-shell\.sidebar-rail \{/);
-    assert.match(styles, /\.app-shell\.sidebar-rail \.sidebar-nav \.nav-label/);
+    assert.equal(styles.includes("sidebar-rail"), false);
     assert.equal(styles.includes("rail-open"), false);
   });
 
-  it("labels every rail icon so hover reveals the same nav text", () => {
+  it("labels every sidebar nav row", () => {
     for (const label of ["Notes", "Shortcuts", "Reminders", "Notebooks", "Tags", "Templates", "Trash"]) {
       assert.match(appSource, new RegExp(`<span className="nav-label">${label}</span>`));
     }
-    assert.match(appSource, /title=\{sidebarRail \? "Pin sidebar open" : "Collapse sidebar to icons"\}/);
-    assert.match(menuSource, /sidebarRail \? "Pin Sidebar Open" : "Collapse Sidebar to Icons"/);
+    assert.equal(appSource.includes("Pin sidebar open"), false);
+    assert.equal(appSource.includes("Collapse sidebar to icons"), false);
+    assert.equal(menuSource.includes("Pin Sidebar Open"), false);
+    assert.equal(menuSource.includes("Collapse Sidebar to Icons"), false);
   });
 
   it("counts the current view rather than repeating the all-notes total", () => {
@@ -190,7 +192,7 @@ describe("Evernote list and account chrome", () => {
 });
 
 describe("menu bar, sidebar icons, and OmniClone", () => {
-  it("keeps Settings in File and the account menu, not on the sidebar rail", () => {
+  it("keeps Settings in File and the account menu, not on the sidebar", () => {
     assert.equal(appSource.includes('title="Settings"'), false);
     assert.equal(appSource.includes("Icon.Gear"), false);
     assert.match(menuSource, /label: "Settings…"/);

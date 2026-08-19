@@ -71,7 +71,6 @@ import {
   SIDEBAR_SECTIONS_KEY,
   NOTE_COLORS_KEY,
   LOCKED_NOTES_KEY,
-  SIDEBAR_RAIL_WIDTH,
   SIDEBAR_NAV_ICON_SIZE,
   adjacentNoteId,
   noteIdByOffset,
@@ -96,7 +95,6 @@ import {
   isReminderDone,
   isReminderOverdue,
   isNoteExpanded,
-  isSidebarRail,
   hasVisibleSidebarNotebooks,
   matchesSidebarFilter,
   nextActiveTabId,
@@ -143,7 +141,6 @@ import {
   toggleListFacet,
   toggleNoteExpanded,
   toggleNoteListHidden,
-  toggleSidebarRail,
   windowTitleForNote,
   deleteSavedSearch,
   upsertSavedSearch,
@@ -1446,9 +1443,6 @@ export default function App() {
             ? toggleNoteListHidden(paneLayout)
             : toggleNoteExpanded(paneLayout)
         );
-      } else if (e.altKey && meta && (e.key === "s" || e.key === "S")) {
-        e.preventDefault();
-        persistPaneLayout(toggleSidebarRail(paneLayout));
       } else if (meta && (e.key === "[" || e.key === "BracketLeft") && !e.altKey) {
         e.preventDefault();
         goBack();
@@ -2024,14 +2018,11 @@ export default function App() {
   const contextMenuItems = (target: ContextTarget) => buildContextMenu(target, menuCtx);
   const menuGroups = buildMenuBar(menuCtx);
 
-  const sidebarRail = isSidebarRail(paneLayout);
-
   return (
     <div
       className={
         "app-shell" +
         (paneLayout.sidebarCollapsed ? " sidebar-collapsed" : "") +
-        (sidebarRail ? " sidebar-rail" : "") +
         (paneLayout.listCollapsed ? " list-collapsed" : "") +
         (focusMode ? " focus-mode" : "") +
         (showInfo && activeNote ? " info-open" : "")
@@ -2041,7 +2032,6 @@ export default function App() {
           "--sidebar-width": paneLayout.sidebarCollapsed
             ? "0px"
             : `${paneLayout.sidebarWidth}px`,
-          "--sidebar-rail-width": `${SIDEBAR_RAIL_WIDTH}px`,
           "--list-width": `${paneLayout.listWidth}px`,
         } as CSSProperties
       }
@@ -2117,15 +2107,6 @@ export default function App() {
         }}
       >
         <div className="sidebar-toolbar" onMouseDown={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            className="icon-btn sidebar-rail-toggle"
-            title={sidebarRail ? "Pin sidebar open" : "Collapse sidebar to icons"}
-            aria-pressed={!sidebarRail}
-            onClick={() => persistPaneLayout(toggleSidebarRail(paneLayout))}
-          >
-            <Icon.Sidebar size={SIDEBAR_NAV_ICON_SIZE} />
-          </button>
           <button
             type="button"
             className={searchOpen || filter.type === "search" ? "icon-btn active" : "icon-btn"}
