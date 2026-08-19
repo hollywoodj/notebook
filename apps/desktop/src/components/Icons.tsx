@@ -78,6 +78,16 @@ export const Icon = {
       <path d="M8 10l4 4 4-4" />
     </I>
   ),
+  Back: (p: IconProps) => (
+    <I {...p}>
+      <path d="M15 18l-6-6 6-6" />
+    </I>
+  ),
+  Forward: (p: IconProps) => (
+    <I {...p}>
+      <path d="M9 6l6 6-6 6" />
+    </I>
+  ),
   Gear: (p: IconProps) => (
     <I {...p}>
       <circle cx="12" cy="12" r="3" />

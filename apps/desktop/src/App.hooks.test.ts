@@ -58,7 +58,16 @@ describe("Evernote sidebar chrome", () => {
     assert.match(appSource, /searchOpen \|\| filter\.type === "search"/);
     assert.match(appSource, /sidebarFilterOpen \|\| Boolean\(sidebarFilter\.trim\(\)\)/);
     assert.equal(appSource.includes('placeholder="Search"'), false);
-    assert.match(appSource, /placeholder="Search notes  notebook: tag: intitle:"/);
+    assert.match(appSource, /<SearchDialog/);
+    assert.match(appSource, /onBack=\{goBack\}/);
+    assert.match(appSource, /canGoBack=\{navPast\.length > 0\}/);
+    const tabBar = readFileSync(new URL("./components/NoteTabBar.tsx", import.meta.url), "utf8");
+    assert.match(tabBar, /className="note-history"/);
+    assert.match(tabBar, /className="note-tab-new"/);
+    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    assert.match(styles, /border-radius: 999px/);
+    assert.match(styles, /\.note-tab-new \{[\s\S]*border-radius: 50%/);
+    assert.match(styles, /\.search-dialog \{/);
   });
 
   it("exposes hide note list and expand note as a pair", () => {
@@ -127,7 +136,6 @@ describe("Evernote sidebar chrome", () => {
 
 describe("Evernote list and account chrome", () => {
   it("shows recent searches, filter chips, and stack collapse", () => {
-    assert.match(appSource, /Recent searches/);
     assert.match(appSource, /Has reminder/);
     assert.match(appSource, /Has attachment/);
     assert.match(appSource, /note-card-thumb/);
@@ -137,8 +145,10 @@ describe("Evernote list and account chrome", () => {
     assert.match(appSource, /e\.key === "j" \|\| e\.key === "k"/);
     assert.match(appSource, /This week/);
     assert.match(appSource, /Later today/);
-    assert.match(appSource, /notebook: tag: intitle:/);
     assert.match(appSource, /outlineOpen=\{editorChrome\.outlineOpen\}/);
+    const searchSource = readFileSync(new URL("./components/SearchDialog.tsx", import.meta.url), "utf8");
+    assert.match(searchSource, /Recent searches/);
+    assert.match(searchSource, /notebook: tag: intitle:/);
     assert.match(menuSource, /Collapse stack/);
     assert.match(menuSource, /label: "Align"/);
     assert.match(menuSource, /label: "Table"/);
@@ -146,5 +156,20 @@ describe("Evernote list and account chrome", () => {
     assert.match(menuSource, /Show Note Outline/);
     assert.match(menuSource, /Export as Markdown/);
     assert.match(menuSource, /Export notebook as Evernote XML/);
+    assert.match(appSource, /LAST_SESSION_KEY/);
+    assert.match(appSource, /<CommandPalette/);
+    assert.match(appSource, /groupRemindersForList/);
+    assert.match(appSource, /groupNotesByNotebook/);
+    assert.match(appSource, /noteMailtoHref/);
+    assert.match(appSource, /hoverPreview/);
+    assert.match(appSource, /onCreateTag/);
+    assert.match(searchSource, /Saved searches/);
+    assert.match(searchSource, /Save this search/);
+    assert.match(menuSource, /Email Note/);
+    assert.match(menuSource, /Command Palette/);
+    assert.match(menuSource, /Mark reminder done/);
+    const editorSource = readFileSync(new URL("./components/NoteEditor.tsx", import.meta.url), "utf8");
+    assert.match(editorSource, /CODE_LANGUAGES/);
+    assert.match(editorSource, /aria-label="Code language"/);
   });
 });

@@ -93,6 +93,14 @@ function stubMenu(overrides: Partial<AppMenuContext> = {}): AppMenuContext {
     toggleStackCollapsed: noop,
     collapseAllStacks: noop,
     expandAllStacks: noop,
+    canGoBack: false,
+    canGoForward: false,
+    goBack: noop,
+    goForward: noop,
+    emailActiveNote: noop,
+    toggleReminderDone: noop,
+    openCommandPalette: noop,
+    isReminderCompleted: () => false,
     ...overrides,
   };
 }
@@ -132,6 +140,8 @@ describe("buildMenuBar", () => {
     assert.equal(viewLabels.includes("Pin Sidebar Open"), true);
     assert.equal(viewLabels.includes("Hide Attachments"), true);
     assert.equal(viewLabels.includes("Show Note Outline"), true);
+    assert.equal(viewLabels.includes("Back"), true);
+    assert.equal(viewLabels.includes("Forward"), true);
   });
 
   it("disables note actions when nothing is targeted", () => {
@@ -246,5 +256,18 @@ describe("buildContextMenu", () => {
     assert.ok(snooze && "children" in snooze && snooze.children);
     assert.equal(labels(snooze.children).includes("Later today"), true);
     assert.equal(labels(snooze.children).includes("Tomorrow morning"), true);
+    assert.equal(labels(items).includes("Mark reminder done"), true);
+    assert.equal(labels(items).includes("Email note…"), true);
+  });
+
+  it("lists command palette and email in the menu bar", () => {
+    const groups = buildMenuBar(stubMenu({ activeNote: { id: "n1", reminder_at: "2026-08-18T18:00:00.000Z" } as AppMenuContext["activeNote"] }));
+    const file = groups.find((group) => group.label === "File");
+    const view = groups.find((group) => group.label === "View");
+    const note = groups.find((group) => group.label === "Note");
+    assert.ok(file && view && note);
+    assert.equal(labels(file.items).includes("Email Note…"), true);
+    assert.equal(labels(view.items).includes("Command Palette…"), true);
+    assert.equal(labels(note.items).includes("Mark Reminder Done"), true);
   });
 });

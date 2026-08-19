@@ -116,6 +116,14 @@ export type AppMenuContext = {
   toggleStackCollapsed: (id: string) => void;
   collapseAllStacks: () => void;
   expandAllStacks: () => void;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  goBack: () => void;
+  goForward: () => void;
+  emailActiveNote: (id?: string) => void;
+  toggleReminderDone: (id?: string) => void;
+  openCommandPalette: () => void;
+  isReminderCompleted: (id: string) => boolean;
 };
 
 export function runEditorCommand(command: EditorCommand) {
@@ -290,12 +298,26 @@ export function buildContextMenu(
             },
           ]
         : []),
+      ...(count === 1 && targets[0].reminder_at
+        ? [
+            {
+              label: ctx.isReminderCompleted(targets[0].id)
+                ? "Restore reminder"
+                : "Mark reminder done",
+              onSelect: () => ctx.toggleReminderDone(targets[0].id),
+            },
+          ]
+        : []),
       ...(count === 1
         ? [
             {
               label: "Copy note link",
               onSelect: () =>
                 void navigator.clipboard.writeText(noteAppLink(targets[0].id)),
+            },
+            {
+              label: "Email note…",
+              onSelect: () => ctx.emailActiveNote(targets[0].id),
             },
             {
               label: "Note info",
@@ -547,6 +569,11 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           onSelect: ctx.printActiveNote,
         },
         {
+          label: "Email Note…",
+          disabled: !ctx.activeNote,
+          onSelect: ctx.emailActiveNote,
+        },
+        {
           label: "Copy Note Link",
           disabled: !ctx.activeNote,
           onSelect: () => void ctx.copyActiveNoteLink(),
@@ -607,6 +634,19 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         { label: "Tags", onSelect: () => ctx.revealSidebarFlyout("tags") },
         { label: "Reminders", onSelect: () => { ctx.setSidebarFlyout(null); ctx.setFilter({ type: "reminders" }); } },
         { label: "Templates", onSelect: () => { ctx.setSidebarFlyout(null); ctx.setFilter({ type: "templates" }); } },
+        { type: "separator" },
+        {
+          label: "Back",
+          shortcut: "Ctrl/⌘ [",
+          disabled: !ctx.canGoBack,
+          onSelect: ctx.goBack,
+        },
+        {
+          label: "Forward",
+          shortcut: "Ctrl/⌘ ]",
+          disabled: !ctx.canGoForward,
+          onSelect: ctx.goForward,
+        },
         { type: "separator" },
         {
           label: ctx.paneLayout.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar",
@@ -678,6 +718,11 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: "Jump to…",
           shortcut: "Ctrl/⌘ J",
           onSelect: () => ctx.setShowJump(true),
+        },
+        {
+          label: "Command Palette…",
+          shortcut: "Ctrl/⌘ ⇧ P",
+          onSelect: ctx.openCommandPalette,
         },
         {
           label: "Snippets View",
@@ -826,6 +871,19 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: "Set Reminder",
           disabled: !ctx.activeNote,
           onSelect: () => ctx.setShowReminderMenu(true),
+        },
+        {
+          label:
+            ctx.activeNote && ctx.isReminderCompleted(ctx.activeNote.id)
+              ? "Restore Reminder"
+              : "Mark Reminder Done",
+          disabled: !ctx.activeNote?.reminder_at,
+          onSelect: () => ctx.toggleReminderDone(ctx.activeNote?.id),
+        },
+        {
+          label: "Email Note…",
+          disabled: !ctx.activeNote,
+          onSelect: ctx.emailActiveNote,
         },
         {
           label: `Merge ${ctx.selectedNoteIds.size} Notes`,

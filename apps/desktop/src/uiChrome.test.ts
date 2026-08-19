@@ -65,6 +65,20 @@ import {
   reorderById,
   sidebarFilterLabel,
   sidebarFlyoutTitle,
+  sameNavLocation,
+  pushNavHistory,
+  stepNavBack,
+  stepNavForward,
+  groupNotesByNotebook,
+  groupRemindersForList,
+  parseCompletedReminders,
+  toggleCompletedReminder,
+  parseSavedSearches,
+  upsertSavedSearch,
+  deleteSavedSearch,
+  parseLastSession,
+  noteMailtoHref,
+  paletteMatches,
 } from "./uiChrome.ts";
 
 describe("clampPaneWidth", () => {
@@ -616,5 +630,102 @@ describe("reminder snooze", () => {
     assert.equal(later.getHours(), 13);
     assert.equal(morning.getDate(), 19);
     assert.equal(morning.getHours(), 9);
+  });
+});
+
+describe("navigation history", () => {
+  it("pushes a new location and can step back and forward", () => {
+    const notes = { filter: { type: "all" }, noteId: null };
+    const invoice = { filter: { type: "all" }, noteId: "n1" };
+    const work = { filter: { type: "notebook", id: "nb" }, noteId: "n1" };
+    assert.equal(sameNavLocation(notes, { filter: { type: "all" }, noteId: null }), true);
+    assert.equal(sameNavLocation(notes, invoice), false);
+    const pushed = pushNavHistory([], notes, invoice);
+    assert.ok(pushed);
+    assert.equal(pushNavHistory(pushed.past, invoice, invoice), null);
+    const back = stepNavBack(pushed.past, invoice, []);
+    assert.ok(back);
+    assert.equal(back.current.noteId, null);
+    const forward = stepNavForward(back.past, back.current, back.future);
+    assert.ok(forward);
+    assert.equal(forward.current.noteId, "n1");
+    const notebook = pushNavHistory(forward.past, forward.current, work);
+    assert.ok(notebook);
+    assert.equal(notebook.future.length, 0);
+  });
+});
+
+describe("search grouping and saved searches", () => {
+  it("groups notes by notebook name", () => {
+    const groups = groupNotesByNotebook([
+      { notebook_name: "Work", id: "a" },
+      { notebook_name: "Home", id: "b" },
+      { notebook_name: "Work", id: "c" },
+    ]);
+    assert.deepEqual(
+      groups.map((group) => [group.label, group.notes.map((note) => note.id)]),
+      [
+        ["Work", ["a", "c"]],
+        ["Home", ["b"]],
+      ]
+    );
+  });
+
+  it("saves a named search and can remove it", () => {
+    const saved = upsertSavedSearch([], "tag:work", "Work");
+    assert.equal(saved[0].name, "Work");
+    assert.equal(saved[0].query, "tag:work");
+    assert.deepEqual(deleteSavedSearch(saved, saved[0].id), []);
+    assert.deepEqual(parseSavedSearches("["), []);
+  });
+});
+
+describe("reminder agenda", () => {
+  it("buckets overdue, today, tomorrow, later, and completed", () => {
+    const now = new Date("2026-08-18T12:00:00");
+    const groups = groupRemindersForList(
+      [
+        { id: "a", reminder_at: "2026-08-17T09:00:00" },
+        { id: "b", reminder_at: "2026-08-18T18:00:00" },
+        { id: "c", reminder_at: "2026-08-19T09:00:00" },
+        { id: "d", reminder_at: "2026-08-25T09:00:00" },
+        { id: "e", reminder_at: "2026-08-18T08:00:00" },
+      ],
+      ["e"],
+      now
+    );
+    assert.deepEqual(
+      groups.map((group) => [group.key, group.notes.map((note) => note.id)]),
+      [
+        ["overdue", ["a"]],
+        ["today", ["b"]],
+        ["tomorrow", ["c"]],
+        ["later", ["d"]],
+        ["completed", ["e"]],
+      ]
+    );
+    assert.deepEqual(toggleCompletedReminder(["e"], "e"), []);
+    assert.deepEqual(parseCompletedReminders(JSON.stringify(["x"])), ["x"]);
+  });
+});
+
+describe("session restore, email, and command palette", () => {
+  it("parses the last session and builds a mailto link", () => {
+    const session = parseLastSession(
+      JSON.stringify({ filter: { type: "notebook", id: "nb", name: "Work" }, noteId: "n1" })
+    );
+    assert.equal(session?.filter.type, "notebook");
+    assert.equal(session?.noteId, "n1");
+    assert.equal(parseLastSession("{"), null);
+    assert.match(noteMailtoHref("Hello", "Body text"), /^mailto:\?subject=Hello&body=Body%20text$/);
+  });
+
+  it("filters palette actions by label", () => {
+    const actions = [
+      { id: "new", label: "New note", hint: "Ctrl/⌘ N" },
+      { id: "search", label: "Search notes" },
+    ];
+    assert.equal(paletteMatches("sear", actions)[0].id, "search");
+    assert.equal(paletteMatches("", actions).length, 2);
   });
 });
