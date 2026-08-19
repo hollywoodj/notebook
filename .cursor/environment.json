@@ -1,0 +1,15 @@
+{
+  "name": "Notebook",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "notebook-api",
+      "command": "cargo run -p notebook-api"
+    },
+    {
+      "name": "web-ui",
+      "command": "cd apps/desktop && npm run dev"
+    }
+  ]
+}
