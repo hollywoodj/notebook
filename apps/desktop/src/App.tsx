@@ -162,7 +162,9 @@ import {
   pinTabById,
   closeAllUnpinnedTabIds,
   listCountLabel,
+  navCountLabel,
   sortNotes,
+  viewFilterKey,
   type DateRangeFacet,
   type ListView,
   type NoteListFacet,
@@ -207,6 +209,62 @@ const PALETTE_ACTIONS: PaletteAction[] = [
   { id: "shortcuts-overlay", label: "Keyboard shortcuts", hint: "Ctrl/⌘ /" },
   { id: "lock-note", label: "Lock / unlock note" },
 ];
+
+async function fetchNotesForFilter(
+  filter: ViewFilter,
+  searchScope: { id: string; name: string } | null
+): Promise<NoteSummary[]> {
+  let list: NoteSummary[] = [];
+  switch (filter.type) {
+    case "all":
+      list = await api.listNotes({ templates: false, archived: false });
+      break;
+    case "notebook":
+      list = await api.listNotes({ notebookId: filter.id, templates: false, archived: false });
+      break;
+    case "tag":
+      list = await api.listNotes({ tagId: filter.id, templates: false, archived: false });
+      break;
+    case "shortcuts":
+      list = await api.listShortcuts();
+      break;
+    case "reminders":
+      list = (await api.listNotes({ templates: false, archived: false })).filter((note) => note.reminder_at);
+      break;
+    case "templates":
+      list = await api.listNotes({ templates: true });
+      break;
+    case "trash":
+      list = await api.listNotes({ trash: true });
+      break;
+    case "archived":
+      list = await api.listNotes({ templates: false, archived: true });
+      break;
+    case "search": {
+      const parsed = parseSearchQuery(filter.query);
+      if (parsed.text) {
+        list = (await api.search(parsed.text)).notes;
+      } else {
+        list = await api.listNotes({ templates: false, archived: false });
+      }
+      list = list.filter((note) => noteMatchesSearchOperators(note, parsed));
+      if (searchScope) {
+        list = list.filter((note) => note.notebook_id === searchScope.id);
+      }
+      break;
+    }
+  }
+  return list;
+}
+
+function sortedNotesForFilter(
+  list: NoteSummary[],
+  filter: ViewFilter,
+  sortBy: Preferences["sort_by"],
+  sortDescending: boolean
+) {
+  return sortNotes(list, filter.type === "reminders" ? "reminder" : sortBy, Boolean(sortDescending));
+}
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -332,13 +390,8 @@ export default function App() {
       typeof localStorage === "undefined" ? null : localStorage.getItem(PANE_LAYOUT_KEY)
     )
   );
-  const [counts, setCounts] = useState<SidebarCounts>({
-    notes: 0,
-    reminders: 0,
-    trash: 0,
-    templates: 0,
-    shortcuts: 0,
-  });
+  const [counts, setCounts] = useState<SidebarCounts | null>(null);
+  const [notesFilterKey, setNotesFilterKey] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const sidebarFilterRef = useRef<HTMLInputElement>(null);
@@ -364,6 +417,8 @@ export default function App() {
   const navCurrentRef = useRef<NavLocation>({ filter: { type: "all" }, noteId: null });
   const sessionReadyRef = useRef(false);
   const hoverTimerRef = useRef<number | null>(null);
+  const notesRequestRef = useRef(0);
+  const lastListCountRef = useRef("");
 
   const openSettings = (section: SettingsSection = "application") => {
     setSettingsSection(section);
@@ -385,13 +440,7 @@ export default function App() {
       api.listTags(),
       api.listShortcuts(),
       api.listNotes({ templates: true }),
-      api.sidebarCounts().catch(() => ({
-        notes: 0,
-        reminders: 0,
-        trash: 0,
-        templates: 0,
-        shortcuts: 0,
-      })),
+      api.sidebarCounts().catch(() => null),
     ]);
     setNotebooks(nb);
     setStacks(st);
@@ -399,7 +448,7 @@ export default function App() {
     setShortcutIds(new Set(sc.map((n) => n.id)));
     setShortcutNotes(sc);
     setTemplates(tm);
-    setCounts(sidebarCounts);
+    if (sidebarCounts) setCounts(sidebarCounts);
   }, []);
 
   const persistPaneLayout = (next: typeof paneLayout) => {
@@ -497,52 +546,12 @@ export default function App() {
   };
 
   const refreshNotes = useCallback(async () => {
-    let list: NoteSummary[] = [];
-    switch (filter.type) {
-      case "all":
-        list = await api.listNotes({ templates: false, archived: false });
-        break;
-      case "notebook":
-        list = await api.listNotes({ notebookId: filter.id, templates: false, archived: false });
-        break;
-      case "tag":
-        list = await api.listNotes({ tagId: filter.id, templates: false, archived: false });
-        break;
-      case "shortcuts":
-        list = await api.listShortcuts();
-        break;
-      case "reminders":
-        list = (await api.listNotes({ templates: false, archived: false })).filter((note) => note.reminder_at);
-        break;
-      case "templates":
-        list = await api.listNotes({ templates: true });
-        break;
-      case "trash":
-        list = await api.listNotes({ trash: true });
-        break;
-      case "archived":
-        list = await api.listNotes({ templates: false, archived: true });
-        break;
-      case "search": {
-        const parsed = parseSearchQuery(filter.query);
-        if (parsed.text) {
-          list = (await api.search(parsed.text)).notes;
-        } else {
-          list = await api.listNotes({ templates: false, archived: false });
-        }
-        list = list.filter((note) => noteMatchesSearchOperators(note, parsed));
-        if (searchScope) {
-          list = list.filter((note) => note.notebook_id === searchScope.id);
-        }
-        break;
-      }
-    }
-    const sorted = sortNotes(
-      list,
-      filter.type === "reminders" ? "reminder" : prefs.sort_by,
-      Boolean(prefs.sort_descending)
-    );
-    setNotes(sorted);
+    const requestId = ++notesRequestRef.current;
+    const requestKey = viewFilterKey(filter, searchScope?.id);
+    const list = await fetchNotesForFilter(filter, searchScope);
+    if (requestId !== notesRequestRef.current) return;
+    setNotes(sortedNotesForFilter(list, filter, prefs.sort_by, Boolean(prefs.sort_descending)));
+    setNotesFilterKey(requestKey);
   }, [filter, prefs.sort_by, prefs.sort_descending, searchScope]);
 
   const loadNote = useCallback(async (id: string, tabId?: string) => {
@@ -580,7 +589,7 @@ export default function App() {
     noteId: activeNoteRef.current?.id ?? null,
   });
 
-  const applyNavLocation = (location: NavLocation) => {
+  const applyNavLocation = (location: NavLocation): ViewFilter => {
     ignoreNavRef.current = true;
     let nextFilter: ViewFilter = { type: "all" };
     if (location.filter.type === "notebook") {
@@ -608,13 +617,14 @@ export default function App() {
         navCurrentRef.current = location;
         ignoreNavRef.current = false;
       });
-      return;
+      return nextFilter;
     }
     skipNextSave.current = true;
     setActiveNote(null);
     setSelectedNoteIds(new Set());
     lastClickedNoteId.current = null;
     ignoreNavRef.current = false;
+    return nextFilter;
   };
 
   const goBack = () => {
@@ -879,22 +889,35 @@ export default function App() {
             api.storageInfo(),
             api.templateCatalog(),
           ]);
-          setPrefs({ ...defaultPreferences, ...loadedPrefs });
+          const mergedPrefs = { ...defaultPreferences, ...loadedPrefs };
+          setPrefs(mergedPrefs);
           applyTheme(loadedPrefs.theme);
           setAccount(loadedAccount);
           setStorage(loadedStorage);
           setCatalog(loadedCatalog);
-          setReady(true);
-          await refreshMeta();
+          let initialFilter: ViewFilter = { type: "all" };
           if (loadedPrefs.startup_view === "shortcuts") {
-            setFilter({ type: "shortcuts" });
+            initialFilter = { type: "shortcuts" };
+            setFilter(initialFilter);
           } else {
             const session = parseLastSession(
               typeof localStorage === "undefined" ? null : localStorage.getItem(LAST_SESSION_KEY)
             );
-            if (session) applyNavLocation(session);
+            if (session) initialFilter = applyNavLocation(session);
           }
+          await refreshMeta();
+          const list = await fetchNotesForFilter(initialFilter, null);
+          setNotes(
+            sortedNotesForFilter(
+              list,
+              initialFilter,
+              mergedPrefs.sort_by,
+              Boolean(mergedPrefs.sort_descending)
+            )
+          );
+          setNotesFilterKey(viewFilterKey(initialFilter));
           sessionReadyRef.current = true;
+          setReady(true);
           return;
         } catch {
           await new Promise((r) => setTimeout(r, 200));
@@ -1662,6 +1685,11 @@ export default function App() {
   }
 
   const viewTitle = viewTitleForFilter(filter);
+  const listLoaded = notesFilterKey === viewFilterKey(filter, searchScope?.id);
+  const listCount = listLoaded
+    ? listCountLabel(visibleNotes.length, notes.length)
+    : lastListCountRef.current;
+  if (listLoaded) lastListCountRef.current = listCount;
 
   const isShortcut = activeNote ? shortcutIds.has(activeNote.id) : false;
   const allSelectedPinned =
@@ -2203,7 +2231,7 @@ export default function App() {
                 >
                   <Icon.Notes size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Notes</span>
-                  <span className="nav-count">{counts.notes}</span>
+                  <span className="nav-count">{navCountLabel(counts?.notes)}</span>
                 </button>
               );
             }
@@ -2242,7 +2270,7 @@ export default function App() {
                 >
                   <Icon.Reminder size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Reminders</span>
-                  <span className="nav-count">{counts.reminders}</span>
+                  <span className="nav-count">{navCountLabel(counts?.reminders)}</span>
                 </button>
               ) : null;
             }
@@ -2297,7 +2325,7 @@ export default function App() {
                 >
                   <Icon.Templates size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Templates</span>
-                  <span className="nav-count">{counts.templates}</span>
+                  <span className="nav-count">{navCountLabel(counts?.templates)}</span>
                 </button>
               ) : null;
             }
@@ -2356,7 +2384,7 @@ export default function App() {
                 >
                   <Icon.Trash size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Trash</span>
-                  <span className="nav-count">{counts.trash}</span>
+                  <span className="nav-count">{navCountLabel(counts?.trash)}</span>
                 </button>
               ) : null;
             }
@@ -2611,7 +2639,7 @@ export default function App() {
                       }}
                     >
                       <span className="nav-label">#{tag.name}</span>
-                      <span className="nav-count">{tag.note_count ?? 0}</span>
+                      <span className="nav-count">{navCountLabel(tag.note_count)}</span>
                     </button>
                   ))
                 ))}
@@ -2758,7 +2786,7 @@ export default function App() {
           <div>
             <h2>{viewTitle}</h2>
             <span className="count" title="Notes in this view">
-              {listCountLabel(visibleNotes.length, notes.length)}
+              {listCount}
             </span>
           </div>
           <div className="panel-tools">
@@ -3157,14 +3185,14 @@ export default function App() {
               ))}
             </div>
           ))}
-          {notes.length === 0 && (
+          {listLoaded && notes.length === 0 && (
             <EmptyListState
               filter={filter}
               onCreate={() => void createNote()}
               onBrowseTemplates={() => setShowGallery(true)}
             />
           )}
-          {notes.length > 0 && visibleNotes.length === 0 && (
+          {listLoaded && notes.length > 0 && visibleNotes.length === 0 && (
             <div className="empty-state compact">No notes match these filters.</div>
           )}
         </div>

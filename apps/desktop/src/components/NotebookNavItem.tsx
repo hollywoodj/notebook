@@ -1,5 +1,6 @@
 import type { DragEvent, MouseEvent } from "react";
 import { Notebook } from "../api";
+import { navCountLabel } from "../uiChrome";
 import { Icon } from "./Icons";
 
 export function NotebookNavItem({
@@ -41,7 +42,7 @@ export function NotebookNavItem({
           </span>
         ) : null}
       </span>
-      <span className="nav-count">{notebook.note_count ?? 0}</span>
+      <span className="nav-count">{navCountLabel(notebook.note_count)}</span>
     </button>
   );
 }
