@@ -132,7 +132,22 @@ describe("Evernote sidebar chrome", () => {
     assert.match(appSource, /listCountLabel\(visibleNotes\.length, notes\.length\)/);
     assert.match(appSource, /\{shortcutNotes\.length\}/);
     assert.match(appSource, /\{notebooks\.length\}/);
-    assert.match(navSource, /notebook\.note_count \?\? 0/);
+    assert.match(navSource, /navCountLabel\(notebook\.note_count\)/);
+  });
+
+  it("does not flash a zero notes count before the current view has loaded", () => {
+    const start = appSource.indexOf("const health = await api.health()");
+    const end = appSource.indexOf('setError("Could not connect');
+    assert.ok(start > 0 && end > start);
+    const boot = appSource.slice(start, end);
+    const readyAt = boot.indexOf("setReady(true)");
+    assert.ok(readyAt > 0);
+    assert.ok(boot.lastIndexOf("await refreshMeta()", readyAt) >= 0);
+    assert.ok(boot.lastIndexOf("setNotes(", readyAt) >= 0);
+    assert.ok(boot.lastIndexOf("setNotesFilterKey(", readyAt) >= 0);
+    assert.match(appSource, /notesFilterKey === viewFilterKey\(filter, searchScope\?\.id\)/);
+    assert.match(appSource, /lastListCountRef\.current/);
+    assert.match(appSource, /navCountLabel\(counts\?\.notes\)/);
   });
 });
 

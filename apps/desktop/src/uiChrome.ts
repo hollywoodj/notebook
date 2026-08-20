@@ -1600,7 +1600,26 @@ export function plaintextFromClipboardHtml(html: string): string {
   return htmlToPlainText(html).replace(/\n/g, "<br>");
 }
 
-export function listCountLabel(visible: number, total: number): string {
+export function viewFilterKey(
+  filter: { type: string; id?: string; query?: string },
+  searchScopeId?: string | null
+): string {
+  const scope = searchScopeId ? `@${searchScopeId}` : "";
+  if (filter.type === "notebook" || filter.type === "tag") {
+    return `${filter.type}:${filter.id || ""}${scope}`;
+  }
+  if (filter.type === "search") {
+    return `search:${filter.query || ""}${scope}`;
+  }
+  return `${filter.type}${scope}`;
+}
+
+export function navCountLabel(count: number | null | undefined): string {
+  return typeof count === "number" && Number.isFinite(count) ? String(Math.round(count)) : "";
+}
+
+export function listCountLabel(visible: number, total: number, loaded = true): string {
+  if (!loaded) return "";
   const count = visible === 1 ? "1 note" : `${visible} notes`;
   if (visible === total || total <= 0) return count;
   return `${count} of ${total}`;

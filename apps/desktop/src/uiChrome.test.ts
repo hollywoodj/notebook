@@ -94,6 +94,8 @@ import {
   groupNotesByReminder,
   noteIdByOffset,
   listCountLabel,
+  navCountLabel,
+  viewFilterKey,
   sortNotes,
   nextLineHeight,
   parseLineHeight,
@@ -837,6 +839,16 @@ describe("pass 12 chrome helpers", () => {
     assert.equal(noteIdByOffset(notes, null, -1), "d");
     assert.equal(listCountLabel(1, 1), "1 note");
     assert.equal(listCountLabel(5, 12), "5 notes of 12");
+    assert.equal(listCountLabel(0, 0), "0 notes");
+    assert.equal(listCountLabel(0, 0, false), "");
+    assert.equal(listCountLabel(3, 3, false), "");
+    assert.equal(navCountLabel(undefined), "");
+    assert.equal(navCountLabel(null), "");
+    assert.equal(navCountLabel(0), "0");
+    assert.equal(navCountLabel(12), "12");
+    assert.equal(viewFilterKey({ type: "all" }), "all");
+    assert.equal(viewFilterKey({ type: "notebook", id: "nb1" }, "scope"), "notebook:nb1@scope");
+    assert.equal(viewFilterKey({ type: "search", query: "hello" }), "search:hello");
   });
 
   it("keeps pinned notes first when reversing sort", () => {
