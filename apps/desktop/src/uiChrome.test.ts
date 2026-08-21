@@ -96,6 +96,9 @@ import {
   listCountLabel,
   navCountLabel,
   navIconTitle,
+  knownViewNoteCount,
+  displayedListCount,
+  stickyNavCount,
   viewFilterKey,
   sortNotes,
   nextLineHeight,
@@ -853,6 +856,56 @@ describe("pass 12 chrome helpers", () => {
     assert.equal(viewFilterKey({ type: "all" }), "all");
     assert.equal(viewFilterKey({ type: "notebook", id: "nb1" }, "scope"), "notebook:nb1@scope");
     assert.equal(viewFilterKey({ type: "search", query: "hello" }), "search:hello");
+    assert.equal(
+      knownViewNoteCount(
+        { type: "notebook", id: "work" },
+        [{ id: "work", note_count: 12 }],
+        [],
+        null
+      ),
+      12
+    );
+    assert.equal(
+      displayedListCount({
+        loaded: false,
+        visible: 0,
+        total: 0,
+        known: 12,
+        lastLabel: "0 notes",
+      }),
+      "12 notes"
+    );
+    assert.equal(
+      displayedListCount({
+        loaded: true,
+        visible: 0,
+        total: 0,
+        known: 12,
+        lastLabel: "0 notes",
+      }),
+      "12 notes"
+    );
+    assert.equal(
+      displayedListCount({
+        loaded: true,
+        visible: 0,
+        total: 0,
+        known: 0,
+      }),
+      "0 notes"
+    );
+    assert.equal(
+      displayedListCount({
+        loaded: false,
+        visible: 0,
+        total: 0,
+        lastLabel: "0 notes",
+      }),
+      ""
+    );
+    assert.equal(stickyNavCount(0, 4), 4);
+    assert.equal(stickyNavCount(6, 4), 6);
+    assert.equal(stickyNavCount(0, null), undefined);
   });
 
   it("keeps pinned notes first when reversing sort", () => {

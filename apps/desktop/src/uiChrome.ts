@@ -1633,6 +1633,74 @@ export function listCountLabel(visible: number, total: number, loaded = true): s
   return `${count} of ${total}`;
 }
 
+export function knownViewNoteCount(
+  filter: { type: string; id?: string },
+  notebooks: { id: string; note_count?: number }[],
+  tags: { id: string; note_count?: number }[],
+  counts: {
+    notes: number;
+    reminders: number;
+    templates: number;
+    trash: number;
+    shortcuts?: number;
+  } | null,
+  shortcutCount?: number
+): number | undefined {
+  switch (filter.type) {
+    case "notebook": {
+      const notebook = notebooks.find((item) => item.id === filter.id);
+      return typeof notebook?.note_count === "number" ? notebook.note_count : undefined;
+    }
+    case "tag": {
+      const tag = tags.find((item) => item.id === filter.id);
+      return typeof tag?.note_count === "number" ? tag.note_count : undefined;
+    }
+    case "all":
+      return typeof counts?.notes === "number" ? counts.notes : undefined;
+    case "reminders":
+      return typeof counts?.reminders === "number" ? counts.reminders : undefined;
+    case "templates":
+      return typeof counts?.templates === "number" ? counts.templates : undefined;
+    case "trash":
+      return typeof counts?.trash === "number" ? counts.trash : undefined;
+    case "shortcuts":
+      if (typeof shortcutCount === "number") return shortcutCount;
+      return typeof counts?.shortcuts === "number" ? counts.shortcuts : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/** Prefer a known sidebar/metadata count over a stale "0 notes" while a view loads. */
+export function displayedListCount(args: {
+  loaded: boolean;
+  visible: number;
+  total: number;
+  known?: number | null;
+  lastLabel?: string;
+}): string {
+  const known =
+    typeof args.known === "number" && Number.isFinite(args.known) ? args.known : null;
+  if (args.loaded) {
+    if (args.total === 0 && known != null && known > 0) {
+      return listCountLabel(known, known, true);
+    }
+    return listCountLabel(args.visible, args.total, true);
+  }
+  if (known != null) return listCountLabel(known, known, true);
+  const last = args.lastLabel || "";
+  return last === "0 notes" ? "" : last;
+}
+
+export function stickyNavCount(
+  current: number,
+  previous: number | null | undefined
+): number | undefined {
+  if (current > 0) return current;
+  if (typeof previous === "number") return previous;
+  return undefined;
+}
+
 export function sortNotes<
   T extends {
     is_pinned: boolean;

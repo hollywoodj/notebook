@@ -130,9 +130,9 @@ describe("Evernote sidebar chrome", () => {
 
   it("counts the current view rather than repeating the all-notes total", () => {
     assert.match(appSource, /title="Notes in this view"/);
-    assert.match(appSource, /listCountLabel\(visibleNotes\.length, notes\.length\)/);
-    assert.match(appSource, /\{shortcutNotes\.length\}/);
-    assert.match(appSource, /\{notebooks\.length\}/);
+    assert.match(appSource, /displayedListCount\(/);
+    assert.match(appSource, /knownViewNoteCount\(/);
+    assert.match(appSource, /stickyNavCount\(notebooks\.length/);
     assert.match(navSource, /navCountLabel\(notebook\.note_count\)/);
   });
 
@@ -149,6 +149,8 @@ describe("Evernote sidebar chrome", () => {
     assert.match(appSource, /notesFilterKey === viewFilterKey\(filter, searchScope\?\.id\)/);
     assert.match(appSource, /lastListCountRef\.current/);
     assert.match(appSource, /navCountLabel\(counts\?\.notes\)/);
+    assert.match(appSource, /knownViewNoteCount\(/);
+    assert.match(appSource, /displayedListCount\(/);
   });
 });
 
