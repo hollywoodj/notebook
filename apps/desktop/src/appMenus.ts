@@ -1395,11 +1395,6 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           disabled: !ctx.activeNote,
           onSelect: () => runEditorCommand({ type: "tasks", action: "uncheckAll" }),
         },
-        {
-          label: "Insert Checkbox",
-          disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "inlineCheckbox" }),
-        },
         { type: "separator" },
         {
           label: "Quote",

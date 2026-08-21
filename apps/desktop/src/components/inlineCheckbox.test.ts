@@ -18,26 +18,30 @@ describe("checkboxShortcutKind", () => {
 });
 
 describe("note list and checkbox commands", () => {
-  it("keeps checklist and checkbox next to bullets and numbers in the toolbar", () => {
+  it("groups bullets, numbers, and checklist together and omits the extra checkbox control", () => {
     const bullets = editorSource.indexOf('"Bulleted list"');
     const numbers = editorSource.indexOf('"Numbered list"');
     const checklist = editorSource.indexOf('"Checklist"');
     const checkbox = editorSource.indexOf('"Checkbox"');
+    const align = editorSource.indexOf('"Align left"');
+    const quote = editorSource.indexOf('"Quote"');
     assert.ok(bullets > 0);
     assert.ok(numbers > bullets);
     assert.ok(checklist > numbers);
-    assert.ok(checkbox > checklist);
+    assert.equal(checkbox, -1);
+    assert.ok(align > checklist);
+    assert.ok(quote > align);
+    assert.match(editorSource, /toolbar-list-group/);
     assert.match(editorSource, /toggleTaskList/);
-    assert.match(editorSource, /insertInlineCheckbox/);
     assert.match(editorSource, /InlineCheckbox/);
     assert.match(editorSource, /toolbar-overflow/);
     assert.match(editorSource, /setFontFamily/);
     assert.match(editorSource, /Open link/);
   });
 
-  it("exposes checklist, insert checkbox, quote, code, and justify in Format", () => {
+  it("exposes checklist, quote, code, and justify in Format without a redundant checkbox item", () => {
     assert.match(menuSource, /label: "Checklist"/);
-    assert.match(menuSource, /label: "Insert Checkbox"/);
+    assert.equal(menuSource.includes('label: "Insert Checkbox"'), false);
     assert.match(menuSource, /label: "Quote"/);
     assert.match(menuSource, /label: "Code Block"/);
     assert.match(menuSource, /label: "Inline Code"/);

@@ -1141,18 +1141,28 @@ export function noteMatchesSearchOperators(
   return true;
 }
 
-function decodeHtmlEntities(value: string): string {
+export function decodeXmlEntities(value: string): string {
   return value
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'");
+    .replace(/&apos;/gi, "'")
+    .replace(/&#39;/gi, "'")
+    .replace(/&#x27;/gi, "'");
+}
+
+export function repairImportedHtml(html: string): string {
+  return html
+    .replace(/&amp;apos;/gi, "'")
+    .replace(/&amp;nbsp;/gi, "&nbsp;")
+    .replace(/&amp;#39;/gi, "'")
+    .replace(/&amp;#x27;/gi, "'");
 }
 
 export function htmlToPlainText(html: string): string {
-  return decodeHtmlEntities(
+  return decodeXmlEntities(
     html
       .replace(/<style[\s\S]*?<\/style>/gi, "")
       .replace(/<script[\s\S]*?<\/script>/gi, "")

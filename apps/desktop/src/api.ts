@@ -1,3 +1,5 @@
+import { decodeXmlEntities, repairImportedHtml } from "./uiChrome";
+
 export interface Notebook {
   id: string;
   user_id: string;
@@ -198,10 +200,25 @@ const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8799";
 export const attachmentUrl = (id: string) =>
   `${API_BASE}/api/v1/attachments/${encodeURIComponent(id)}`;
 
-function hydrateAttachmentUrls(note: Note): Note {
+function repairImportedNote<T extends { title?: string; snippet?: string; content?: string; content_plain?: string }>(
+  note: T
+): T {
   return {
     ...note,
-    content: note.content.replace(
+    ...(note.title !== undefined ? { title: decodeXmlEntities(note.title) } : {}),
+    ...(note.snippet !== undefined ? { snippet: decodeXmlEntities(note.snippet) } : {}),
+    ...(note.content_plain !== undefined
+      ? { content_plain: decodeXmlEntities(note.content_plain) }
+      : {}),
+    ...(note.content !== undefined ? { content: repairImportedHtml(note.content) } : {}),
+  };
+}
+
+function hydrateAttachmentUrls(note: Note): Note {
+  const repaired = repairImportedNote(note);
+  return {
+    ...repaired,
+    content: repaired.content.replace(
       /notebook-attachment:\/\/([0-9a-f-]{36})/gi,
       (_match, id: string) => attachmentUrl(id)
     ),
@@ -298,7 +315,9 @@ export const api = {
     if (params.archived !== undefined) qs.set("archived", String(params.archived));
     if (params.templates !== undefined) qs.set("templates", String(params.templates));
     const query = qs.toString();
-    return request<NoteSummary[]>(`/api/v1/notes${query ? `?${query}` : ""}`);
+    return request<NoteSummary[]>(`/api/v1/notes${query ? `?${query}` : ""}`).then(
+      (notes) => notes.map(repairImportedNote)
+    );
   },
 
   getNote: (id: string) =>
@@ -366,9 +385,15 @@ export const api = {
   search: (q: string) =>
     request<{ notes: NoteSummary[]; total: number }>(
       `/api/v1/search?q=${encodeURIComponent(q)}`
-    ),
+    ).then((result) => ({
+      ...result,
+      notes: result.notes.map(repairImportedNote),
+    })),
 
-  listShortcuts: () => request<NoteSummary[]>("/api/v1/shortcuts"),
+  listShortcuts: () =>
+    request<NoteSummary[]>("/api/v1/shortcuts").then((notes) =>
+      notes.map(repairImportedNote)
+    ),
   addShortcut: (noteId: string) =>
     request(`/api/v1/shortcuts/${noteId}`, { method: "POST" }),
   removeShortcut: (noteId: string) =>

@@ -984,16 +984,15 @@ export function NoteEditor({
     { id: "strike", label: "Strikethrough", action: () => editor.chain().focus().toggleStrike().run() },
     { id: "highlight", label: "Highlight", action: () => editor.chain().focus().toggleHighlight().run() },
     { id: "color", label: "Text color", action: () => setShowTextColors(true) },
+    { id: "bullets", label: "Bulleted list", action: () => editor.chain().focus().toggleBulletList().run() },
+    { id: "numbers", label: "Numbered list", action: () => editor.chain().focus().toggleOrderedList().run() },
+    { id: "checklist", label: "Checklist", action: () => editor.chain().focus().toggleTaskList().run() },
     { id: "align-left", label: "Align left", action: () => editor.chain().focus().setTextAlign("left").run() },
     { id: "align-center", label: "Align center", action: () => editor.chain().focus().setTextAlign("center").run() },
     { id: "align-right", label: "Align right", action: () => editor.chain().focus().setTextAlign("right").run() },
     { id: "justify", label: "Justify", action: () => editor.chain().focus().setTextAlign("justify").run() },
     { id: "outdent", label: "Decrease indent", action: () => applyIndent(editor, -1) },
     { id: "indent", label: "Increase indent", action: () => applyIndent(editor, 1) },
-    { id: "bullets", label: "Bulleted list", action: () => editor.chain().focus().toggleBulletList().run() },
-    { id: "numbers", label: "Numbered list", action: () => editor.chain().focus().toggleOrderedList().run() },
-    { id: "checklist", label: "Checklist", action: () => editor.chain().focus().toggleTaskList().run() },
-    { id: "checkbox", label: "Checkbox", action: () => editor.chain().focus().insertInlineCheckbox(false).run() },
     { id: "quote", label: "Quote", action: () => editor.chain().focus().toggleBlockquote().run() },
     { id: "code", label: "Code block", action: () => editor.chain().focus().toggleCodeBlock().run() },
     { id: "inline-code", label: "Inline code", action: () => editor.chain().focus().toggleCode().run() },
@@ -1027,10 +1026,6 @@ export function NoteEditor({
     { label: "Bulleted list", onSelect: () => editor.chain().focus().toggleBulletList().run() },
     { label: "Numbered list", onSelect: () => editor.chain().focus().toggleOrderedList().run() },
     { label: "Checklist", onSelect: () => editor.chain().focus().toggleTaskList().run() },
-    {
-      label: "Checkbox",
-      onSelect: () => editor.chain().focus().insertInlineCheckbox(false).run(),
-    },
     { type: "separator" },
     { label: "Align left", onSelect: () => editor.chain().focus().setTextAlign("left").run() },
     { label: "Align center", onSelect: () => editor.chain().focus().setTextAlign("center").run() },
@@ -1486,6 +1481,27 @@ export function NoteEditor({
         </div>
         )}
         <span className="toolbar-sep" />
+        <span className="toolbar-list-group" role="group" aria-label="Lists">
+          {wrap("bullets", btn(
+            "Bulleted list",
+            () => editor.chain().focus().toggleBulletList().run(),
+            editor.isActive("bulletList"),
+            <Icon.List size={16} />
+          ))}
+          {wrap("numbers", btn(
+            "Numbered list",
+            () => editor.chain().focus().toggleOrderedList().run(),
+            editor.isActive("orderedList"),
+            <Icon.Ordered size={16} />
+          ))}
+          {wrap("checklist", btn(
+            "Checklist",
+            () => editor.chain().focus().toggleTaskList().run(),
+            editor.isActive("taskList"),
+            <Icon.Checklist size={16} />
+          ))}
+        </span>
+        <span className="toolbar-sep" />
         {wrap("align-left", btn(
           "Align left",
           () => editor.chain().focus().setTextAlign("left").run(),
@@ -1523,30 +1539,6 @@ export function NoteEditor({
           <Icon.Indent size={16} />
         ))}
         <span className="toolbar-sep" />
-        {wrap("bullets", btn(
-          "Bulleted list",
-          () => editor.chain().focus().toggleBulletList().run(),
-          editor.isActive("bulletList"),
-          <Icon.List size={16} />
-        ))}
-        {wrap("numbers", btn(
-          "Numbered list",
-          () => editor.chain().focus().toggleOrderedList().run(),
-          editor.isActive("orderedList"),
-          <Icon.Ordered size={16} />
-        ))}
-        {wrap("checklist", btn(
-          "Checklist",
-          () => editor.chain().focus().toggleTaskList().run(),
-          editor.isActive("taskList"),
-          <Icon.Checklist size={16} />
-        ))}
-        {wrap("checkbox", btn(
-          "Checkbox",
-          () => editor.chain().focus().insertInlineCheckbox(false).run(),
-          false,
-          <Icon.Check size={16} />
-        ))}
         {wrap("quote", btn(
           "Quote",
           () => editor.chain().focus().toggleBlockquote().run(),
