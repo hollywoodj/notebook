@@ -170,7 +170,7 @@ describe("Evernote sidebar chrome", () => {
 
   it("repairs imported notes without pulling in the editor chrome module", () => {
     const apiSource = readFileSync(new URL("./api.ts", import.meta.url), "utf8");
-    assert.match(apiSource, /from "\.\/htmlEntities"/);
+    assert.match(apiSource, /from "\.\/htmlEntities\.ts"/);
     assert.equal(apiSource.includes('from "./uiChrome"'), false);
   });
 });

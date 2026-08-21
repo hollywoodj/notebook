@@ -1,4 +1,4 @@
-import { decodeXmlEntities, repairImportedHtml } from "./htmlEntities";
+import { decodeXmlEntities, repairImportedHtml } from "./htmlEntities.ts";
 
 export interface Notebook {
   id: string;
