@@ -4,7 +4,9 @@ export const LIST_MIN = 220;
 export const LIST_MAX = 560;
 export const DEFAULT_SIDEBAR_WIDTH = 248;
 export const DEFAULT_LIST_WIDTH = 320;
-/** Sidebar nav glyphs. Evernote’s are ~20px; 16px reads undersized next to the labels. */
+/** Evernote’s collapsed left sidebar is a 56px icon rail. */
+export const SIDEBAR_RAIL_WIDTH = 56;
+/** Sidebar nav glyphs. Evernote’s are ~20px; 16px reads undersized in the rail. */
 export const SIDEBAR_NAV_ICON_SIZE = 20;
 export const PANE_LAYOUT_KEY = "notebook.paneLayout";
 export const NOTE_DRAG_TYPE = "application/x-notebook-notes";
@@ -1616,6 +1618,12 @@ export function viewFilterKey(
 
 export function navCountLabel(count: number | null | undefined): string {
   return typeof count === "number" && Number.isFinite(count) ? String(Math.round(count)) : "";
+}
+
+export function navIconTitle(label: string, count?: number | null): string {
+  return typeof count === "number" && Number.isFinite(count)
+    ? `${label} (${Math.round(count)})`
+    : label;
 }
 
 export function listCountLabel(visible: number, total: number, loaded = true): string {

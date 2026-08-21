@@ -95,6 +95,7 @@ import {
   noteIdByOffset,
   listCountLabel,
   navCountLabel,
+  navIconTitle,
   viewFilterKey,
   sortNotes,
   nextLineHeight,
@@ -846,6 +847,9 @@ describe("pass 12 chrome helpers", () => {
     assert.equal(navCountLabel(null), "");
     assert.equal(navCountLabel(0), "0");
     assert.equal(navCountLabel(12), "12");
+    assert.equal(navIconTitle("Notes"), "Notes");
+    assert.equal(navIconTitle("Notes", 12), "Notes (12)");
+    assert.equal(navIconTitle("Notebooks", 0), "Notebooks (0)");
     assert.equal(viewFilterKey({ type: "all" }), "all");
     assert.equal(viewFilterKey({ type: "notebook", id: "nb1" }, "scope"), "notebook:nb1@scope");
     assert.equal(viewFilterKey({ type: "search", query: "hello" }), "search:hello");

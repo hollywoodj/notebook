@@ -192,7 +192,10 @@ button {
   grid-template-columns: 0 0 0 0 minmax(0, 1fr);
 }
 
-.app-shell.focus-mode {
+.app-shell.focus-mode,
+.app-shell.focus-mode.sidebar-rail,
+.app-shell.focus-mode.sidebar-rail.list-collapsed,
+.app-shell.focus-mode.sidebar-rail.sidebar-collapsed {
   grid-template-columns: minmax(0, 1fr);
 }
 
@@ -473,6 +476,92 @@ button {
   flex-direction: column;
   min-height: 0;
   position: relative;
+}
+
+/*
+ * Evernote’s left sidebar is a 56px icon rail. Labels and counts live in
+ * tooltips and in the notebooks/tags/shortcuts flyout beside the rail.
+ * The rail never expands; Hide Sidebar is the way to tuck it away.
+ */
+.app-shell.sidebar-rail {
+  grid-template-columns: var(--sidebar-rail-width, 56px) 0 var(--list-width, 320px) 5px minmax(0, 1fr);
+}
+
+.app-shell.sidebar-rail.sidebar-collapsed {
+  grid-template-columns: 0 0 var(--list-width, 320px) 5px minmax(0, 1fr);
+}
+
+.app-shell.sidebar-rail.list-collapsed {
+  grid-template-columns: var(--sidebar-rail-width, 56px) 0 0 0 minmax(0, 1fr);
+}
+
+.app-shell.sidebar-rail.sidebar-collapsed.list-collapsed {
+  grid-template-columns: 0 0 0 0 minmax(0, 1fr);
+}
+
+.app-shell.sidebar-rail .sidebar {
+  width: var(--sidebar-rail-width, 56px);
+  z-index: 13;
+}
+
+.app-shell.sidebar-rail .sidebar-splitter {
+  display: none;
+}
+
+.app-shell.sidebar-rail .sidebar-nav .nav-label,
+.app-shell.sidebar-rail .sidebar-nav .nav-count,
+.app-shell.sidebar-rail .sidebar-nav .empty-state.compact,
+.app-shell.sidebar-rail .sidebar-account .account-copy {
+  display: none;
+}
+
+.app-shell.sidebar-rail .sidebar-toolbar {
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0 6px;
+}
+
+.app-shell.sidebar-rail .sidebar-toolbar .menu-popover.right {
+  left: calc(100% + 8px);
+  right: auto;
+  top: 0;
+}
+
+.app-shell.sidebar-rail .sidebar-nav {
+  padding: 6px 0 12px;
+  overflow-y: auto;
+  scrollbar-gutter: auto;
+  scrollbar-width: none;
+}
+
+.app-shell.sidebar-rail .sidebar-nav::-webkit-scrollbar {
+  width: 0;
+}
+
+.app-shell.sidebar-rail .sidebar-nav .nav-item {
+  justify-content: center;
+  gap: 0;
+  padding: 10px 0;
+}
+
+.app-shell.sidebar-rail .sidebar-account {
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 0 10px;
+}
+
+.app-shell.sidebar-rail .sidebar-account .account-chip {
+  flex: none;
+  width: 100%;
+  justify-content: center;
+  gap: 0;
+  padding: 4px 0;
+}
+
+.app-shell.sidebar-rail .account-popover {
+  left: calc(100% + 8px);
+  bottom: 0;
 }
 
 .sidebar-account {
@@ -3611,7 +3700,7 @@ kbd {
 
 @media (max-width: 960px) {
   .app-shell {
-    grid-template-columns: var(--sidebar-width, 220px) 5px var(--list-width, 260px) 5px minmax(0, 1fr);
+    grid-template-columns: var(--sidebar-rail-width, 56px) 0 var(--list-width, 260px) 5px minmax(0, 1fr);
   }
 }
 

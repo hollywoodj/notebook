@@ -103,28 +103,29 @@ describe("Evernote sidebar chrome", () => {
     assert.equal(appSource.includes("nav-section"), false);
   });
 
-  it("keeps the sidebar at its labeled width instead of collapsing to an icon rail", () => {
-    assert.equal(appSource.includes("isSidebarRail"), false);
-    assert.equal(appSource.includes("sidebar-rail"), false);
+  it("uses an Evernote-style icon-only sidebar rail", () => {
+    assert.match(appSource, /className=\{\s*"app-shell sidebar-rail"/);
+    assert.match(appSource, /SIDEBAR_RAIL_WIDTH/);
     assert.equal(appSource.includes("toggleSidebarRail"), false);
-    assert.equal(appSource.includes("sidebarRail"), false);
-    assert.equal(appSource.includes("rail-open"), false);
     assert.equal(appSource.includes("sidebarHovered"), false);
     assert.equal(appSource.includes("sidebarFocused"), false);
-
-    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
-    assert.equal(styles.includes("sidebar-rail"), false);
-    assert.equal(styles.includes("rail-open"), false);
-  });
-
-  it("labels every sidebar nav row", () => {
-    for (const label of ["Notes", "Shortcuts", "Reminders", "Notebooks", "Tags", "Templates", "Trash"]) {
-      assert.match(appSource, new RegExp(`<span className="nav-label">${label}</span>`));
-    }
     assert.equal(appSource.includes("Pin sidebar open"), false);
     assert.equal(appSource.includes("Collapse sidebar to icons"), false);
     assert.equal(menuSource.includes("Pin Sidebar Open"), false);
     assert.equal(menuSource.includes("Collapse Sidebar to Icons"), false);
+
+    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    assert.match(styles, /\.app-shell\.sidebar-rail \.sidebar-nav \.nav-label/);
+    assert.match(styles, /display: none/);
+    assert.equal(styles.includes("rail-open"), false);
+  });
+
+  it("keeps section names for tooltips and flyouts, without pinning a labeled pane", () => {
+    for (const label of ["Notes", "Shortcuts", "Reminders", "Notebooks", "Tags", "Templates", "Trash"]) {
+      assert.match(appSource, new RegExp(`<span className="nav-label">${label}</span>`));
+    }
+    assert.match(appSource, /navIconTitle\("Notes"/);
+    assert.match(appSource, /navIconTitle\("Notebooks"/);
   });
 
   it("counts the current view rather than repeating the all-notes total", () => {
@@ -218,6 +219,7 @@ describe("menu bar, sidebar icons, and OmniClone", () => {
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
     const chrome = readFileSync(new URL("./uiChrome.ts", import.meta.url), "utf8");
     assert.match(chrome, /export const SIDEBAR_NAV_ICON_SIZE = 20/);
+    assert.match(chrome, /export const SIDEBAR_RAIL_WIDTH = 56/);
     assert.match(appSource, /Icon\.Notes size=\{SIDEBAR_NAV_ICON_SIZE\}/);
     assert.match(styles, /\.app-menu-bar \{[\s\S]*height: 22px/);
     assert.match(styles, /\.app-menu-trigger \{[\s\S]*height: 22px/);
