@@ -72,6 +72,7 @@ import {
   NOTE_COLORS_KEY,
   LOCKED_NOTES_KEY,
   SIDEBAR_NAV_ICON_SIZE,
+  SIDEBAR_RAIL_WIDTH,
   adjacentNoteId,
   noteIdByOffset,
   attachmentCountLabel,
@@ -165,6 +166,7 @@ import {
   stickyNavCount,
   knownViewNoteCount,
   navCountLabel,
+  navIconTitle,
   sortNotes,
   viewFilterKey,
   type DateRangeFacet,
@@ -2070,7 +2072,7 @@ export default function App() {
   return (
     <div
       className={
-        "app-shell" +
+        "app-shell sidebar-rail" +
         (paneLayout.sidebarCollapsed ? " sidebar-collapsed" : "") +
         (paneLayout.listCollapsed ? " list-collapsed" : "") +
         (focusMode ? " focus-mode" : "") +
@@ -2080,7 +2082,8 @@ export default function App() {
         {
           "--sidebar-width": paneLayout.sidebarCollapsed
             ? "0px"
-            : `${paneLayout.sidebarWidth}px`,
+            : `${SIDEBAR_RAIL_WIDTH}px`,
+          "--sidebar-rail-width": `${SIDEBAR_RAIL_WIDTH}px`,
           "--list-width": `${paneLayout.listWidth}px`,
         } as CSSProperties
       }
@@ -2244,7 +2247,7 @@ export default function App() {
                 <button
                   key="notes"
                   className={filter.type === "all" ? "nav-item active" : "nav-item"}
-                  title="Notes"
+                  title={navIconTitle("Notes", counts?.notes)}
                   onClick={() => {
                     setSidebarFlyout(null);
                     setFilter({ type: "all" });
@@ -2265,7 +2268,7 @@ export default function App() {
                       ? "nav-item active"
                       : "nav-item"
                   }
-                  title="Shortcuts"
+                  title={navIconTitle("Shortcuts", shortcutNotes.length)}
                   aria-expanded={sidebarFlyout === "shortcuts"}
                   onClick={() => {
                     openSidebarFlyout("shortcuts");
@@ -2285,7 +2288,7 @@ export default function App() {
                 <button
                   key="reminders"
                   className={filter.type === "reminders" ? "nav-item active" : "nav-item"}
-                  title="Reminders"
+                  title={navIconTitle("Reminders", counts?.reminders)}
                   onClick={() => {
                     setSidebarFlyout(null);
                     setFilter({ type: "reminders" });
@@ -2306,7 +2309,7 @@ export default function App() {
                       ? "nav-item active"
                       : "nav-item"
                   }
-                  title="Notebooks"
+                  title={navIconTitle("Notebooks", notebooks.length)}
                   aria-expanded={sidebarFlyout === "notebooks"}
                   onClick={() => openSidebarFlyout("notebooks")}
                 >
@@ -2327,7 +2330,7 @@ export default function App() {
                       ? "nav-item active"
                       : "nav-item"
                   }
-                  title="Tags"
+                  title={navIconTitle("Tags", tags.length)}
                   aria-expanded={sidebarFlyout === "tags"}
                   onClick={() => openSidebarFlyout("tags")}
                 >
@@ -2344,7 +2347,7 @@ export default function App() {
                 <button
                   key="templates"
                   className={filter.type === "templates" ? "nav-item active" : "nav-item"}
-                  title="Templates"
+                  title={navIconTitle("Templates", counts?.templates)}
                   onClick={() => {
                     setSidebarFlyout(null);
                     setFilter({ type: "templates" });
@@ -2403,7 +2406,7 @@ export default function App() {
                 <button
                   key="trash"
                   className={filter.type === "trash" ? "nav-item active" : "nav-item"}
-                  title="Trash"
+                  title={navIconTitle("Trash", counts?.trash)}
                   onClick={() => {
                     setSidebarFlyout(null);
                     setFilter({ type: "trash" });
@@ -2679,7 +2682,7 @@ export default function App() {
               type="button"
               className={accountMenu ? "account-chip active" : "account-chip"}
               onClick={() => setAccountMenu((open) => !open)}
-              title="Account"
+              title={account.display_name}
             >
               <span
                 className="avatar"
