@@ -430,7 +430,11 @@ export function NoteEditor({
 
   useEffect(() => {
     if (editor && content !== editor.getHTML()) {
-      editor.commands.setContent(content, false);
+      try {
+        editor.commands.setContent(content, false);
+      } catch (err) {
+        console.error(err);
+      }
     }
   }, [content, editor]);
 

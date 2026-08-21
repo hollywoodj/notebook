@@ -1,3 +1,7 @@
+import { decodeXmlEntities, repairImportedHtml } from "./htmlEntities";
+
+export { decodeXmlEntities, repairImportedHtml };
+
 export const SIDEBAR_MIN = 180;
 export const SIDEBAR_MAX = 420;
 export const LIST_MIN = 220;
@@ -1141,29 +1145,10 @@ export function noteMatchesSearchOperators(
   return true;
 }
 
-export function decodeXmlEntities(value: string): string {
-  return value
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&apos;/gi, "'")
-    .replace(/&#39;/gi, "'")
-    .replace(/&#x27;/gi, "'");
-}
-
-export function repairImportedHtml(html: string): string {
-  return html
-    .replace(/&amp;apos;/gi, "'")
-    .replace(/&amp;nbsp;/gi, "&nbsp;")
-    .replace(/&amp;#39;/gi, "'")
-    .replace(/&amp;#x27;/gi, "'");
-}
-
-export function htmlToPlainText(html: string): string {
+export function htmlToPlainText(html: string | null | undefined): string {
+  if (html == null) return "";
   return decodeXmlEntities(
-    html
+    String(html)
       .replace(/<style[\s\S]*?<\/style>/gi, "")
       .replace(/<script[\s\S]*?<\/script>/gi, "")
       .replace(/<br\s*\/?>/gi, "\n")

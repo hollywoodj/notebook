@@ -1,4 +1,4 @@
-import { decodeXmlEntities, repairImportedHtml } from "./uiChrome";
+import { decodeXmlEntities, repairImportedHtml } from "./htmlEntities";
 
 export interface Notebook {
   id: string;
@@ -200,25 +200,32 @@ const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8799";
 export const attachmentUrl = (id: string) =>
   `${API_BASE}/api/v1/attachments/${encodeURIComponent(id)}`;
 
-function repairImportedNote<T extends { title?: string; snippet?: string; content?: string; content_plain?: string }>(
+function repairImportedNote<T extends { title?: string | null; snippet?: string | null; content?: string | null; content_plain?: string | null }>(
   note: T
 ): T {
   return {
     ...note,
-    ...(note.title !== undefined ? { title: decodeXmlEntities(note.title) } : {}),
-    ...(note.snippet !== undefined ? { snippet: decodeXmlEntities(note.snippet) } : {}),
-    ...(note.content_plain !== undefined
+    ...(note.title != null ? { title: decodeXmlEntities(note.title) } : {}),
+    ...(note.snippet != null ? { snippet: decodeXmlEntities(note.snippet) } : {}),
+    ...(note.content_plain != null
       ? { content_plain: decodeXmlEntities(note.content_plain) }
       : {}),
-    ...(note.content !== undefined ? { content: repairImportedHtml(note.content) } : {}),
+    ...(note.content != null ? { content: repairImportedHtml(note.content) } : {}),
   };
+}
+
+function asNoteList(value: unknown): NoteSummary[] {
+  if (!Array.isArray(value)) {
+    throw new Error("Notebook API did not return a note list");
+  }
+  return value.map(repairImportedNote);
 }
 
 function hydrateAttachmentUrls(note: Note): Note {
   const repaired = repairImportedNote(note);
   return {
     ...repaired,
-    content: repaired.content.replace(
+    content: String(repaired.content ?? "").replace(
       /notebook-attachment:\/\/([0-9a-f-]{36})/gi,
       (_match, id: string) => attachmentUrl(id)
     ),
@@ -316,7 +323,7 @@ export const api = {
     if (params.templates !== undefined) qs.set("templates", String(params.templates));
     const query = qs.toString();
     return request<NoteSummary[]>(`/api/v1/notes${query ? `?${query}` : ""}`).then(
-      (notes) => notes.map(repairImportedNote)
+      asNoteList
     );
   },
 
@@ -387,13 +394,10 @@ export const api = {
       `/api/v1/search?q=${encodeURIComponent(q)}`
     ).then((result) => ({
       ...result,
-      notes: result.notes.map(repairImportedNote),
+      notes: asNoteList(result.notes),
     })),
 
-  listShortcuts: () =>
-    request<NoteSummary[]>("/api/v1/shortcuts").then((notes) =>
-      notes.map(repairImportedNote)
-    ),
+  listShortcuts: () => request<NoteSummary[]>("/api/v1/shortcuts").then(asNoteList),
   addShortcut: (noteId: string) =>
     request(`/api/v1/shortcuts/${noteId}`, { method: "POST" }),
   removeShortcut: (noteId: string) =>

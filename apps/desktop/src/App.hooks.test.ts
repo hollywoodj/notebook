@@ -152,6 +152,27 @@ describe("Evernote sidebar chrome", () => {
     assert.match(appSource, /knownViewNoteCount\(/);
     assert.match(appSource, /displayedListCount\(/);
   });
+
+  it("shows the note list when Notes is clicked, even if the list was hidden", () => {
+    assert.match(appSource, /const showAllNotes = /);
+    assert.match(appSource, /onClick=\{\(\) => showAllNotes\(\)\}/);
+    assert.match(appSource, /case "all-notes":\s*showAllNotes\(\)/);
+    assert.match(appSource, /const revealNoteList = /);
+    assert.match(appSource, /listCollapsed: false/);
+  });
+
+  it("does not empty open note tabs until the matching list has loaded", () => {
+    assert.equal(
+      [...appSource.matchAll(/notesFilterKey !== viewFilterKey\(filter, searchScope\?\.id\)/g)].length,
+      2
+    );
+  });
+
+  it("repairs imported notes without pulling in the editor chrome module", () => {
+    const apiSource = readFileSync(new URL("./api.ts", import.meta.url), "utf8");
+    assert.match(apiSource, /from "\.\/htmlEntities"/);
+    assert.equal(apiSource.includes('from "./uiChrome"'), false);
+  });
 });
 
 describe("Evernote list and account chrome", () => {
