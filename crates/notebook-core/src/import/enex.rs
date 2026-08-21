@@ -86,7 +86,12 @@ pub fn parse_enex(data: &[u8]) -> Result<EnexExport> {
                 }
             }
             Ok(Event::Text(e)) => {
-                let text = String::from_utf8_lossy(e.as_ref()).into_owned();
+                let raw = String::from_utf8_lossy(e.as_ref()).into_owned();
+                let text = if current_field == "content" {
+                    raw
+                } else {
+                    decode_xml_entities(&raw)
+                };
                 if in_resource {
                     if let Some(resource) = current_resource.as_mut() {
                         match current_field.as_str() {
@@ -338,6 +343,58 @@ pub fn parse_evernote_datetime(value: &str) -> Option<DateTime<Utc>> {
         .map(|dt| dt.and_utc())
 }
 
+const HTML_TAGS: &[&str] = &[
+    "a",
+    "div",
+    "span",
+    "p",
+    "br",
+    "ul",
+    "ol",
+    "li",
+    "b",
+    "i",
+    "u",
+    "strong",
+    "em",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "blockquote",
+    "pre",
+    "code",
+    "table",
+    "tr",
+    "td",
+    "th",
+    "thead",
+    "tbody",
+];
+
+#[derive(Clone, Debug)]
+enum HtmlNode {
+    Element {
+        name: String,
+        attrs: Vec<(String, String)>,
+        children: Vec<HtmlNode>,
+    },
+    Text(String),
+    Raw(String),
+}
+
+impl HtmlNode {
+    fn element(name: impl Into<String>, attrs: Vec<(String, String)>) -> Self {
+        HtmlNode::Element {
+            name: name.into(),
+            attrs,
+            children: Vec::new(),
+        }
+    }
+}
+
 pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
     let resource_map: HashMap<String, &EnexResource> = resources
         .iter()
@@ -347,41 +404,38 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
     let mut reader = Reader::from_reader(Cursor::new(enml.as_bytes()));
     reader.config_mut().trim_text(false);
 
-    let mut out = String::new();
+    let mut stack = vec![HtmlNode::element("root", Vec::new())];
     let mut buf = Vec::new();
+    let mut saw_error = None;
 
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 match name.as_str() {
-                    "en-note" => out.push_str("<div>"),
+                    "en-note" => push_element(&mut stack, "div", Vec::new()),
                     "en-todo" => {
-                        let checked = e
-                            .attributes()
-                            .flatten()
-                            .any(|a| a.key.as_ref() == b"checked" && a.value.as_ref() != b"false");
-                        out.push_str(if checked { "<p>☑ " } else { "<p>☐ " });
+                        let checked = en_todo_checked(&e);
+                        push_element(
+                            &mut stack,
+                            "en-todo-marker",
+                            vec![("checked".into(), bool_attr(checked))],
+                        );
                     }
-                    "en-crypt" => {
-                        out.push_str("<p><em>[Encrypted content not imported]</em></p>");
-                    }
+                    "en-crypt" => append_child(
+                        &mut stack,
+                        HtmlNode::Raw(
+                            "<p><em>[Encrypted content not imported]</em></p>".to_string(),
+                        ),
+                    ),
                     "en-media" => {
-                        render_en_media(&mut out, &e, &resource_map);
+                        let mut raw = String::new();
+                        render_en_media(&mut raw, &e, &resource_map);
+                        append_child(&mut stack, HtmlNode::Raw(raw));
                     }
-                    "a" | "div" | "span" | "p" | "br" | "ul" | "ol" | "li" | "b" | "i" | "u"
-                    | "strong" | "em" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote"
-                    | "pre" | "code" | "table" | "tr" | "td" | "th" | "thead" | "tbody" => {
-                        out.push('<');
-                        out.push_str(&name);
-                        for attr in e.attributes().flatten() {
-                            let key = String::from_utf8_lossy(attr.key.as_ref());
-                            if key == "style" || key == "href" || key == "class" {
-                                let value = String::from_utf8_lossy(&attr.value);
-                                out.push_str(&format!(" {key}=\"{value}\""));
-                            }
-                        }
-                        out.push('>');
+                    "br" => append_child(&mut stack, HtmlNode::element("br", Vec::new())),
+                    name if HTML_TAGS.contains(&name) => {
+                        push_element(&mut stack, name, copy_html_attrs(&e));
                     }
                     _ => {}
                 }
@@ -389,35 +443,42 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
             Ok(Event::End(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 match name.as_str() {
-                    "en-note" => out.push_str("</div>"),
-                    "en-todo" => out.push_str("</p>"),
-                    "a" | "div" | "span" | "p" | "ul" | "ol" | "li" | "b" | "i" | "u"
-                    | "strong" | "em" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote"
-                    | "pre" | "code" | "table" | "tr" | "td" | "th" | "thead" | "tbody" => {
-                        out.push_str("</");
-                        out.push_str(&name);
-                        out.push('>');
-                    }
+                    "en-note" | "en-todo" => pop_element(&mut stack),
+                    name if HTML_TAGS.contains(&name) && name != "br" => pop_element(&mut stack),
                     _ => {}
                 }
             }
             Ok(Event::Text(e)) => {
-                let text = String::from_utf8_lossy(e.as_ref());
-                out.push_str(&escape_html(&text));
+                let decoded = decode_xml_entities(&String::from_utf8_lossy(e.as_ref()));
+                if !decoded.is_empty() {
+                    append_child(&mut stack, HtmlNode::Text(decoded));
+                }
             }
             Ok(Event::Empty(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 match name.as_str() {
-                    "br" => out.push_str("<br/>"),
-                    "en-media" => render_en_media(&mut out, &e, &resource_map),
+                    "br" => append_child(&mut stack, HtmlNode::element("br", Vec::new())),
+                    "en-media" => {
+                        let mut raw = String::new();
+                        render_en_media(&mut raw, &e, &resource_map);
+                        append_child(&mut stack, HtmlNode::Raw(raw));
+                    }
+                    "en-todo" => {
+                        let checked = en_todo_checked(&e);
+                        append_child(
+                            &mut stack,
+                            HtmlNode::element(
+                                "en-todo-marker",
+                                vec![("checked".into(), bool_attr(checked))],
+                            ),
+                        );
+                    }
                     _ => {}
                 }
             }
             Ok(Event::Eof) => break,
             Err(err) => {
-                if out.is_empty() {
-                    return Err(NotebookError::Other(format!("invalid ENML: {err}")));
-                }
+                saw_error = Some(err.to_string());
                 break;
             }
             _ => {}
@@ -425,11 +486,402 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
         buf.clear();
     }
 
+    let mut root = stack
+        .pop()
+        .unwrap_or_else(|| HtmlNode::element("root", Vec::new()));
+    if let HtmlNode::Element { children, .. } = &mut root {
+        promote_evernote_todos(children);
+    }
+
+    let mut out = String::new();
+    if let HtmlNode::Element { children, .. } = &root {
+        for child in children {
+            write_html(&mut out, child);
+        }
+    }
+
     if out.trim().is_empty() {
+        if let Some(err) = saw_error {
+            return Err(NotebookError::Other(format!("invalid ENML: {err}")));
+        }
         out.push_str("<p></p>");
     }
 
     Ok(out)
+}
+
+fn push_element(stack: &mut Vec<HtmlNode>, name: &str, attrs: Vec<(String, String)>) {
+    stack.push(HtmlNode::element(name, attrs));
+}
+
+fn pop_element(stack: &mut Vec<HtmlNode>) {
+    if stack.len() <= 1 {
+        return;
+    }
+    let child = stack.pop().expect("html stack");
+    append_child(stack, child);
+}
+
+fn append_child(stack: &mut Vec<HtmlNode>, child: HtmlNode) {
+    if let Some(HtmlNode::Element { children, .. }) = stack.last_mut() {
+        children.push(child);
+    }
+}
+
+fn copy_html_attrs(e: &quick_xml::events::BytesStart<'_>) -> Vec<(String, String)> {
+    e.attributes()
+        .flatten()
+        .filter_map(|attr| {
+            let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+            if key == "style" || key == "href" || key == "class" {
+                Some((key, attr_value(&attr)))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn attr_value(attr: &quick_xml::events::attributes::Attribute<'_>) -> String {
+    decode_xml_entities(&String::from_utf8_lossy(&attr.value))
+}
+
+fn en_todo_checked(e: &quick_xml::events::BytesStart<'_>) -> bool {
+    e.attributes().flatten().any(|attr| {
+        attr.key.as_ref() == b"checked" && attr_value(&attr).eq_ignore_ascii_case("true")
+    })
+}
+
+fn bool_attr(value: bool) -> String {
+    if value { "true" } else { "false" }.to_string()
+}
+
+fn promote_evernote_todos(nodes: &mut Vec<HtmlNode>) {
+    walk_and_convert_lists(nodes);
+    *nodes = group_todo_lines(std::mem::take(nodes));
+}
+
+fn walk_and_convert_lists(nodes: &mut [HtmlNode]) {
+    for node in nodes.iter_mut() {
+        if let HtmlNode::Element {
+            name,
+            attrs,
+            children,
+        } = node
+        {
+            walk_and_convert_lists(children);
+            if name == "ul" || name == "ol" {
+                if contains_todo_marker(children) {
+                    convert_list_to_task_list(name, attrs, children);
+                }
+            } else if name != "li" {
+                // Group consecutive todo divs/paragraphs, but not inside a list
+                // item — Evernote puts `<en-todo/>` in a div wrapped by `<li>`,
+                // and those must stay on the `<li>` so the parent list can
+                // become a task list instead of nested bullets.
+                *children = group_todo_lines(std::mem::take(children));
+            }
+        }
+    }
+}
+
+fn convert_list_to_task_list(
+    name: &mut String,
+    attrs: &mut Vec<(String, String)>,
+    children: &mut [HtmlNode],
+) {
+    *name = "ul".to_string();
+    set_attr(attrs, "data-type", "taskList");
+    for child in children {
+        if let HtmlNode::Element {
+            name,
+            attrs,
+            children,
+        } = child
+        {
+            if name == "li" {
+                let checked = extract_todo_checked(children).unwrap_or(false);
+                strip_todo_markers(children);
+                set_attr(attrs, "data-type", "taskItem");
+                set_attr(
+                    attrs,
+                    "data-checked",
+                    if checked { "true" } else { "false" },
+                );
+            }
+        }
+    }
+}
+
+fn group_todo_lines(nodes: Vec<HtmlNode>) -> Vec<HtmlNode> {
+    let mut out = Vec::new();
+    let mut run = Vec::new();
+    for node in nodes {
+        if is_todo_line(&node) {
+            run.push(node);
+        } else {
+            flush_todo_run(&mut out, &mut run);
+            out.push(node);
+        }
+    }
+    flush_todo_run(&mut out, &mut run);
+    out
+}
+
+fn is_todo_line(node: &HtmlNode) -> bool {
+    match node {
+        HtmlNode::Element {
+            name,
+            attrs,
+            children,
+        } => {
+            if name == "li" && has_attr(attrs, "data-type", "taskItem") {
+                return false;
+            }
+            (name == "div" || name == "p") && contains_todo_marker(children)
+        }
+        _ => false,
+    }
+}
+
+fn flush_todo_run(out: &mut Vec<HtmlNode>, run: &mut Vec<HtmlNode>) {
+    if run.is_empty() {
+        return;
+    }
+    let items = run
+        .drain(..)
+        .map(|node| {
+            let checked = match &node {
+                HtmlNode::Element { children, .. } => {
+                    extract_todo_checked(children).unwrap_or(false)
+                }
+                _ => false,
+            };
+            let mut content = match node {
+                HtmlNode::Element {
+                    name, mut children, ..
+                } => {
+                    strip_todo_markers(&mut children);
+                    if name == "p" {
+                        vec![HtmlNode::Element {
+                            name: "p".into(),
+                            attrs: Vec::new(),
+                            children,
+                        }]
+                    } else {
+                        children
+                    }
+                }
+                other => vec![other],
+            };
+            if content.is_empty() {
+                content.push(HtmlNode::element("p", Vec::new()));
+            }
+            HtmlNode::Element {
+                name: "li".into(),
+                attrs: vec![
+                    ("data-type".into(), "taskItem".into()),
+                    ("data-checked".into(), bool_attr(checked)),
+                ],
+                children: vec![HtmlNode::Element {
+                    name: "div".into(),
+                    attrs: Vec::new(),
+                    children: content,
+                }],
+            }
+        })
+        .collect();
+    out.push(HtmlNode::Element {
+        name: "ul".into(),
+        attrs: vec![("data-type".into(), "taskList".into())],
+        children: items,
+    });
+}
+
+fn contains_todo_marker(nodes: &[HtmlNode]) -> bool {
+    nodes.iter().any(|node| match node {
+        HtmlNode::Element { name, children, .. } => {
+            name == "en-todo-marker" || contains_todo_marker(children)
+        }
+        _ => false,
+    })
+}
+
+fn extract_todo_checked(nodes: &[HtmlNode]) -> Option<bool> {
+    for node in nodes {
+        match node {
+            HtmlNode::Element {
+                name,
+                attrs,
+                children,
+            } if name == "en-todo-marker" => {
+                return Some(has_attr(attrs, "checked", "true"));
+            }
+            HtmlNode::Element { children, .. } => {
+                if let Some(checked) = extract_todo_checked(children) {
+                    return Some(checked);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn strip_todo_markers(nodes: &mut Vec<HtmlNode>) {
+    let mut out = Vec::with_capacity(nodes.len());
+    for node in nodes.drain(..) {
+        match node {
+            HtmlNode::Element {
+                name,
+                attrs: _,
+                mut children,
+            } if name == "en-todo-marker" => {
+                strip_todo_markers(&mut children);
+                out.extend(children);
+            }
+            HtmlNode::Element {
+                name,
+                attrs,
+                mut children,
+            } => {
+                strip_todo_markers(&mut children);
+                out.push(HtmlNode::Element {
+                    name,
+                    attrs,
+                    children,
+                });
+            }
+            other => out.push(other),
+        }
+    }
+    *nodes = out;
+}
+
+fn set_attr(attrs: &mut Vec<(String, String)>, key: &str, value: &str) {
+    if let Some(existing) = attrs.iter_mut().find(|(name, _)| name == key) {
+        existing.1 = value.to_string();
+    } else {
+        attrs.push((key.to_string(), value.to_string()));
+    }
+}
+
+fn has_attr(attrs: &[(String, String)], key: &str, value: &str) -> bool {
+    attrs
+        .iter()
+        .any(|(name, current)| name == key && current == value)
+}
+
+fn write_html(out: &mut String, node: &HtmlNode) {
+    match node {
+        HtmlNode::Text(text) => out.push_str(&escape_html(text)),
+        HtmlNode::Raw(raw) => out.push_str(raw),
+        HtmlNode::Element {
+            name,
+            attrs,
+            children,
+        } if name == "en-todo-marker" => {
+            let checked = has_attr(attrs, "checked", "true");
+            out.push_str(if checked {
+                r#"<ul data-type="taskList"><li data-type="taskItem" data-checked="true"><div><p></p></div></li></ul>"#
+            } else {
+                r#"<ul data-type="taskList"><li data-type="taskItem" data-checked="false"><div><p></p></div></li></ul>"#
+            });
+            for child in children {
+                write_html(out, child);
+            }
+        }
+        HtmlNode::Element {
+            name,
+            attrs,
+            children,
+        } => {
+            if name == "br" && children.is_empty() {
+                out.push_str("<br/>");
+                return;
+            }
+            out.push('<');
+            out.push_str(name);
+            for (key, value) in attrs {
+                out.push(' ');
+                out.push_str(key);
+                out.push_str("=\"");
+                out.push_str(&escape_attr(value));
+                out.push('"');
+            }
+            out.push('>');
+            for child in children {
+                write_html(out, child);
+            }
+            out.push_str("</");
+            out.push_str(name);
+            out.push('>');
+        }
+    }
+}
+
+/// Decode XML/HTML named and numeric character entities.
+///
+/// Evernote ENML is XML, so an apostrophe is often stored as `&apos;`
+/// (`apos` is short for "apostrophe"). If we keep that entity and then
+/// HTML-escape the `&`, the note shows the literal `&apos;` instead of `'`.
+pub fn decode_xml_entities(input: &str) -> String {
+    let once = decode_xml_entities_once(input);
+    if once.contains('&') {
+        decode_xml_entities_once(&once)
+    } else {
+        once
+    }
+}
+
+fn decode_xml_entities_once(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(start) = rest.find('&') {
+        out.push_str(&rest[..start]);
+        rest = &rest[start..];
+        match rest.find(';') {
+            Some(end) => {
+                let body = &rest[1..end];
+                if let Some(decoded) = entity_to_char(body) {
+                    out.push(decoded);
+                    rest = &rest[end + 1..];
+                } else {
+                    out.push('&');
+                    rest = &rest[1..];
+                }
+            }
+            None => {
+                out.push_str(rest);
+                return out;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn entity_to_char(body: &str) -> Option<char> {
+    match body {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        "nbsp" => Some('\u{00a0}'),
+        other => {
+            let digits = other.strip_prefix('#')?;
+            let code = if let Some(hex) = digits
+                .strip_prefix('x')
+                .or_else(|| digits.strip_prefix('X'))
+            {
+                u32::from_str_radix(hex, 16).ok()?
+            } else {
+                digits.parse().ok()?
+            };
+            char::from_u32(code)
+        }
+    }
 }
 
 fn render_en_media(
@@ -904,5 +1356,83 @@ mod tests {
         let names: Vec<_> = notebooks.iter().map(|n| n.name.as_str()).collect();
         assert!(names.contains(&"Work"));
         assert!(names.contains(&"Personal"));
+    }
+
+    #[test]
+    fn decodes_apos_entity_to_apostrophe() {
+        assert_eq!(decode_xml_entities("John&apos;s note"), "John's note");
+        assert_eq!(decode_xml_entities("a &amp;apos; b"), "a ' b");
+        assert_eq!(decode_xml_entities("A &amp; B"), "A & B");
+        assert_eq!(decode_xml_entities("&#39;&#x27;"), "''");
+
+        let html = enml_to_html(
+            r#"<en-note><div>It&apos;s Tom&apos;s &amp; Jerry&apos;s</div></en-note>"#,
+            &[],
+        )
+        .unwrap();
+        assert!(html.contains("It's Tom's"), "got: {html}");
+        assert!(html.contains("Jerry's"), "got: {html}");
+        assert!(!html.contains("&apos;"), "got: {html}");
+        assert!(!html.contains("&amp;apos"), "got: {html}");
+        assert!(
+            html.contains("&amp;"),
+            "ampersand should stay escaped, got: {html}"
+        );
+    }
+
+    #[test]
+    fn converts_self_closing_en_todo_list_to_task_list() {
+        let enml = r#"<en-note><ul><li><div><en-todo checked="false"/>Milk</div></li><li><div><en-todo checked="true"/>Eggs</div></li></ul></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert!(html.contains("data-type=\"taskList\""), "got: {html}");
+        assert!(html.contains("data-type=\"taskItem\""), "got: {html}");
+        assert!(html.contains("data-checked=\"false\""), "got: {html}");
+        assert!(html.contains("data-checked=\"true\""), "got: {html}");
+        assert!(html.contains("Milk"), "got: {html}");
+        assert!(html.contains("Eggs"), "got: {html}");
+        assert!(
+            html.contains("<ul data-type=\"taskList\"><li data-type=\"taskItem\""),
+            "expected a task list, got: {html}"
+        );
+        assert!(
+            !html.contains("<ul><li>"),
+            "should not remain a bullet list: {html}"
+        );
+    }
+
+    #[test]
+    fn converts_div_en_todos_to_task_list() {
+        let enml = r#"<en-note><div><en-todo checked="false"/>One</div><div><en-todo checked="true"/>Two</div></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert!(html.contains("data-type=\"taskList\""), "got: {html}");
+        assert!(html.contains("data-checked=\"false\""), "got: {html}");
+        assert!(html.contains("data-checked=\"true\""), "got: {html}");
+        assert!(html.contains("One"), "got: {html}");
+        assert!(html.contains("Two"), "got: {html}");
+    }
+
+    #[test]
+    fn converts_wrapped_en_todo_with_text_content() {
+        let enml =
+            r#"<en-note><div><en-todo checked="false">Buy oat milk</en-todo></div></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert!(html.contains("data-type=\"taskList\""), "got: {html}");
+        assert!(html.contains("Buy oat milk"), "got: {html}");
+        assert!(html.contains("data-checked=\"false\""), "got: {html}");
+    }
+
+    #[test]
+    fn parses_apostrophe_in_enex_title() {
+        let enex = r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>John&apos;s grocery list</title>
+    <content><![CDATA[<en-note><div>Don&apos;t forget</div></en-note>]]></content>
+  </note>
+</en-export>"#;
+        let export = parse_enex(enex.as_bytes()).unwrap();
+        assert_eq!(export.notes[0].title, "John's grocery list");
+        let html = enml_to_html(&export.notes[0].content, &[]).unwrap();
+        assert!(html.contains("Don't forget"), "got: {html}");
     }
 }

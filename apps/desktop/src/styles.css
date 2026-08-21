@@ -1815,6 +1815,27 @@ button {
   width: 1px;
   background: var(--border);
   margin: 4px 6px;
+  align-self: stretch;
+  flex-shrink: 0;
+}
+
+.toolbar-list-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  flex-shrink: 0;
+  padding: 1px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-bg);
+}
+
+.toolbar-list-group:not(:has(.toolbar-item:not(.is-overflowed))) {
+  display: none;
+}
+
+.toolbar-list-group .toolbar-btn {
+  border-radius: 6px;
 }
 
 .toolbar-text {
@@ -2473,11 +2494,26 @@ button {
 
 .ProseMirror ul[data-type="taskList"] input[type="checkbox"],
 .note-editor-content input[data-inline-checkbox] {
-  width: 15px;
-  height: 15px;
+  appearance: none;
+  width: 16px;
+  height: 16px;
   margin: 0;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 4px;
+  background: var(--panel-bg);
   accent-color: var(--green);
   cursor: pointer;
+  flex-shrink: 0;
+}
+
+.ProseMirror ul[data-type="taskList"] input[type="checkbox"]:checked,
+.note-editor-content input[data-inline-checkbox]:checked {
+  background: var(--green);
+  border-color: var(--green);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M3.5 8.5l3 3 6-6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 12px;
 }
 
 .note-editor-content input[data-inline-checkbox] {

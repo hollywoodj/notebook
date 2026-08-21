@@ -458,7 +458,10 @@ impl NotebookService {
                 _ => {}
             }
         }
-        out.split_whitespace().collect::<Vec<_>>().join(" ")
+        crate::import::enex::decode_xml_entities(&out)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     pub fn create_note(&self, req: CreateNoteRequest) -> Result<Note> {
