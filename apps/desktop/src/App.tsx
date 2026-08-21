@@ -161,7 +161,9 @@ import {
   setNoteColor as applyNoteColor,
   pinTabById,
   closeAllUnpinnedTabIds,
-  listCountLabel,
+  displayedListCount,
+  stickyNavCount,
+  knownViewNoteCount,
   navCountLabel,
   sortNotes,
   viewFilterKey,
@@ -419,6 +421,9 @@ export default function App() {
   const hoverTimerRef = useRef<number | null>(null);
   const notesRequestRef = useRef(0);
   const lastListCountRef = useRef("");
+  const lastNotebooksCountRef = useRef<number | null>(null);
+  const lastTagsCountRef = useRef<number | null>(null);
+  const lastShortcutsCountRef = useRef<number | null>(null);
 
   const openSettings = (section: SettingsSection = "application") => {
     setSettingsSection(section);
@@ -1686,10 +1691,26 @@ export default function App() {
 
   const viewTitle = viewTitleForFilter(filter);
   const listLoaded = notesFilterKey === viewFilterKey(filter, searchScope?.id);
-  const listCount = listLoaded
-    ? listCountLabel(visibleNotes.length, notes.length)
-    : lastListCountRef.current;
-  if (listLoaded) lastListCountRef.current = listCount;
+  const knownCount = knownViewNoteCount(
+    filter,
+    notebooks,
+    tags,
+    counts,
+    shortcutNotes.length
+  );
+  const listCount = displayedListCount({
+    loaded: listLoaded,
+    visible: visibleNotes.length,
+    total: notes.length,
+    known: knownCount,
+    lastLabel: lastListCountRef.current,
+  });
+  if (listLoaded && !(notes.length === 0 && (knownCount ?? 0) > 0)) {
+    lastListCountRef.current = listCount;
+  }
+  if (notebooks.length > 0) lastNotebooksCountRef.current = notebooks.length;
+  if (tags.length > 0) lastTagsCountRef.current = tags.length;
+  if (shortcutNotes.length > 0) lastShortcutsCountRef.current = shortcutNotes.length;
 
   const isShortcut = activeNote ? shortcutIds.has(activeNote.id) : false;
   const allSelectedPinned =
@@ -2253,7 +2274,9 @@ export default function App() {
                 >
                   <Icon.Shortcuts size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Shortcuts</span>
-                  <span className="nav-count">{shortcutNotes.length}</span>
+                  <span className="nav-count">
+                    {navCountLabel(stickyNavCount(shortcutNotes.length, lastShortcutsCountRef.current))}
+                  </span>
                 </button>
               ) : null;
             }
@@ -2289,7 +2312,9 @@ export default function App() {
                 >
                   <Icon.Notebooks size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Notebooks</span>
-                  <span className="nav-count">{notebooks.length}</span>
+                  <span className="nav-count">
+                    {navCountLabel(stickyNavCount(notebooks.length, lastNotebooksCountRef.current))}
+                  </span>
                 </button>
               ) : null;
             }
@@ -2308,7 +2333,9 @@ export default function App() {
                 >
                   <Icon.Tags size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Tags</span>
-                  <span className="nav-count">{tags.length}</span>
+                  <span className="nav-count">
+                    {navCountLabel(stickyNavCount(tags.length, lastTagsCountRef.current))}
+                  </span>
                 </button>
               ) : null;
             }
@@ -3185,7 +3212,7 @@ export default function App() {
               ))}
             </div>
           ))}
-          {listLoaded && notes.length === 0 && (
+          {listLoaded && notes.length === 0 && !(knownCount && knownCount > 0) && (
             <EmptyListState
               filter={filter}
               onCreate={() => void createNote()}
