@@ -505,12 +505,16 @@ export default function App() {
     setSearchOpen(false);
   };
 
-  const searchInNotebook = (notebook: { id: string; name: string }) => {
-    setSearchScope(notebook);
-    setSearchOpen(true);
+  const revealNoteList = () => {
     if (paneLayout.listCollapsed) {
       persistPaneLayout({ ...paneLayout, listCollapsed: false });
     }
+  };
+
+  const searchInNotebook = (notebook: { id: string; name: string }) => {
+    setSearchScope(notebook);
+    setSearchOpen(true);
+    revealNoteList();
   };
 
   const openGlobalSearch = () => {
@@ -523,9 +527,20 @@ export default function App() {
     if (filter.type === "search") {
       setSearchInput(filter.query);
     }
-    if (paneLayout.listCollapsed) {
-      persistPaneLayout({ ...paneLayout, listCollapsed: false });
-    }
+    revealNoteList();
+  };
+
+  const showAllNotes = () => {
+    setSidebarFlyout(null);
+    setSearchScope(null);
+    setFilter({ type: "all" });
+    revealNoteList();
+  };
+
+  const showListFilter = (next: ViewFilter) => {
+    setSidebarFlyout(null);
+    setFilter(next);
+    revealNoteList();
   };
 
   /** A hidden sidebar has nowhere to hang the panel, so bring it back first. */
@@ -555,15 +570,26 @@ export default function App() {
   const refreshNotes = useCallback(async () => {
     const requestId = ++notesRequestRef.current;
     const requestKey = viewFilterKey(filter, searchScope?.id);
-    const list = await fetchNotesForFilter(filter, searchScope);
-    if (requestId !== notesRequestRef.current) return;
-    setNotes(sortedNotesForFilter(list, filter, prefs.sort_by, Boolean(prefs.sort_descending)));
-    setNotesFilterKey(requestKey);
+    try {
+      const list = await fetchNotesForFilter(filter, searchScope);
+      if (requestId !== notesRequestRef.current) return;
+      setNotes(sortedNotesForFilter(list, filter, prefs.sort_by, Boolean(prefs.sort_descending)));
+      setNotesFilterKey(requestKey);
+    } catch (err) {
+      console.error(err);
+    }
   }, [filter, prefs.sort_by, prefs.sort_descending, searchScope]);
 
   const loadNote = useCallback(async (id: string, tabId?: string) => {
     skipNextSave.current = true;
-    const note = await api.getNote(id);
+    let note: Note;
+    try {
+      note = await api.getNote(id);
+    } catch (err) {
+      skipNextSave.current = false;
+      console.error(err);
+      return;
+    }
     const targetTabId = tabId ?? activeTabIdRef.current;
     setActiveNote(note);
     setSelectedNoteIds(new Set([id]));
@@ -939,12 +965,15 @@ export default function App() {
   }, [ready, filter, refreshNotes]);
 
   useEffect(() => {
+    if (!ready) return;
+    if (notesFilterKey !== viewFilterKey(filter, searchScope?.id)) return;
     const noteIds = new Set(notes.map((n) => n.id));
     setSelectedNoteIds((prev) => pruneNoteIds(prev, noteIds));
-  }, [notes]);
+  }, [notes, ready, notesFilterKey, filter, searchScope]);
 
   useEffect(() => {
     if (!ready) return;
+    if (notesFilterKey !== viewFilterKey(filter, searchScope?.id)) return;
     const noteIds = new Set(notes.map((note) => note.id));
     setTabs((current) => {
       const next = current.map((tab) =>
@@ -957,7 +986,7 @@ export default function App() {
       tabsRef.current = next;
       return next;
     });
-  }, [notes, ready]);
+  }, [notes, ready, notesFilterKey, filter, searchScope]);
 
   useEffect(() => {
     if (!activeNote) return;
@@ -1790,20 +1819,18 @@ export default function App() {
         setShowNewTag(true);
         break;
       case "reminders":
-        setSidebarFlyout(null);
-        setFilter({ type: "reminders" });
+        showListFilter({ type: "reminders" });
         break;
       case "shortcuts":
         revealSidebarFlyout("shortcuts");
         setFilter({ type: "shortcuts" });
+        revealNoteList();
         break;
       case "all-notes":
-        setSidebarFlyout(null);
-        setFilter({ type: "all" });
+        showAllNotes();
         break;
       case "archived":
-        setSidebarFlyout(null);
-        setFilter({ type: "archived" });
+        showListFilter({ type: "archived" });
         break;
       case "info":
         if (activeNote) setShowInfo((open) => !open);
@@ -2248,10 +2275,7 @@ export default function App() {
                   key="notes"
                   className={filter.type === "all" ? "nav-item active" : "nav-item"}
                   title={navIconTitle("Notes", counts?.notes)}
-                  onClick={() => {
-                    setSidebarFlyout(null);
-                    setFilter({ type: "all" });
-                  }}
+                  onClick={() => showAllNotes()}
                 >
                   <Icon.Notes size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Notes</span>
@@ -2273,6 +2297,7 @@ export default function App() {
                   onClick={() => {
                     openSidebarFlyout("shortcuts");
                     setFilter({ type: "shortcuts" });
+                    revealNoteList();
                   }}
                 >
                   <Icon.Shortcuts size={SIDEBAR_NAV_ICON_SIZE} />
@@ -2289,10 +2314,7 @@ export default function App() {
                   key="reminders"
                   className={filter.type === "reminders" ? "nav-item active" : "nav-item"}
                   title={navIconTitle("Reminders", counts?.reminders)}
-                  onClick={() => {
-                    setSidebarFlyout(null);
-                    setFilter({ type: "reminders" });
-                  }}
+                  onClick={() => showListFilter({ type: "reminders" })}
                 >
                   <Icon.Reminder size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Reminders</span>
@@ -2348,10 +2370,7 @@ export default function App() {
                   key="templates"
                   className={filter.type === "templates" ? "nav-item active" : "nav-item"}
                   title={navIconTitle("Templates", counts?.templates)}
-                  onClick={() => {
-                    setSidebarFlyout(null);
-                    setFilter({ type: "templates" });
-                  }}
+                  onClick={() => showListFilter({ type: "templates" })}
                 >
                   <Icon.Templates size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Templates</span>
@@ -2365,10 +2384,7 @@ export default function App() {
                   key="archived"
                   className={filter.type === "archived" ? "nav-item active" : "nav-item"}
                   title="Archived"
-                  onClick={() => {
-                    setSidebarFlyout(null);
-                    setFilter({ type: "archived" });
-                  }}
+                  onClick={() => showListFilter({ type: "archived" })}
                 >
                   <Icon.Archive size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Archived</span>
@@ -2392,6 +2408,7 @@ export default function App() {
                         setSearchInput(search.query);
                         setFilter({ type: "search", query: search.query });
                         setSearchOpen(true);
+                        revealNoteList();
                       }}
                     >
                       <Icon.Search size={SIDEBAR_NAV_ICON_SIZE} />
@@ -2407,10 +2424,7 @@ export default function App() {
                   key="trash"
                   className={filter.type === "trash" ? "nav-item active" : "nav-item"}
                   title={navIconTitle("Trash", counts?.trash)}
-                  onClick={() => {
-                    setSidebarFlyout(null);
-                    setFilter({ type: "trash" });
-                  }}
+                  onClick={() => showListFilter({ type: "trash" })}
                 >
                   <Icon.Trash size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Trash</span>
@@ -2570,13 +2584,14 @@ export default function App() {
                             notebook={nb}
                             active={filter.type === "notebook" && filter.id === nb.id}
                             isDropTarget={dropTarget === `notebook:${nb.id}`}
-                            onSelect={() =>
+                            onSelect={() => {
                               setFilter({
                                 type: "notebook",
                                 id: nb.id,
                                 name: nb.name,
-                              })
-                            }
+                              });
+                              revealNoteList();
+                            }}
                             onDragOver={(event) =>
                               allowNoteDrop(event, `notebook:${nb.id}`)
                             }
@@ -2607,9 +2622,10 @@ export default function App() {
                       notebook={nb}
                       active={filter.type === "notebook" && filter.id === nb.id}
                       isDropTarget={dropTarget === `notebook:${nb.id}`}
-                      onSelect={() =>
-                        setFilter({ type: "notebook", id: nb.id, name: nb.name })
-                      }
+                      onSelect={() => {
+                        setFilter({ type: "notebook", id: nb.id, name: nb.name });
+                        revealNoteList();
+                      }}
                       onDragOver={(event) =>
                         allowNoteDrop(event, `notebook:${nb.id}`)
                       }
@@ -2651,9 +2667,10 @@ export default function App() {
                           : "nav-item") +
                         (dropTarget === `tag:${tag.id}` ? " drop-target" : "")
                       }
-                      onClick={() =>
-                        setFilter({ type: "tag", id: tag.id, name: tag.name })
-                      }
+                      onClick={() => {
+                        setFilter({ type: "tag", id: tag.id, name: tag.name });
+                        revealNoteList();
+                      }}
                       onDragOver={(event) => allowNoteDrop(event, `tag:${tag.id}`)}
                       onDragLeave={() => setDropTarget(null)}
                       onDrop={(event) => void tagDroppedNotes(tag.id, event)}

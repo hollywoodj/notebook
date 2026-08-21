@@ -659,6 +659,10 @@ describe("html export helpers", () => {
     assert.equal(htmlToPlainText("<p>Don&apos;t forget</p>"), "Don't forget");
     assert.equal(htmlToPlainText("<p>It&amp;apos;s fine</p>"), "It's fine");
     assert.equal(repairImportedHtml("<p>It&amp;apos;s Tom&amp;apos;s</p>"), "<p>It's Tom's</p>");
+    assert.equal(decodeXmlEntities(null), "");
+    assert.equal(repairImportedHtml(undefined), "");
+    assert.equal(htmlToPlainText(null), "");
+    assert.equal(htmlToPlainText(undefined), "");
   });
 
   it("reads heading outline entries", () => {
