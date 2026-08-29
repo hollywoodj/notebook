@@ -8,13 +8,10 @@ import {
   NoteSummary,
   Notebook,
   Preferences,
-  SidebarCounts,
-  Stack,
-  Tag,
   TemplateCatalogItem,
-  ViewFilter,
 } from "./api";
 import { NoteEditor } from "./components/NoteEditor";
+import { editorCommands, type EditorHandle } from "./editorHandle";
 import {
   SettingsModal,
   SettingsSection,
@@ -35,153 +32,134 @@ import { JumpToDialog } from "./components/JumpToDialog";
 import { SearchDialog } from "./components/SearchDialog";
 import { CommandPalette } from "./components/CommandPalette";
 import { NotebookPickerDialog } from "./components/NotebookPickerDialog";
-import {
-  noteIdsInRange,
-  pruneNoteIds,
-  toggleNoteId,
-} from "./noteSelection";
+import { FilesView } from "./components/FilesView";
+import { noteIdsInRange } from "./noteSelection";
 import {
   applyTheme,
   formatDate,
   isBlankNote,
   isTextInputFocused,
-  makeNoteTab,
   type ContextTarget,
-  type NoteTab,
   type PendingConfirm,
   type RenameTarget,
 } from "./appTypes";
 import { createNoteActions } from "./noteActions";
+import { noteStore } from "./noteStore";
+import { useNoteStore } from "./useNoteStore";
+import { noteSession } from "./noteSession";
+import { useNoteSession } from "./useNoteSession";
 import { buildContextMenu, buildMenuBar, type AppMenuContext } from "./appMenus";
+import { matchCommand, paletteActions, runCommandById } from "./commands";
 import { isPdfFile, titleFromFilename } from "./components/fileAttachment";
 import {
   EDITOR_CHROME_KEY,
+  parseEditorChrome,
+  windowTitleForNote,
+} from "./ui/editorChrome";
+import {
   LIST_MAX,
   LIST_MIN,
-  NOTE_DRAG_TYPE,
   PANE_LAYOUT_KEY,
-  RECENT_SEARCHES_KEY,
-  COLLAPSED_STACKS_KEY,
-  COMPLETED_REMINDERS_KEY,
-  LAST_SESSION_KEY,
-  SAVED_SEARCHES_KEY,
   SIDEBAR_RAIL_WIDTH,
-  adjacentNoteId,
-  attachmentCountLabel,
-  avatarColor,
-  checklistProgressLabel,
   clampPaneWidth,
-  collapseAllIds,
-  copyTextToClipboard,
-  countWords,
-  decodeNoteDrag,
-  dispatchEditorCommand,
-  downloadTextFile,
-  encodeNoteDrag,
-  formatReminderLabel,
-  fromDatetimeLocalValue,
-  groupNotesByNotebook,
-  groupNotesForList,
-  groupRemindersForList,
-  htmlToMarkdown,
-  htmlToPlainText,
-  isReminderDone,
-  isReminderOverdue,
   isNoteExpanded,
   isSidebarRail,
-  hasVisibleSidebarNotebooks,
-  matchesSidebarFilter,
-  nextActiveTabId,
-  nextSidebarFlyout,
-  nextZoom,
-  noteAppLink,
-  noteMailtoHref,
-  noteMatchesDateRange,
-  noteMatchesFacets,
-  noteMatchesSearchOperators,
-  noteTabLabel,
-  notebooksMatchingFilter,
-  notesToEnex,
-  parseCollapsedStacks,
-  parseCompletedReminders,
-  parseEditorChrome,
-  parseLastSession,
   parsePaneLayout,
-  parseRecentSearches,
-  parseSavedSearches,
-  parseSearchQuery,
-  pushNavHistory,
-  reminderFromPreset,
-  reminderFromSnooze,
-  rememberSearch,
-  reorderById,
-  resizeSidebarTo,
-  resolveListView,
-  resolveThumbnailUrl,
-  safeFilename,
-  sameNavLocation,
-  sidebarFilterLabel,
-  sidebarFlyoutTitle,
-  snippetParts,
-  stepNavBack,
-  stepNavForward,
-  toDatetimeLocalValue,
-  toggleCollapsedId,
-  toggleCompletedReminder,
-  toggleListFacet,
+  revealNoteBrowser,
   toggleNoteExpanded,
   toggleNoteListHidden,
-  toggleSidebarRail,
-  windowTitleForNote,
+} from "./ui/panes";
+import {
+  NOTE_DRAG_TYPE,
+  adjacentNoteId,
+  attachmentCountLabel,
+  decodeNoteDrag,
+  encodeNoteDrag,
+  groupNotesByNotebook,
+  groupNotesForList,
+  resolveListView,
+  type ListView,
+} from "./ui/noteList";
+import {
+  RECENT_SEARCHES_KEY,
+  SAVED_SEARCHES_KEY,
+  noteMatchesDateRange,
+  noteMatchesFacets,
+  parseRecentSearches,
+  parseSavedSearches,
+  rememberSearch,
+  snippetParts,
+  toggleListFacet,
   deleteSavedSearch,
   upsertSavedSearch,
   type DateRangeFacet,
-  type ListView,
   type NoteListFacet,
-  type ReminderPreset,
+} from "./ui/search";
+import {
+  COLLAPSED_STACKS_KEY,
+  collapseAllIds,
+  hasVisibleSidebarNotebooks,
+  matchesSidebarFilter,
+  sidebarFlyoutAfterClick,
+  sidebarFlyoutAfterHover,
+  notebooksMatchingFilter,
+  parseCollapsedStacks,
+  sidebarFilterLabel,
+  sidebarFlyoutTitle,
+  toggleCollapsedId,
   type SidebarFlyout,
   type SidebarFlyoutKind,
+} from "./ui/sidebar";
+import {
+  COMPLETED_REMINDERS_KEY,
+  formatReminderLabel,
+  fromDatetimeLocalValue,
+  groupRemindersForList,
+  isReminderDone,
+  isReminderOverdue,
+  parseCompletedReminders,
+  reminderFromPreset,
+  reminderFromSnooze,
+  toDatetimeLocalValue,
+  toggleCompletedReminder,
+  type ReminderPreset,
   type SnoozePreset,
-  type NavLocation,
-  type PaletteAction,
-} from "./uiChrome";
-
-const PALETTE_ACTIONS: PaletteAction[] = [
-  { id: "new-note", label: "New note", hint: "Ctrl/⌘ N" },
-  { id: "search", label: "Search notes", hint: "Ctrl/⌘ K" },
-  { id: "jump", label: "Jump to…", hint: "Ctrl/⌘ J" },
-  { id: "settings", label: "Settings", hint: "Ctrl/⌘ ," },
-  { id: "templates", label: "Browse templates" },
-  { id: "print", label: "Print note", hint: "Ctrl/⌘ P" },
-  { id: "email", label: "Email note…" },
-  { id: "theme", label: "Toggle theme" },
-  { id: "focus", label: "Focus mode", hint: "F11" },
-  { id: "back", label: "Go back", hint: "Ctrl/⌘ [" },
-  { id: "forward", label: "Go forward", hint: "Ctrl/⌘ ]" },
-  { id: "new-notebook", label: "New notebook…" },
-  { id: "new-tag", label: "New tag…" },
-  { id: "reminders", label: "Show reminders" },
-  { id: "shortcuts", label: "Show shortcuts" },
-  { id: "all-notes", label: "All notes" },
-  { id: "info", label: "Note info", hint: "Ctrl/⌘ Shift I" },
-  { id: "outline", label: "Toggle note outline" },
-];
+} from "./ui/reminders";
+import {
+  checklistProgressLabel,
+  countWords,
+  htmlToMarkdown,
+  htmlToPlainText,
+  resolveThumbnailUrl,
+} from "./ui/noteContent";
+import {
+  copyTextToClipboard,
+  downloadTextFile,
+  noteAppLink,
+  noteMailtoHref,
+  notesToEnex,
+  safeFilename,
+} from "./ui/share";
+import { LAST_SESSION_KEY, parseLastSession } from "./ui/navigation";
 
 export default function App() {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState("0.1.1");
-  const [notebooks, setNotebooks] = useState<Notebook[]>([]);
-  const [stacks, setStacks] = useState<Stack[]>([]);
-  const [tags, setTags] = useState<Tag[]>([]);
-  const [notes, setNotes] = useState<NoteSummary[]>([]);
-  const [templates, setTemplates] = useState<NoteSummary[]>([]);
+  const notebooksStore = useNoteStore(noteStore, "notebooks");
+  const notebooks = notebooksStore.data;
+  const stacksStore = useNoteStore(noteStore, "stacks");
+  const stacks = stacksStore.data;
+  const tagsStore = useNoteStore(noteStore, "tags");
+  const tags = tagsStore.data;
+  const notesStore = useNoteStore(noteStore, "notes");
+  const notes = notesStore.data;
+  const notesLoaded = notesStore.loaded;
+  const templatesStore = useNoteStore(noteStore, "templates");
+  const templates = templatesStore.data;
   const [catalog, setCatalog] = useState<TemplateCatalogItem[]>([]);
-  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set());
-  const [activeNote, setActiveNote] = useState<Note | null>(null);
-  const [filter, setFilter] = useState<ViewFilter>({ type: "all" });
-  const [tabs, setTabs] = useState<NoteTab[]>(() => [makeNoteTab()]);
-  const [activeTabId, setActiveTabId] = useState(() => tabs[0].id);
+  const { tabs, activeTabId, activeNote, selectedNoteIds, filter, navPast, navFuture } =
+    useNoteSession(noteSession);
   const [searchInput, setSearchInput] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [recentSearches, setRecentSearches] = useState(() =>
@@ -208,14 +186,11 @@ export default function App() {
   const [listFacets, setListFacets] = useState<NoteListFacet[]>([]);
   const [listDateRange, setListDateRange] = useState<DateRangeFacet>("any");
   const [searchScope, setSearchScope] = useState<{ id: string; name: string } | null>(null);
-  const [navPast, setNavPast] = useState<NavLocation[]>([]);
-  const [navFuture, setNavFuture] = useState<NavLocation[]>([]);
   const [collapsedStacks, setCollapsedStacks] = useState(() =>
     parseCollapsedStacks(
       typeof localStorage === "undefined" ? null : localStorage.getItem(COLLAPSED_STACKS_KEY)
     )
   );
-  const [accountMenu, setAccountMenu] = useState(false);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [showNewNotebook, setShowNewNotebook] = useState(false);
   const [showNewStack, setShowNewStack] = useState(false);
@@ -247,49 +222,47 @@ export default function App() {
   const [prefs, setPrefs] = useState<Preferences>(defaultPreferences);
   const [account, setAccount] = useState<Account | null>(null);
   const [storage, setStorage] = useState({ database: "", attachments: "" });
-  const [shortcutIds, setShortcutIds] = useState<Set<string>>(new Set());
-  const [shortcutNotes, setShortcutNotes] = useState<NoteSummary[]>([]);
-  const [sidebarFlyout, setSidebarFlyout] = useState<SidebarFlyout>(null);
-  const [showInfo, setShowInfo] = useState(false);
-  const [findTick, setFindTick] = useState(0);
-  const [replaceTick, setReplaceTick] = useState(0);
-  const [paneLayout, setPaneLayout] = useState(() =>
-    parsePaneLayout(
-      typeof localStorage === "undefined" ? null : localStorage.getItem(PANE_LAYOUT_KEY)
-    )
+  const shortcutsStore = useNoteStore(noteStore, "shortcuts");
+  const shortcutNotes = shortcutsStore.data;
+  const shortcutIds = useMemo(
+    () => new Set(shortcutNotes.map((n) => n.id)),
+    [shortcutNotes]
   );
-  const [counts, setCounts] = useState<SidebarCounts>({
-    notes: 0,
-    reminders: 0,
-    trash: 0,
-    templates: 0,
-    shortcuts: 0,
+  const [sidebarFlyout, setSidebarFlyout] = useState<SidebarFlyout>(null);
+  const [sidebarFlyoutPinned, setSidebarFlyoutPinned] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
+  const editorHandleRef = useRef<EditorHandle | null>(null);
+  const { runEditorCommand, openFind, openReplace } = useMemo(
+    () => editorCommands(editorHandleRef),
+    []
+  );
+  const [paneLayout, setPaneLayout] = useState(() => {
+    const layout = parsePaneLayout(
+      typeof localStorage === "undefined" ? null : localStorage.getItem(PANE_LAYOUT_KEY)
+    );
+    const session = parseLastSession(
+      typeof localStorage === "undefined" ? null : localStorage.getItem(LAST_SESSION_KEY)
+    );
+    return session?.noteId ? layout : revealNoteBrowser(layout);
   });
+  const countsStore = useNoteStore(noteStore, "counts");
+  const counts = countsStore.data;
+  const filesStore = useNoteStore(noteStore, "files");
+  const files = filesStore.data;
+  const filesLoaded = filesStore.loaded;
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const sidebarFilterRef = useRef<HTMLInputElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
-  const skipNextSave = useRef(false);
-  const lastClickedNoteId = useRef<string | null>(null);
   const noteListRef = useRef<HTMLDivElement>(null);
   const dragSelectRef = useRef<{
     anchorId: string | null;
     dragging: boolean;
   }>({ anchorId: null, dragging: false });
   const skipNoteClickRef = useRef(false);
-  const tabsRef = useRef(tabs);
-  tabsRef.current = tabs;
-  const activeTabIdRef = useRef(activeTabId);
-  activeTabIdRef.current = activeTabId;
-  const activeNoteRef = useRef(activeNote);
-  activeNoteRef.current = activeNote;
-  const filterRef = useRef(filter);
-  filterRef.current = filter;
-  const ignoreNavRef = useRef(false);
-  const navSeededRef = useRef(false);
-  const navCurrentRef = useRef<NavLocation>({ filter: { type: "all" }, noteId: null });
   const sessionReadyRef = useRef(false);
   const hoverTimerRef = useRef<number | null>(null);
+  const sidebarFlyoutCloseTimerRef = useRef<number | null>(null);
 
   const openSettings = (section: SettingsSection = "application") => {
     setSettingsSection(section);
@@ -304,29 +277,16 @@ export default function App() {
     return notebooks.find((n) => n.is_default) || notebooks[0];
   }, [notebooks, prefs.default_notebook_id]);
 
-  const refreshMeta = useCallback(async () => {
-    const [nb, st, tg, sc, tm, sidebarCounts] = await Promise.all([
-      api.listNotebooks(),
-      api.listStacks(),
-      api.listTags(),
-      api.listShortcuts(),
-      api.listNotes({ templates: true }),
-      api.sidebarCounts().catch(() => ({
-        notes: 0,
-        reminders: 0,
-        trash: 0,
-        templates: 0,
-        shortcuts: 0,
-      })),
-    ]);
-    setNotebooks(nb);
-    setStacks(st);
-    setTags(tg);
-    setShortcutIds(new Set(sc.map((n) => n.id)));
-    setShortcutNotes(sc);
-    setTemplates(tm);
-    setCounts(sidebarCounts);
-  }, []);
+  // One-line wrappers over the note store so the ~40 existing call sites
+  // keep working unchanged. See noteStore.ts for the actual fetch/cache
+  // logic and the afterX() verbs that replace "did I remember to call
+  // refreshMeta()?" for specific mutations.
+  const refreshMeta = useCallback(() => noteStore.invalidate("meta"), []);
+  const refreshNotes = useCallback(() => noteStore.invalidate("notes"), []);
+
+  // Keep the store's notes fetcher pointed at the current view. A no-op when
+  // nothing actually changed, so calling it every render is cheap.
+  noteStore.setContext({ filter, sortBy: prefs.sort_by, searchScope });
 
   const persistPaneLayout = (next: typeof paneLayout) => {
     setPaneLayout(next);
@@ -363,7 +323,7 @@ export default function App() {
     if (!cleaned) return;
     persistRecentSearches(rememberSearch(recentSearches, cleaned));
     setSearchInput(cleaned);
-    setFilter({ type: "search", query: cleaned });
+    noteSession.setFilter({ type: "search", query: cleaned });
     setSearchOpen(false);
   };
 
@@ -404,8 +364,46 @@ export default function App() {
       persistPaneLayout({ ...paneLayout, sidebarCollapsed: false });
     }
     setSidebarFlyout(kind);
+    setSidebarFlyoutPinned(true);
   };
 
+
+  const cancelSidebarFlyoutClose = () => {
+    if (sidebarFlyoutCloseTimerRef.current === null) return;
+    window.clearTimeout(sidebarFlyoutCloseTimerRef.current);
+    sidebarFlyoutCloseTimerRef.current = null;
+  };
+
+  const closeSidebarFlyout = () => {
+    cancelSidebarFlyoutClose();
+    setSidebarFlyout(null);
+    setSidebarFlyoutPinned(false);
+    setSidebarFilter("");
+    setSidebarFilterOpen(false);
+  };
+
+  /** Hover previews a section; a click pins it until navigation, Escape, or another click. */
+  const previewSidebarFlyout = (kind: SidebarFlyoutKind) => {
+    cancelSidebarFlyoutClose();
+    const next = sidebarFlyoutAfterHover(sidebarFlyout, sidebarFlyoutPinned, kind);
+    if (next.flyout !== sidebarFlyout) {
+      setSidebarFilter("");
+      setSidebarFilterOpen(false);
+    }
+    setSidebarFlyout(next.flyout);
+    setSidebarFlyoutPinned(next.pinned);
+  };
+
+  const scheduleSidebarFlyoutClose = () => {
+    cancelSidebarFlyoutClose();
+    if (sidebarFlyoutPinned) return;
+    sidebarFlyoutCloseTimerRef.current = window.setTimeout(() => {
+      setSidebarFlyout(null);
+      setSidebarFilter("");
+      setSidebarFilterOpen(false);
+      sidebarFlyoutCloseTimerRef.current = null;
+    }, 180);
+  };
   const openSidebarFilter = (kind: "notebooks" | "tags" = "notebooks") => {
     setSidebarFilterOpen(true);
     revealSidebarFlyout(kind);
@@ -414,287 +412,47 @@ export default function App() {
 
   /** Opening a different section starts it unfiltered, so the panel matches its label. */
   const openSidebarFlyout = (kind: SidebarFlyoutKind) => {
-    const next = nextSidebarFlyout(sidebarFlyout, kind);
-    setSidebarFlyout(next);
-    if (next !== sidebarFlyout) {
+    cancelSidebarFlyoutClose();
+    const next = sidebarFlyoutAfterClick(sidebarFlyout, sidebarFlyoutPinned, kind);
+    if (!next.flyout) {
+      closeSidebarFlyout();
+      return;
+    }
+    setSidebarFlyout(next.flyout);
+    setSidebarFlyoutPinned(next.pinned);
+    if (next.flyout !== sidebarFlyout) {
       setSidebarFilter("");
       setSidebarFilterOpen(false);
     }
   };
 
-  const refreshNotes = useCallback(async () => {
-    let list: NoteSummary[] = [];
-    switch (filter.type) {
-      case "all":
-        list = await api.listNotes({ templates: false });
-        break;
-      case "notebook":
-        list = await api.listNotes({ notebookId: filter.id, templates: false });
-        break;
-      case "tag":
-        list = await api.listNotes({ tagId: filter.id, templates: false });
-        break;
-      case "shortcuts":
-        list = await api.listShortcuts();
-        break;
-      case "reminders":
-        list = (await api.listNotes({ templates: false })).filter((note) => note.reminder_at);
-        break;
-      case "templates":
-        list = await api.listNotes({ templates: true });
-        break;
-      case "trash":
-        list = await api.listNotes({ trash: true });
-        break;
-      case "search": {
-        const parsed = parseSearchQuery(filter.query);
-        if (parsed.text) {
-          list = (await api.search(parsed.text)).notes;
-        } else {
-          list = await api.listNotes({ templates: false });
-        }
-        list = list.filter((note) => noteMatchesSearchOperators(note, parsed));
-        if (searchScope) {
-          list = list.filter((note) => note.notebook_id === searchScope.id);
-        }
-        break;
-      }
+  useEffect(() => () => {
+    if (sidebarFlyoutCloseTimerRef.current !== null) {
+      window.clearTimeout(sidebarFlyoutCloseTimerRef.current);
     }
-    const sorted = [...list].sort((a, b) => {
-      if (filter.type === "reminders") {
-        return (
-          new Date(a.reminder_at || 0).getTime() - new Date(b.reminder_at || 0).getTime()
-        );
-      }
-      if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
-      if (prefs.sort_by === "title") return a.title.localeCompare(b.title);
-      if (prefs.sort_by === "created") {
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-      }
-      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-    });
-    setNotes(sorted);
-  }, [filter, prefs.sort_by, searchScope]);
-
-  const loadNote = useCallback(async (id: string, tabId?: string) => {
-    skipNextSave.current = true;
-    const note = await api.getNote(id);
-    const targetTabId = tabId ?? activeTabIdRef.current;
-    setActiveNote(note);
-    setSelectedNoteIds(new Set([id]));
-    lastClickedNoteId.current = id;
-    setShowNoteMenu(false);
-    setTabs((current) =>
-      current.map((tab) =>
-        tab.id === targetTabId
-          ? {
-              ...tab,
-              noteId: note.id,
-              title: noteTabLabel(note.title, true),
-              filter: filterRef.current,
-            }
-          : tab
-      )
-    );
   }, []);
 
-  const currentNavLocation = (): NavLocation => ({
-    filter: filterRef.current,
-    noteId: activeNoteRef.current?.id ?? null,
-  });
-
-  const applyNavLocation = (location: NavLocation) => {
-    ignoreNavRef.current = true;
-    let nextFilter: ViewFilter = { type: "all" };
-    if (location.filter.type === "notebook") {
-      nextFilter = { type: "notebook", id: location.filter.id || "", name: location.filter.name || "" };
-    } else if (location.filter.type === "tag") {
-      nextFilter = { type: "tag", id: location.filter.id || "", name: location.filter.name || "" };
-    } else if (location.filter.type === "search") {
-      nextFilter = { type: "search", query: location.filter.query || "" };
-    } else if (location.filter.type === "shortcuts") {
-      nextFilter = { type: "shortcuts" };
-    } else if (location.filter.type === "reminders") {
-      nextFilter = { type: "reminders" };
-    } else if (location.filter.type === "templates") {
-      nextFilter = { type: "templates" };
-    } else if (location.filter.type === "trash") {
-      nextFilter = { type: "trash" };
-    }
-    setFilter(nextFilter);
-    if (nextFilter.type === "search") setSearchInput(nextFilter.query);
-    navCurrentRef.current = location;
-    if (location.noteId) {
-      void loadNote(location.noteId).finally(() => {
-        navCurrentRef.current = location;
-        ignoreNavRef.current = false;
-      });
-      return;
-    }
-    skipNextSave.current = true;
-    setActiveNote(null);
-    setSelectedNoteIds(new Set());
-    lastClickedNoteId.current = null;
-    ignoreNavRef.current = false;
-  };
+  const loadNote = useCallback(
+    (id: string, tabId?: string) => noteSession.loadNoteInto(id, tabId),
+    []
+  );
 
   const goBack = () => {
-    const stepped = stepNavBack(navPast, currentNavLocation(), navFuture);
-    if (!stepped) return;
-    setNavPast(stepped.past);
-    setNavFuture(stepped.future);
-    applyNavLocation(stepped.current);
+    const location = noteSession.goBack();
+    if (location?.filter.type === "search") setSearchInput(location.filter.query ?? "");
   };
 
   const goForward = () => {
-    const stepped = stepNavForward(navPast, currentNavLocation(), navFuture);
-    if (!stepped) return;
-    setNavPast(stepped.past);
-    setNavFuture(stepped.future);
-    applyNavLocation(stepped.current);
+    const location = noteSession.goForward();
+    if (location?.filter.type === "search") setSearchInput(location.filter.query ?? "");
   };
-
-  const rememberCurrentTab = () => {
-    const currentId = activeTabIdRef.current;
-    const note = activeNoteRef.current;
-    const currentFilter = filterRef.current;
-    setTabs((current) =>
-      current.map((tab) =>
-        tab.id === currentId
-          ? {
-              ...tab,
-              filter: currentFilter,
-              noteId: note?.id ?? null,
-              title: noteTabLabel(note?.title, Boolean(note)),
-            }
-          : tab
-      )
-    );
-  };
-
-  const switchToTab = useCallback(async (tabId: string) => {
-    if (tabId === activeTabIdRef.current) return;
-    ignoreNavRef.current = true;
-    rememberCurrentTab();
-    const next = tabsRef.current.find((tab) => tab.id === tabId);
-    if (!next) {
-      ignoreNavRef.current = false;
-      return;
-    }
-    activeTabIdRef.current = tabId;
-    setActiveTabId(tabId);
-    setFilter(next.filter);
-    if (next.noteId) {
-      await loadNote(next.noteId, tabId);
-      navCurrentRef.current = { filter: next.filter, noteId: next.noteId };
-      ignoreNavRef.current = false;
-      return;
-    }
-    skipNextSave.current = true;
-    setActiveNote(null);
-    setSelectedNoteIds(new Set());
-    lastClickedNoteId.current = null;
-    navCurrentRef.current = { filter: next.filter, noteId: null };
-    ignoreNavRef.current = false;
-  }, [loadNote]);
-
-  const openNewTab = useCallback(() => {
-    ignoreNavRef.current = true;
-    rememberCurrentTab();
-    const tab = makeNoteTab({ filter: { type: "all" } });
-    setTabs((current) => [...current, tab]);
-    activeTabIdRef.current = tab.id;
-    setActiveTabId(tab.id);
-    setFilter({ type: "all" });
-    skipNextSave.current = true;
-    setActiveNote(null);
-    setSelectedNoteIds(new Set());
-    lastClickedNoteId.current = null;
-    navCurrentRef.current = { filter: { type: "all" }, noteId: null };
-    ignoreNavRef.current = false;
-  }, []);
-
-  const closeTab = useCallback(
-    (tabId: string) => {
-      const currentTabs = tabsRef.current;
-      const closing = currentTabs.find((tab) => tab.id === tabId);
-      if (!closing) return;
-      ignoreNavRef.current = true;
-
-      if (currentTabs.length === 1) {
-        skipNextSave.current = true;
-        setActiveNote(null);
-        setSelectedNoteIds(new Set());
-        lastClickedNoteId.current = null;
-        const emptied = {
-          ...closing,
-          noteId: null,
-          title: noteTabLabel(null, false),
-        };
-        tabsRef.current = [emptied];
-        setTabs([emptied]);
-        navCurrentRef.current = { filter: filterRef.current, noteId: null };
-        ignoreNavRef.current = false;
-        return;
-      }
-
-      const remaining = currentTabs.filter((tab) => tab.id !== tabId);
-      const nextId = nextActiveTabId(
-        currentTabs.map((tab) => tab.id),
-        tabId,
-        activeTabIdRef.current
-      );
-      tabsRef.current = remaining;
-      setTabs(remaining);
-      if (!nextId || nextId === activeTabIdRef.current) {
-        ignoreNavRef.current = false;
-        return;
-      }
-      const next = remaining.find((tab) => tab.id === nextId);
-      if (!next) {
-        ignoreNavRef.current = false;
-        return;
-      }
-      activeTabIdRef.current = next.id;
-      setActiveTabId(next.id);
-      setFilter(next.filter);
-      if (next.noteId) {
-        void loadNote(next.noteId, next.id).then(() => {
-          navCurrentRef.current = { filter: next.filter, noteId: next.noteId };
-          ignoreNavRef.current = false;
-        });
-        return;
-      }
-      skipNextSave.current = true;
-      setActiveNote(null);
-      setSelectedNoteIds(new Set());
-      lastClickedNoteId.current = null;
-      navCurrentRef.current = { filter: next.filter, noteId: null };
-      ignoreNavRef.current = false;
-    },
-    [loadNote]
-  );
 
   const openInNewTab = useCallback(
     async (noteId: string) => {
-      const existing = tabsRef.current.find((tab) => tab.noteId === noteId);
-      if (existing) {
-        await switchToTab(existing.id);
-        return;
-      }
-      rememberCurrentTab();
       const summary = notes.find((note) => note.id === noteId);
-      const tab = makeNoteTab({
-        noteId,
-        title: summary?.title || activeNoteRef.current?.title,
-        filter: filterRef.current,
-      });
-      setTabs((current) => [...current, tab]);
-      activeTabIdRef.current = tab.id;
-      setActiveTabId(tab.id);
-      await loadNote(noteId, tab.id);
+      await noteSession.openInNewTab(noteId, summary?.title || activeNote?.title);
     },
-    [loadNote, notes, switchToTab]
+    [notes, activeNote]
   );
 
   const handleNoteClick = useCallback(
@@ -704,24 +462,13 @@ export default function App() {
         event.preventDefault();
         return;
       }
-      const meta = event.metaKey || event.ctrlKey;
-
-      if (event.shiftKey) {
-        setSelectedNoteIds(new Set(noteIdsInRange(notes, lastClickedNoteId.current, noteId)));
-        return;
-      }
-
-      if (meta) {
-        setSelectedNoteIds((prev) => toggleNoteId(prev, noteId));
-        lastClickedNoteId.current = noteId;
-        return;
-      }
-
-      lastClickedNoteId.current = noteId;
-      setSelectedNoteIds(new Set([noteId]));
-      void loadNote(noteId);
+      noteSession.clickNote(
+        noteId,
+        { shift: event.shiftKey, meta: event.metaKey || event.ctrlKey },
+        notes
+      );
     },
-    [notes, loadNote]
+    [notes]
   );
 
   const endNoteDragSelect = useCallback(() => {
@@ -745,8 +492,7 @@ export default function App() {
       if (noteId === drag.anchorId && !drag.dragging) return;
       drag.dragging = true;
       noteListRef.current?.classList.add("is-drag-selecting");
-      lastClickedNoteId.current = drag.anchorId;
-      setSelectedNoteIds(new Set(noteIdsInRange(notes, drag.anchorId, noteId)));
+      noteSession.dragSelectTo(drag.anchorId, noteId, notes);
     },
     [notes]
   );
@@ -805,12 +551,15 @@ export default function App() {
           setReady(true);
           await refreshMeta();
           if (loadedPrefs.startup_view === "shortcuts") {
-            setFilter({ type: "shortcuts" });
+            noteSession.setFilter({ type: "shortcuts" });
           } else {
-            const session = parseLastSession(
+            const lastSession = parseLastSession(
               typeof localStorage === "undefined" ? null : localStorage.getItem(LAST_SESSION_KEY)
             );
-            if (session) applyNavLocation(session);
+            if (lastSession) {
+              const location = noteSession.applyNavLocation(lastSession);
+              if (location.filter.type === "search") setSearchInput(location.filter.query ?? "");
+            }
           }
           sessionReadyRef.current = true;
           return;
@@ -822,41 +571,43 @@ export default function App() {
     })();
   }, [refreshMeta]);
 
+  // The single driver for reloading the notes list: any change to the view
+  // the store's notes fetcher reads from (filter, sort, search scope) lands
+  // in setContext during render, and this refetches once afterwards.
   useEffect(() => {
     if (ready) refreshNotes().catch(console.error);
-  }, [ready, filter, refreshNotes]);
+  }, [ready, filter, prefs.sort_by, searchScope, refreshNotes]);
+
+  /**
+   * The Files view spans every notebook, so it loads its own list on entry.
+   * The store's per-key generation guard replaces the hand-rolled
+   * `cancelled` flag this effect used to need.
+   */
+  useEffect(() => {
+    if (!ready || filter.type !== "files") return;
+    void noteStore.invalidate("files");
+  }, [ready, filter, counts.files]);
 
   useEffect(() => {
-    const noteIds = new Set(notes.map((n) => n.id));
-    setSelectedNoteIds((prev) => pruneNoteIds(prev, noteIds));
+    noteSession.pruneSelection(notes.map((n) => n.id));
   }, [notes]);
 
   useEffect(() => {
     if (!ready) return;
-    const noteIds = new Set(notes.map((note) => note.id));
-    setTabs((current) => {
-      const next = current.map((tab) =>
-        tab.noteId && !noteIds.has(tab.noteId)
-          ? { ...tab, noteId: null, title: noteTabLabel(null, false) }
-          : tab
-      );
-      const changed = next.some((tab, index) => tab !== current[index]);
-      if (!changed) return current;
-      tabsRef.current = next;
-      return next;
-    });
+    noteSession.dropMissingTabs(notes.map((note) => note.id));
   }, [notes, ready]);
 
   useEffect(() => {
-    if (!activeNote) return;
-    setTabs((current) =>
-      current.map((tab) =>
-        tab.id === activeTabIdRef.current && tab.noteId === activeNote.id
-          ? { ...tab, title: noteTabLabel(activeNote.title, true) }
-          : tab
-      )
-    );
+    noteSession.syncActiveTabTitle();
   }, [activeNote?.id, activeNote?.title]);
+
+  // The note-open invariant used to be written longhand at every call site
+  // that could change the active note (loadNote, tab switch, close tab, nav);
+  // now that they all funnel through noteSession, this one effect covers all
+  // of them.
+  useEffect(() => {
+    setShowNoteMenu(false);
+  }, [activeNote?.id]);
 
   useEffect(() => {
     if (!activeNote) setShowInfo(false);
@@ -887,7 +638,7 @@ export default function App() {
           reminder_at: patch.reminder_at,
           source_url: patch.source_url,
         });
-        setActiveNote(updated);
+        noteSession.setActiveNote(updated);
         setSaveState("saved");
         await refreshNotes();
         if (updated.is_template) await refreshMeta();
@@ -911,17 +662,14 @@ export default function App() {
       reminder_at: patch.reminder_at,
       source_url: patch.source_url,
     });
-    if (activeNote?.id === id) setActiveNote(updated);
+    if (activeNote?.id === id) noteSession.setActiveNote(updated);
     await refreshNotes();
     return updated;
   };
 
   useEffect(() => {
     if (!activeNote) return;
-    if (skipNextSave.current) {
-      skipNextSave.current = false;
-      return;
-    }
+    if (noteSession.consumeSkipNextSave()) return;
     const timer = setTimeout(() => {
       saveNote({
         title: activeNote.title,
@@ -961,14 +709,18 @@ export default function App() {
     filter,
     prefs,
     defaultNotebookId: defaultNotebook?.id,
-    lastClickedNoteId,
-    setActiveNote,
-    setSelectedNoteIds,
+    lastClickedNoteId: noteSession.lastClickedNoteIdRef,
+    setActiveNote: noteSession.setActiveNote,
+    setSelectedNoteIds: noteSession.setSelectedNoteIds,
     setPendingConfirm,
     setNotebookPicker,
     setShowGallery,
     setShowNewMenu,
-    refreshNotes,
+    // Note-changing actions (delete, restore, pin, archive, shortcut,
+    // create, duplicate, ...) always need notes + counts + shortcuts +
+    // templates refreshed together; afterNoteChange() is the single verb
+    // for that, so noteActions.ts's callers can't forget the counts half.
+    refreshNotes: () => noteStore.afterNoteChange(),
     refreshMeta,
     loadNote,
     focusTitle: () => {
@@ -993,7 +745,7 @@ export default function App() {
     if (ids.length && !(activeNote && ids.length === 1 && ids[0] === activeNote.id)) {
       await applyToNotes(ids, async (id) => {
         const updated = await api.updateNote(id, { reminder_at: at });
-        if (activeNote?.id === id) setActiveNote(updated);
+        if (activeNote?.id === id) noteSession.setActiveNote(updated);
       });
       return;
     }
@@ -1100,24 +852,20 @@ export default function App() {
     if (!ids.length) return;
     await applyToNotes(ids, async (id) => {
       const updated = await api.updateNote(id, { notebook_id: notebookId });
-      if (activeNote?.id === id) setActiveNote(updated);
-    }, { refreshMeta: true });
+      if (activeNote?.id === id) noteSession.setActiveNote(updated);
+    });
   };
 
   const tagDroppedNotes = async (tagId: string, event: DragEvent) => {
     const ids = dropNoteIds(event);
     if (!ids.length) return;
-    await applyToNotes(
-      ids,
-      async (id) => {
-        const summary = notes.find((note) => note.id === id);
-        const current = summary?.tag_ids || (activeNote?.id === id ? activeNote.tag_ids : []);
-        if (current.includes(tagId)) return;
-        const updated = await api.updateNote(id, { tag_ids: [...current, tagId] });
-        if (activeNote?.id === id) setActiveNote(updated);
-      },
-      { refreshMeta: true }
-    );
+    await applyToNotes(ids, async (id) => {
+      const summary = notes.find((note) => note.id === id);
+      const current = summary?.tag_ids || (activeNote?.id === id ? activeNote.tag_ids : []);
+      if (current.includes(tagId)) return;
+      const updated = await api.updateNote(id, { tag_ids: [...current, tagId] });
+      if (activeNote?.id === id) noteSession.setActiveNote(updated);
+    });
   };
 
   const allowNoteDrop = (event: DragEvent, key: string) => {
@@ -1183,218 +931,27 @@ export default function App() {
     );
   }, [ready, filter, activeNote?.id]);
 
+  // The listener is registered once; the handler body is swapped through a ref
+  // each render so it always sees the latest closures. (The previous version had
+  // no dependency array and re-added its listener on every render.) The ref hooks
+  // must stay above the boot-screen early returns; only the assignment below can
+  // live next to menuCtx.
+  const onKeyRef = useRef<(e: KeyboardEvent) => void>(() => {});
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => onKeyRef.current(e);
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
   useEffect(() => {
     document.title = windowTitleForNote(activeNote ? activeNote.title : null);
   }, [activeNote]);
 
   useEffect(() => {
     if (!ready) return;
-    const next: NavLocation = {
-      filter,
-      noteId: activeNote?.id ?? null,
-    };
-    if (!navSeededRef.current) {
-      navSeededRef.current = true;
-      navCurrentRef.current = next;
-      return;
-    }
-    if (sameNavLocation(navCurrentRef.current, next)) {
-      navCurrentRef.current = next;
-      return;
-    }
-    if (ignoreNavRef.current) {
-      navCurrentRef.current = next;
-      return;
-    }
-    const pushed = pushNavHistory(navPast, navCurrentRef.current, next);
-    navCurrentRef.current = next;
-    if (!pushed) return;
-    setNavPast(pushed.past);
-    setNavFuture(pushed.future);
-  }, [ready, filter, activeNote?.id, navPast]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const meta = e.metaKey || e.ctrlKey;
-      if (meta && e.key === "n" && e.shiftKey) {
-        e.preventDefault();
-        setShowGallery(true);
-      } else if (meta && e.key === "n") {
-        e.preventDefault();
-        createNote();
-      } else if (meta && e.key === "f" && e.shiftKey) {
-        e.preventDefault();
-        openGlobalSearch();
-      } else if (meta && (e.key === "k" || e.key === "K") && e.shiftKey) {
-        e.preventDefault();
-        openGlobalSearch();
-      } else if (meta && (e.key === "k" || e.key === "K") && !e.shiftKey) {
-        e.preventDefault();
-        openGlobalSearch();
-      } else if (meta && e.key === "f") {
-        e.preventDefault();
-        if (activeNote) setFindTick((tick) => tick + 1);
-        else openGlobalSearch();
-      } else if (meta && e.key === "h") {
-        e.preventDefault();
-        if (activeNote) setReplaceTick((tick) => tick + 1);
-      } else if (meta && (e.key === "=" || e.key === "+")) {
-        e.preventDefault();
-        persistEditorChrome({
-          ...editorChrome,
-          zoom: nextZoom(editorChrome.zoom, 1),
-        });
-      } else if (meta && e.key === "-") {
-        e.preventDefault();
-        persistEditorChrome({
-          ...editorChrome,
-          zoom: nextZoom(editorChrome.zoom, -1),
-        });
-      } else if (meta && e.key === "0") {
-        e.preventDefault();
-        persistEditorChrome({
-          ...editorChrome,
-          zoom: nextZoom(editorChrome.zoom, 0),
-        });
-      } else if (e.key === "F11") {
-        e.preventDefault();
-        setFocusMode((open) => !open);
-      } else if (e.altKey && meta && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
-        e.preventDefault();
-        persistPaneLayout(
-          e.key === "ArrowLeft"
-            ? toggleNoteListHidden(paneLayout)
-            : toggleNoteExpanded(paneLayout)
-        );
-      } else if (e.altKey && meta && (e.key === "s" || e.key === "S")) {
-        e.preventDefault();
-        persistPaneLayout(toggleSidebarRail(paneLayout));
-      } else if (meta && (e.key === "[" || e.key === "BracketLeft") && !e.altKey) {
-        e.preventDefault();
-        goBack();
-      } else if (meta && (e.key === "]" || e.key === "BracketRight") && !e.altKey) {
-        e.preventDefault();
-        goForward();
-      } else if (e.key === "Escape" && focusMode) {
-        e.preventDefault();
-        setFocusMode(false);
-      } else if (e.key === "Escape" && accountMenu) {
-        e.preventDefault();
-        setAccountMenu(false);
-      } else if (e.key === "Escape" && sidebarFlyout) {
-        e.preventDefault();
-        setSidebarFlyout(null);
-      } else if (e.key === "Escape" && showPalette) {
-        e.preventDefault();
-        setShowPalette(false);
-      } else if (e.key === "Escape" && searchOpen) {
-        e.preventDefault();
-        closeSearch();
-      } else if (e.key === "Escape" && hoverPreview) {
-        e.preventDefault();
-        hideHoverPreview();
-      } else if (meta && e.key === "j") {
-        e.preventDefault();
-        setShowJump(true);
-      } else if (meta && (e.key === "p" || e.key === "P") && e.shiftKey) {
-        e.preventDefault();
-        setShowPalette(true);
-      } else if (meta && (e.key === "p" || e.key === "P")) {
-        e.preventDefault();
-        window.print();
-      } else if (meta && e.key === "i" && e.shiftKey && activeNote) {
-        e.preventDefault();
-        setShowInfo((open) => !open);
-      } else if (
-        (e.key === "ArrowDown" || e.key === "ArrowUp") &&
-        !isTextInputFocused() &&
-        visibleNotes.length > 0
-      ) {
-        e.preventDefault();
-        const current =
-          lastClickedNoteId.current ||
-          (selectedNoteIds.size === 1 ? [...selectedNoteIds][0] : null);
-        const nextId = adjacentNoteId(
-          visibleNotes,
-          current,
-          e.key === "ArrowDown" ? 1 : -1
-        );
-        if (nextId) {
-          lastClickedNoteId.current = nextId;
-          if (e.shiftKey && current) {
-            setSelectedNoteIds(new Set(noteIdsInRange(notes, current, nextId)));
-          } else {
-            void loadNote(nextId);
-          }
-        }
-      } else if (
-        (e.key === "j" || e.key === "k" || e.key === "J" || e.key === "K") &&
-        !meta &&
-        !e.altKey &&
-        !isTextInputFocused() &&
-        visibleNotes.length > 0
-      ) {
-        e.preventDefault();
-        const current =
-          lastClickedNoteId.current ||
-          (selectedNoteIds.size === 1 ? [...selectedNoteIds][0] : null);
-        const nextId = adjacentNoteId(visibleNotes, current, e.key === "j" || e.key === "J" ? 1 : -1);
-        if (nextId) {
-          lastClickedNoteId.current = nextId;
-          void loadNote(nextId);
-        }
-      } else if (meta && e.key === ",") {
-        e.preventDefault();
-        openSettings();
-      } else if (meta && e.key === "/") {
-        e.preventDefault();
-        openSettings("shortcuts");
-      } else if (meta && e.key === "t" && e.shiftKey) {
-        e.preventDefault();
-        openNewTab();
-      } else if (meta && e.key === "w") {
-        e.preventDefault();
-        closeTab(activeTabIdRef.current);
-      } else if (meta && e.key === "Tab") {
-        e.preventDefault();
-        const ids = tabsRef.current.map((tab) => tab.id);
-        const index = ids.indexOf(activeTabIdRef.current);
-        if (index < 0 || ids.length < 2) return;
-        const nextIndex = e.shiftKey
-          ? (index - 1 + ids.length) % ids.length
-          : (index + 1) % ids.length;
-        void switchToTab(ids[nextIndex]);
-      } else if (meta && e.key === "o" && e.altKey && activeNote) {
-        e.preventDefault();
-        void openInNewTab(activeNote.id);
-      } else if (meta && e.shiftKey && (e.key === "l" || e.key === "L") && activeNote) {
-        e.preventDefault();
-        dispatchEditorCommand({ type: "bulletList" });
-      } else if (meta && e.shiftKey && (e.key === "o" || e.key === "O") && activeNote) {
-        e.preventDefault();
-        dispatchEditorCommand({ type: "orderedList" });
-      } else if (meta && e.shiftKey && (e.key === "c" || e.key === "C") && activeNote) {
-        e.preventDefault();
-        dispatchEditorCommand({ type: "taskList" });
-      } else if (meta && e.key === "a" && !isTextInputFocused()) {
-        e.preventDefault();
-        setSelectedNoteIds(new Set(notes.map((n) => n.id)));
-      } else if (e.key === "Escape" && selectedNoteIds.size > 1) {
-        if (activeNote) setSelectedNoteIds(new Set([activeNote.id]));
-        else setSelectedNoteIds(new Set());
-      } else if (
-        (e.key === "Delete" || e.key === "Backspace") &&
-        !isTextInputFocused() &&
-        !meta &&
-        targetNoteIds().length > 0
-      ) {
-        e.preventDefault();
-        void deleteSelectedNotes();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
+    noteSession.recordLocation();
+  }, [ready, filter, activeNote?.id]);
 
   if (error) {
     return (
@@ -1432,7 +989,9 @@ export default function App() {
               ? "Reminders"
               : filter.type === "templates"
               ? "Templates"
-              : filter.type === "trash"
+              : filter.type === "files"
+                ? "Files"
+                : filter.type === "trash"
                 ? "Trash"
                 : `Search: ${filter.query}`;
 
@@ -1463,76 +1022,6 @@ export default function App() {
     void api.updateSettings({ theme });
   };
 
-  const runPaletteAction = (id: string) => {
-    switch (id) {
-      case "new-note":
-        void createNote();
-        break;
-      case "search":
-        openGlobalSearch();
-        break;
-      case "jump":
-        setShowJump(true);
-        break;
-      case "settings":
-        openSettings();
-        break;
-      case "templates":
-        setShowGallery(true);
-        break;
-      case "print":
-        printActiveNote();
-        break;
-      case "email":
-        void emailActiveNote();
-        break;
-      case "theme":
-        toggleTheme();
-        break;
-      case "focus":
-        setFocusMode((open) => !open);
-        break;
-      case "back":
-        goBack();
-        break;
-      case "forward":
-        goForward();
-        break;
-      case "new-notebook":
-        setNewNotebookStackId(null);
-        setNewName("");
-        setShowNewNotebook(true);
-        break;
-      case "new-tag":
-        setNewName("");
-        setShowNewTag(true);
-        break;
-      case "reminders":
-        setSidebarFlyout(null);
-        setFilter({ type: "reminders" });
-        break;
-      case "shortcuts":
-        revealSidebarFlyout("shortcuts");
-        setFilter({ type: "shortcuts" });
-        break;
-      case "all-notes":
-        setSidebarFlyout(null);
-        setFilter({ type: "all" });
-        break;
-      case "info":
-        if (activeNote) setShowInfo((open) => !open);
-        break;
-      case "outline":
-        persistEditorChrome({
-          ...editorChrome,
-          outlineOpen: !editorChrome.outlineOpen,
-        });
-        break;
-      default:
-        break;
-    }
-  };
-
   const menuCtx: AppMenuContext = {
     filter,
     selectedNoteIds,
@@ -1557,9 +1046,9 @@ export default function App() {
     openNewStack,
     openRename,
     openSettings,
-    openNewTab,
+    openNewTab: noteSession.openNewTab,
     openInNewTab,
-    closeTab,
+    closeTab: noteSession.closeTab,
     loadNote,
     setNewNotebookStackId,
     setNewName,
@@ -1569,18 +1058,20 @@ export default function App() {
     setNotebookPicker,
     setShowInfo,
     setShowJump,
-    setFindTick,
-    setReplaceTick,
+    runEditorCommand,
+    openFind,
+    openReplace,
     setFocusMode,
-    setFilter,
+    setFilter: noteSession.setFilter,
     setSidebarFlyout,
-    setSelectedNoteIds,
+    setSelectedNoteIds: noteSession.setSelectedNoteIds,
     setShowReminderMenu,
     setPrefs,
-    setActiveNote,
+    setActiveNote: noteSession.setActiveNote,
     persistPaneLayout,
     persistEditorChrome,
     revealSidebarFlyout,
+    closeSidebarFlyout,
     restoreSelectedNotes,
     deleteSelectedNotes,
     shortcutSelectedNotes,
@@ -1624,9 +1115,9 @@ export default function App() {
       }
       await api.deleteNotebook(notebook.id);
       if (filter.type === "notebook" && filter.id === notebook.id) {
-        setFilter({ type: "all" });
+        noteSession.setFilter({ type: "all" });
       }
-      setActiveNote(null);
+      noteSession.setActiveNote(null);
       await refreshMeta();
       await refreshNotes();
     },
@@ -1653,7 +1144,7 @@ export default function App() {
       }
       await api.deleteTag(tag.id);
       if (filter.type === "tag" && filter.id === tag.id) {
-        setFilter({ type: "all" });
+        noteSession.setFilter({ type: "all" });
       }
       await refreshMeta();
       await refreshNotes();
@@ -1673,7 +1164,95 @@ export default function App() {
     toggleReminderDone,
     openCommandPalette: () => setShowPalette(true),
     isReminderCompleted: (id) => isReminderDone(completedReminders, id),
+    openGlobalSearch,
   };
+
+  onKeyRef.current = (e: KeyboardEvent) => {
+    const command = matchCommand(e, menuCtx);
+    if (command) {
+      e.preventDefault();
+      command.run(menuCtx);
+      return;
+    }
+    const meta = e.metaKey || e.ctrlKey;
+    if (e.key === "Escape" && focusMode) {
+      e.preventDefault();
+      setFocusMode(false);
+    } else if (e.key === "Escape" && sidebarFlyout) {
+      e.preventDefault();
+      closeSidebarFlyout();
+    } else if (e.key === "Escape" && showPalette) {
+      e.preventDefault();
+      setShowPalette(false);
+    } else if (e.key === "Escape" && searchOpen) {
+      e.preventDefault();
+      closeSearch();
+    } else if (e.key === "Escape" && hoverPreview) {
+      e.preventDefault();
+      hideHoverPreview();
+    } else if (
+      (e.key === "ArrowDown" || e.key === "ArrowUp") &&
+      !isTextInputFocused() &&
+      visibleNotes.length > 0
+    ) {
+      e.preventDefault();
+      const current =
+        noteSession.lastClickedNoteIdRef.current ||
+        (selectedNoteIds.size === 1 ? [...selectedNoteIds][0] : null);
+      const nextId = adjacentNoteId(
+        visibleNotes,
+        current,
+        e.key === "ArrowDown" ? 1 : -1
+      );
+      if (nextId) {
+        noteSession.lastClickedNoteIdRef.current = nextId;
+        if (e.shiftKey && current) {
+          noteSession.setSelectedNoteIds(new Set(noteIdsInRange(notes, current, nextId)));
+        } else {
+          void loadNote(nextId);
+        }
+      }
+    } else if (
+      (e.key === "j" || e.key === "k" || e.key === "J" || e.key === "K") &&
+      !meta &&
+      !e.altKey &&
+      !isTextInputFocused() &&
+      visibleNotes.length > 0
+    ) {
+      e.preventDefault();
+      const current =
+        noteSession.lastClickedNoteIdRef.current ||
+        (selectedNoteIds.size === 1 ? [...selectedNoteIds][0] : null);
+      const nextId = adjacentNoteId(visibleNotes, current, e.key === "j" || e.key === "J" ? 1 : -1);
+      if (nextId) {
+        noteSession.lastClickedNoteIdRef.current = nextId;
+        void loadNote(nextId);
+      }
+    } else if (meta && e.key === "Tab") {
+      e.preventDefault();
+      const ids = noteSession.get().tabs.map((tab) => tab.id);
+      const index = ids.indexOf(noteSession.get().activeTabId);
+      if (index < 0 || ids.length < 2) return;
+      const nextIndex = e.shiftKey
+        ? (index - 1 + ids.length) % ids.length
+        : (index + 1) % ids.length;
+      void noteSession.switchToTab(ids[nextIndex]);
+    } else if (meta && e.key === "a" && !isTextInputFocused()) {
+      e.preventDefault();
+      noteSession.selectAll(notes.map((n) => n.id));
+    } else if (e.key === "Escape" && selectedNoteIds.size > 1) {
+      noteSession.selectActiveOnly();
+    } else if (
+      (e.key === "Delete" || e.key === "Backspace") &&
+      !isTextInputFocused() &&
+      !meta &&
+      targetNoteIds().length > 0
+    ) {
+      e.preventDefault();
+      void deleteSelectedNotes();
+    }
+  };
+
   const contextMenuItems = (target: ContextTarget) => buildContextMenu(target, menuCtx);
   const menuGroups = buildMenuBar(menuCtx);
 
@@ -1686,6 +1265,7 @@ export default function App() {
         (paneLayout.sidebarCollapsed ? " sidebar-collapsed" : "") +
         (sidebarRail ? " sidebar-rail" : "") +
         (paneLayout.listCollapsed ? " list-collapsed" : "") +
+        (filter.type === "files" ? " files-mode" : "") +
         (focusMode ? " focus-mode" : "") +
         (showInfo && activeNote ? " info-open" : "")
       }
@@ -1702,11 +1282,10 @@ export default function App() {
         setShowNewMenu(false);
         setShowNoteMenu(false);
         setShowReminderMenu(false);
-        setAccountMenu(false);
         hideHoverPreview();
         setContextMenu(null);
         if (!(event.target as HTMLElement).closest(".sidebar")) {
-          setSidebarFlyout(null);
+          closeSidebarFlyout();
         }
       }}
     >
@@ -1718,16 +1297,10 @@ export default function App() {
         canGoForward={navFuture.length > 0}
         onBack={goBack}
         onForward={goForward}
-        onSelect={(id) => void switchToTab(id)}
-        onClose={closeTab}
-        onNewTab={openNewTab}
-        onReorder={(fromId, toId) => {
-          setTabs((current) => {
-            const next = reorderById(current, fromId, toId);
-            tabsRef.current = next;
-            return next;
-          });
-        }}
+        onSelect={(id) => void noteSession.switchToTab(id)}
+        onClose={noteSession.closeTab}
+        onNewTab={noteSession.openNewTab}
+        onReorder={(fromId, toId) => noteSession.reorderTabs(fromId, toId)}
       />
       <aside
         className="sidebar"
@@ -1741,15 +1314,6 @@ export default function App() {
         }}
       >
         <div className="sidebar-toolbar" onMouseDown={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            className="icon-btn sidebar-rail-toggle"
-            title={sidebarRail ? "Pin sidebar open" : "Collapse sidebar to icons"}
-            aria-pressed={!sidebarRail}
-            onClick={() => persistPaneLayout(toggleSidebarRail(paneLayout))}
-          >
-            <Icon.Sidebar size={18} />
-          </button>
           <button
             type="button"
             className={searchOpen || filter.type === "search" ? "icon-btn active" : "icon-btn"}
@@ -1776,8 +1340,10 @@ export default function App() {
               <Icon.More size={18} />
             </button>
             {showNewMenu && (
-              <div className="menu-popover right">
+              <div className="menu-popover sidebar-more-menu" role="menu">
                 <button
+                  type="button"
+                  role="menuitem"
                   onClick={() => {
                     setShowNewMenu(false);
                     void createBlankNote();
@@ -1786,6 +1352,8 @@ export default function App() {
                   Blank note
                 </button>
                 <button
+                  type="button"
+                  role="menuitem"
                   onClick={() => {
                     setShowNewMenu(false);
                     setShowGallery(true);
@@ -1794,6 +1362,8 @@ export default function App() {
                   From template
                 </button>
                 <button
+                  type="button"
+                  role="menuitem"
                   onClick={() => {
                     setShowNewMenu(false);
                     setNewNotebookStackId(null);
@@ -1803,6 +1373,8 @@ export default function App() {
                   New notebook
                 </button>
                 <button
+                  type="button"
+                  role="menuitem"
                   onClick={() => {
                     setShowNewMenu(false);
                     setShowNewTag(true);
@@ -1811,6 +1383,8 @@ export default function App() {
                   New tag
                 </button>
                 <button
+                  type="button"
+                  role="menuitem"
                   onClick={() => {
                     setShowNewMenu(false);
                     openSidebarFilter("notebooks");
@@ -1819,6 +1393,8 @@ export default function App() {
                   Filter notebooks
                 </button>
                 <button
+                  type="button"
+                  role="menuitem"
                   onClick={() => {
                     setShowNewMenu(false);
                     openSidebarFilter("tags");
@@ -1836,8 +1412,8 @@ export default function App() {
             className={filter.type === "all" ? "nav-item active" : "nav-item"}
             title="Notes"
             onClick={() => {
-              setSidebarFlyout(null);
-              setFilter({ type: "all" });
+              closeSidebarFlyout();
+              noteSession.setFilter({ type: "all" });
             }}
           >
             <Icon.Notes size={16} />
@@ -1852,11 +1428,13 @@ export default function App() {
                   : "nav-item")
               }
               title="Shortcuts"
+              aria-haspopup="dialog"
               aria-expanded={sidebarFlyout === "shortcuts"}
-              onClick={() => {
-                openSidebarFlyout("shortcuts");
-                setFilter({ type: "shortcuts" });
-              }}
+              onMouseEnter={() => previewSidebarFlyout("shortcuts")}
+              onMouseLeave={scheduleSidebarFlyoutClose}
+              onFocus={() => previewSidebarFlyout("shortcuts")}
+              onBlur={scheduleSidebarFlyoutClose}
+              onClick={() => openSidebarFlyout("shortcuts")}
             >
               <Icon.Shortcuts size={16} />
               <span className="nav-label">Shortcuts</span>
@@ -1868,8 +1446,8 @@ export default function App() {
               className={filter.type === "reminders" ? "nav-item active" : "nav-item"}
               title="Reminders"
               onClick={() => {
-                setSidebarFlyout(null);
-                setFilter({ type: "reminders" });
+                closeSidebarFlyout();
+                noteSession.setFilter({ type: "reminders" });
               }}
             >
               <Icon.Reminder size={16} />
@@ -1886,7 +1464,12 @@ export default function App() {
                   : "nav-item")
               }
               title="Notebooks"
+              aria-haspopup="dialog"
               aria-expanded={sidebarFlyout === "notebooks"}
+              onMouseEnter={() => previewSidebarFlyout("notebooks")}
+              onMouseLeave={scheduleSidebarFlyoutClose}
+              onBlur={scheduleSidebarFlyoutClose}
+              onFocus={() => previewSidebarFlyout("notebooks")}
               onClick={() => openSidebarFlyout("notebooks")}
             >
               <Icon.Notebooks size={16} />
@@ -1903,7 +1486,12 @@ export default function App() {
                   : "nav-item")
               }
               title="Tags"
+              aria-haspopup="dialog"
               aria-expanded={sidebarFlyout === "tags"}
+              onMouseEnter={() => previewSidebarFlyout("tags")}
+              onBlur={scheduleSidebarFlyoutClose}
+              onMouseLeave={scheduleSidebarFlyoutClose}
+              onFocus={() => previewSidebarFlyout("tags")}
               onClick={() => openSidebarFlyout("tags")}
             >
               <Icon.Tags size={16} />
@@ -1917,8 +1505,8 @@ export default function App() {
               className={filter.type === "templates" ? "nav-item active" : "nav-item"}
               title="Templates"
               onClick={() => {
-                setSidebarFlyout(null);
-                setFilter({ type: "templates" });
+                closeSidebarFlyout();
+                noteSession.setFilter({ type: "templates" });
               }}
             >
               <Icon.Templates size={16} />
@@ -1927,13 +1515,28 @@ export default function App() {
             </button>
           )}
 
+          {prefs.show_files && (
+            <button
+              className={filter.type === "files" ? "nav-item active" : "nav-item"}
+              title="Files"
+              onClick={() => {
+                closeSidebarFlyout();
+                noteSession.setFilter({ type: "files" });
+              }}
+            >
+              <Icon.Files size={16} />
+              <span className="nav-label">Files</span>
+              <span className="nav-count">{counts.files}</span>
+            </button>
+          )}
+
           {prefs.show_trash && (
             <button
               className={filter.type === "trash" ? "nav-item active" : "nav-item"}
               title="Trash"
               onClick={() => {
-                setSidebarFlyout(null);
-                setFilter({ type: "trash" });
+                closeSidebarFlyout();
+                noteSession.setFilter({ type: "trash" });
               }}
             >
               <Icon.Trash size={16} />
@@ -1943,7 +1546,14 @@ export default function App() {
           )}
         </nav>
         {sidebarFlyout && (
-          <div className="sidebar-flyout" onMouseDown={(event) => event.stopPropagation()}>
+          <div
+            className={`sidebar-flyout ${sidebarFlyoutPinned ? "is-pinned" : "is-preview"}`}
+            role="dialog"
+            aria-label={`${sidebarFlyoutTitle(sidebarFlyout)} navigation`}
+            onMouseEnter={cancelSidebarFlyoutClose}
+            onMouseLeave={scheduleSidebarFlyoutClose}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
             <div className="sidebar-flyout-header">
               <h3>{sidebarFlyoutTitle(sidebarFlyout)}</h3>
               {sidebarFlyout !== "shortcuts" && (
@@ -1985,7 +1595,7 @@ export default function App() {
                 type="button"
                 className="icon-btn"
                 title="Close"
-                onClick={() => setSidebarFlyout(null)}
+                onClick={closeSidebarFlyout}
               >
                 <Icon.Close size={14} />
               </button>
@@ -2041,7 +1651,8 @@ export default function App() {
                           : "flyout-item"
                       }
                       onClick={() => {
-                        setFilter({ type: "shortcuts" });
+                        closeSidebarFlyout();
+                        noteSession.setFilter({ type: "shortcuts" });
                         void loadNote(note.id);
                       }}
                     >
@@ -2091,13 +1702,14 @@ export default function App() {
                             notebook={nb}
                             active={filter.type === "notebook" && filter.id === nb.id}
                             isDropTarget={dropTarget === `notebook:${nb.id}`}
-                            onSelect={() =>
-                              setFilter({
+                            onSelect={() => {
+                              closeSidebarFlyout();
+                              noteSession.setFilter({
                                 type: "notebook",
                                 id: nb.id,
                                 name: nb.name,
-                              })
-                            }
+                              });
+                            }}
                             onDragOver={(event) =>
                               allowNoteDrop(event, `notebook:${nb.id}`)
                             }
@@ -2128,9 +1740,10 @@ export default function App() {
                       notebook={nb}
                       active={filter.type === "notebook" && filter.id === nb.id}
                       isDropTarget={dropTarget === `notebook:${nb.id}`}
-                      onSelect={() =>
-                        setFilter({ type: "notebook", id: nb.id, name: nb.name })
-                      }
+                      onSelect={() => {
+                        closeSidebarFlyout();
+                        noteSession.setFilter({ type: "notebook", id: nb.id, name: nb.name });
+                      }}
                       onDragOver={(event) =>
                         allowNoteDrop(event, `notebook:${nb.id}`)
                       }
@@ -2172,9 +1785,10 @@ export default function App() {
                           : "nav-item") +
                         (dropTarget === `tag:${tag.id}` ? " drop-target" : "")
                       }
-                      onClick={() =>
-                        setFilter({ type: "tag", id: tag.id, name: tag.name })
-                      }
+                      onClick={() => {
+                        closeSidebarFlyout();
+                        noteSession.setFilter({ type: "tag", id: tag.id, name: tag.name });
+                      }}
                       onDragOver={(event) => allowNoteDrop(event, `tag:${tag.id}`)}
                       onDragLeave={() => setDropTarget(null)}
                       onDrop={(event) => void tagDroppedNotes(tag.id, event)}
@@ -2197,74 +1811,7 @@ export default function App() {
             </div>
           </div>
         )}
-        <div className="sidebar-account">
-          <div className="account-menu-wrap" onMouseDown={(event) => event.stopPropagation()}>
-            <button
-              type="button"
-              className={accountMenu ? "account-chip active" : "account-chip"}
-              onClick={() => setAccountMenu((open) => !open)}
-              title="Account"
-            >
-              <span
-                className="avatar"
-                style={{ background: avatarColor(account.display_name) }}
-              >
-                {account.display_name.slice(0, 1).toUpperCase()}
-              </span>
-              <span className="account-copy">
-                <span className="account-name">{account.display_name}</span>
-                <span className="account-email">{account.email || "Local account"}</span>
-              </span>
-            </button>
-            {accountMenu && (
-              <div className="account-popover" role="menu">
-                <div className="account-popover-head">
-                  <span
-                    className="avatar"
-                    style={{ background: avatarColor(account.display_name) }}
-                  >
-                    {account.display_name.slice(0, 1).toUpperCase()}
-                  </span>
-                  <span className="account-copy">
-                    <span className="account-name">{account.display_name}</span>
-                    <span className="account-email">{account.email || "Local account"}</span>
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setAccountMenu(false);
-                    openSettings("account");
-                  }}
-                >
-                  Account
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setAccountMenu(false);
-                    openSettings();
-                  }}
-                >
-                  Settings
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setAccountMenu(false);
-                    const theme = prefs.theme === "dark" ? "light" : "dark";
-                    setPrefs((current) => ({ ...current, theme }));
-                    void api.updateSettings({ theme });
-                  }}
-                >
-                  {prefs.theme === "dark" ? "Use light theme" : "Use dark theme"}
-                </button>
-              </div>
-            )}
-          </div>
+        <div className="sidebar-footer">
           <button
             type="button"
             className="icon-btn"
@@ -2320,13 +1867,13 @@ export default function App() {
                 lastNotebookId &&
                 lastNotebookName
               ) {
-                setFilter({
+                noteSession.setFilter({
                   type: "notebook",
                   id: lastNotebookId,
                   name: lastNotebookName,
                 });
               } else {
-                setFilter({ type: "all" });
+                noteSession.setFilter({ type: "all" });
               }
             } catch (err) {
               setImportStatus(err instanceof Error ? err.message : "Import failed");
@@ -2334,19 +1881,21 @@ export default function App() {
           }}
         />
       </aside>
-      <PaneSplitter
-        className="sidebar-splitter"
-        label="Resize sidebar"
-        onDrag={(_delta, position) => persistPaneLayout(resizeSidebarTo(paneLayout, position))}
-      />
+      <div className="sidebar-divider" aria-hidden="true" />
 
       <section className="note-list-panel">
         <div className="panel-header">
           <div>
             <h2>{viewTitle}</h2>
             <span className="count" title="Notes in this view">
-              {visibleNotes.length}
-              {visibleNotes.length !== notes.length ? ` of ${notes.length}` : ""}
+              {notesLoaded ? (
+                <>
+                  {visibleNotes.length}
+                  {visibleNotes.length !== notes.length ? ` of ${notes.length}` : ""}
+                </>
+              ) : (
+                <>&nbsp;</>
+              )}
             </span>
           </div>
           <div className="panel-tools">
@@ -2368,8 +1917,8 @@ export default function App() {
                     return;
                   }
                   await api.emptyTrash();
-                  setActiveNote(null);
-                  await refreshNotes();
+                  noteSession.setActiveNote(null);
+                  await noteStore.afterNoteChange();
                 }}
               >
                 Empty
@@ -2547,8 +2096,8 @@ export default function App() {
                 event.preventDefault();
                 event.stopPropagation();
                 if (!selectedNoteIds.has(note.id)) {
-                  setSelectedNoteIds(new Set([note.id]));
-                  lastClickedNoteId.current = note.id;
+                  noteSession.setSelectedNoteIds(new Set([note.id]));
+                  noteSession.lastClickedNoteIdRef.current = note.id;
                 }
                 setContextMenu({
                   kind: "note",
@@ -2635,14 +2184,14 @@ export default function App() {
               ))}
             </div>
           ))}
-          {notes.length === 0 && (
+          {notesLoaded && notes.length === 0 && (
             <EmptyListState
               filter={filter}
               onCreate={() => void createNote()}
               onBrowseTemplates={() => setShowGallery(true)}
             />
           )}
-          {notes.length > 0 && visibleNotes.length === 0 && (
+          {notesLoaded && notes.length > 0 && visibleNotes.length === 0 && (
             <div className="empty-state compact">No notes match these filters.</div>
           )}
         </div>
@@ -2666,6 +2215,7 @@ export default function App() {
         )}
       </section>
       <PaneSplitter
+        className="list-splitter"
         label="Resize note list"
         onDrag={(delta) =>
           persistPaneLayout({
@@ -2719,7 +2269,7 @@ export default function App() {
                   className="title-input"
                   value={activeNote.title}
                   onChange={(e) =>
-                    setActiveNote({ ...activeNote, title: e.target.value })
+                    noteSession.setActiveNote({ ...activeNote, title: e.target.value })
                   }
                   placeholder="Title"
                 />
@@ -2840,7 +2390,7 @@ export default function App() {
                                 is_template: true,
                                 template_category: "My templates",
                               });
-                              setFilter({ type: "templates" });
+                              noteSession.setFilter({ type: "templates" });
                             }}
                           >
                             Save as template
@@ -2940,8 +2490,8 @@ export default function App() {
                             <button
                               onClick={async () => {
                                 await api.restoreNote(activeNote.id);
-                                setActiveNote(null);
-                                await refreshNotes();
+                                noteSession.setActiveNote(null);
+                                await noteStore.afterNoteChange();
                               }}
                             >
                               Restore
@@ -2958,8 +2508,8 @@ export default function App() {
                                   return;
                                 }
                                 await api.permanentlyDeleteNote(activeNote.id);
-                                setActiveNote(null);
-                                await refreshNotes();
+                                noteSession.setActiveNote(null);
+                                await noteStore.afterNoteChange();
                               }}
                             >
                               Delete forever
@@ -2978,8 +2528,8 @@ export default function App() {
                                 return;
                               }
                               await api.deleteNote(activeNote.id);
-                              setActiveNote(null);
-                              await refreshNotes();
+                              noteSession.setActiveNote(null);
+                              await noteStore.afterNoteChange();
                             }}
                           >
                             Move to trash
@@ -3043,8 +2593,7 @@ export default function App() {
               fontSize={prefs.font_size}
               noteWidth={prefs.note_width}
               pdfView={prefs.pdf_view || "expanded"}
-              findTick={findTick}
-              replaceTick={replaceTick}
+              editorRef={editorHandleRef}
               toolbarHidden={editorChrome.toolbarHidden}
               attachmentsExpanded={editorChrome.attachmentsExpanded}
               onAttachmentsExpandedChange={(expanded) =>
@@ -3057,10 +2606,10 @@ export default function App() {
               outlineOpen={editorChrome.outlineOpen}
               onOpenNoteLink={(id) => void loadNote(id)}
               onChange={(html) =>
-                setActiveNote({ ...activeNote, content: html })
+                noteSession.setActiveNote({ ...activeNote, content: html })
               }
               onUseAsTitle={(title) =>
-                setActiveNote({ ...activeNote, title })
+                noteSession.setActiveNote({ ...activeNote, title })
               }
               onAttach={async (file) => {
                 const attachment = await api.uploadAttachment(activeNote.id, file);
@@ -3069,7 +2618,7 @@ export default function App() {
                   isPdfFile(attachment.mime_type, attachment.filename) &&
                   (!activeNote.title || activeNote.title === "Untitled")
                 ) {
-                  setActiveNote((current) =>
+                  noteSession.setActiveNote((current) =>
                     current && current.id === activeNote.id
                       ? { ...current, title: titleFromFilename(attachment.filename) }
                       : current
@@ -3118,8 +2667,8 @@ export default function App() {
               onClose={() => setShowInfo(false)}
               onPatch={(patch) => void saveNote(patch)}
               onRestored={async (restored) => {
-                skipNextSave.current = true;
-                setActiveNote(restored);
+                noteSession.markSkipNextSave();
+                noteSession.setActiveNote(restored);
                 await refreshNotes();
                 await refreshMeta();
               }}
@@ -3129,8 +2678,21 @@ export default function App() {
         ) : (
           <div className="empty-editor">
             <div className="logo-mark large">N</div>
-            <h2>Select a note or create a new one</h2>
+            <h2>{paneLayout.listCollapsed ? "Your notes are one click away" : "Select a note"}</h2>
+            <p>
+              {paneLayout.listCollapsed
+                ? "Bring back the note list to continue browsing."
+                : "Choose a note from the list or start a fresh one."}
+            </p>
             <div className="empty-actions">
+              {paneLayout.listCollapsed && (
+                <button
+                  className="primary-btn large"
+                  onClick={() => persistPaneLayout(revealNoteBrowser(paneLayout))}
+                >
+                  Show notes
+                </button>
+              )}
               <button className="primary-btn large" onClick={createNote}>
                 New note
               </button>
@@ -3141,6 +2703,19 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {filter.type === "files" && (
+        <FilesView
+          files={files}
+          loaded={filesLoaded}
+          dateFormat={prefs.date_format}
+          onOpenNote={(file) => {
+            closeSidebarFlyout();
+            noteSession.setFilter({ type: "notebook", id: file.notebook_id, name: file.notebook_name });
+            void loadNote(file.note_id);
+          }}
+        />
+      )}
 
       {showNewNotebook && (
         <PromptModal
@@ -3215,19 +2790,12 @@ export default function App() {
             const name = newName.trim();
             if (renameTarget.kind === "notebook") {
               await api.updateNotebook(renameTarget.id, { name });
-              if (
-                filter.type === "notebook" &&
-                filter.id === renameTarget.id
-              ) {
-                setFilter({ type: "notebook", id: renameTarget.id, name });
-              }
+              noteSession.renameFilterTarget("notebook", renameTarget.id, name);
             } else if (renameTarget.kind === "stack") {
               await api.updateStack(renameTarget.id, { name });
             } else {
               await api.updateTag(renameTarget.id, { name });
-              if (filter.type === "tag" && filter.id === renameTarget.id) {
-                setFilter({ type: "tag", id: renameTarget.id, name });
-              }
+              noteSession.renameFilterTarget("tag", renameTarget.id, name);
             }
             await refreshMeta();
             setRenameTarget(null);
@@ -3300,7 +2868,8 @@ export default function App() {
               return;
             }
             await api.emptyTrash();
-            await refreshNotes();
+            noteSession.setActiveNote(null);
+            await noteStore.afterNoteChange();
           }}
         />
       )}
@@ -3342,10 +2911,10 @@ export default function App() {
             setShowJump(false);
             if (target.kind === "notebook") {
               const notebook = notebooks.find((item) => item.id === target.id);
-              if (notebook) setFilter({ type: "notebook", id: notebook.id, name: notebook.name });
+              if (notebook) noteSession.setFilter({ type: "notebook", id: notebook.id, name: notebook.name });
             } else if (target.kind === "tag") {
               const tag = tags.find((item) => item.id === target.id);
-              if (tag) setFilter({ type: "tag", id: tag.id, name: tag.name });
+              if (tag) noteSession.setFilter({ type: "tag", id: tag.id, name: tag.name });
             } else {
               void loadNote(target.id);
             }
@@ -3373,10 +2942,10 @@ export default function App() {
             setSearchOpen(false);
             if (target.kind === "notebook") {
               const notebook = notebooks.find((item) => item.id === target.id);
-              if (notebook) setFilter({ type: "notebook", id: notebook.id, name: notebook.name });
+              if (notebook) noteSession.setFilter({ type: "notebook", id: notebook.id, name: notebook.name });
             } else if (target.kind === "tag") {
               const tag = tags.find((item) => item.id === target.id);
-              if (tag) setFilter({ type: "tag", id: tag.id, name: tag.name });
+              if (tag) noteSession.setFilter({ type: "tag", id: tag.id, name: tag.name });
             } else {
               void loadNote(target.id);
             }
@@ -3386,8 +2955,8 @@ export default function App() {
 
       <CommandPalette
         open={showPalette}
-        actions={PALETTE_ACTIONS}
-        onRun={runPaletteAction}
+        actions={paletteActions(menuCtx)}
+        onRun={(id) => runCommandById(id, menuCtx)}
         onClose={() => setShowPalette(false)}
       />
 

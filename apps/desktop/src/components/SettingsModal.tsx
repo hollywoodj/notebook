@@ -31,7 +31,6 @@ const SHORTCUTS = [
   ["Find in note", "Ctrl/⌘ F"],
   ["Find and replace", "Ctrl/⌘ H"],
   ["Search all notes", "Ctrl/⌘ K or Ctrl/⌘ Shift F"],
-  ["Collapse sidebar to icons / pin open", "Ctrl/⌘ Alt S"],
   ["Hide / show note list", "Ctrl/⌘ Alt ←"],
   ["Expand / restore note", "Ctrl/⌘ Alt →"],
   ["Jump to note, notebook, or tag", "Ctrl/⌘ J"],
@@ -399,6 +398,7 @@ export function SettingsModal({
                     ["show_notebooks", "Notebooks"],
                     ["show_tags", "Tags"],
                     ["show_templates", "Templates"],
+                    ["show_files", "Files"],
                     ["show_trash", "Trash"],
                   ] as const
                 ).map(([key, label]) => (

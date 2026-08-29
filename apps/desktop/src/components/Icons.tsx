@@ -310,4 +310,44 @@ export const Icon = {
       <rect x="13" y="13" width="7" height="6" rx="1" />
     </I>
   ),
+  Files: (p: IconProps) => (
+    <I {...p}>
+      <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.5h7A1.5 1.5 0 0 1 19 10v7.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z" />
+      <path d="M21 9.5v7a2.5 2.5 0 0 1-2.5 2.5" />
+    </I>
+  ),
+  FileImage: (p: IconProps) => (
+    <I {...p}>
+      <rect x="3.5" y="5" width="17" height="14" rx="2" />
+      <circle cx="9" cy="10" r="1.6" />
+      <path d="M4.5 17l4.5-4.5 3.5 3.5 3-2.5 4 3.5" />
+    </I>
+  ),
+  FileDoc: (p: IconProps) => (
+    <I {...p}>
+      <path d="M7 3h7l4.5 4.5V20a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" />
+      <path d="M14 3v5h4.5" />
+      <path d="M9 13h6M9 17h4" />
+    </I>
+  ),
+  FileAudio: (p: IconProps) => (
+    <I {...p}>
+      <path d="M9 16V6l9-2v10" />
+      <circle cx="6.5" cy="16.5" r="2.5" />
+      <circle cx="15.5" cy="14.5" r="2.5" />
+    </I>
+  ),
+  FileVideo: (p: IconProps) => (
+    <I {...p}>
+      <rect x="3" y="6" width="12" height="12" rx="2" />
+      <path d="M15 11l6-3v8l-6-3z" />
+    </I>
+  ),
+  Download: (p: IconProps) => (
+    <I {...p}>
+      <path d="M12 4v10" />
+      <path d="M8 11l4 4 4-4" />
+      <path d="M5 19h14" />
+    </I>
+  ),
 };

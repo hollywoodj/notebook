@@ -3,9 +3,9 @@ import { api, Note, NoteRevision, Preferences } from "../api";
 import {
   formatReminderLabel,
   fromDatetimeLocalValue,
-  noteAppLink,
   toDatetimeLocalValue,
-} from "../uiChrome";
+} from "../ui/reminders";
+import { noteAppLink } from "../ui/share";
 import { Icon } from "./Icons";
 
 export function NoteInfoPanel({

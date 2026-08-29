@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { PaletteAction } from "../uiChrome";
-import { paletteMatches } from "../uiChrome";
+import type { PaletteAction } from "../ui/search";
+import { paletteMatches } from "../ui/search";
 import { Icon } from "./Icons";
 
 export function CommandPalette({

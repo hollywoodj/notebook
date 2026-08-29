@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { jumpToMatches, type JumpTarget, type SavedSearch } from "../uiChrome";
+import { jumpToMatches, type JumpTarget, type SavedSearch } from "../ui/search";
 import { Icon } from "./Icons";
 
 export function SearchDialog({

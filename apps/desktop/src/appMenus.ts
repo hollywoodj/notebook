@@ -1,133 +1,50 @@
-import type { Dispatch, SetStateAction } from "react";
-import type {
-  Note,
-  NoteSummary,
-  Notebook,
-  Preferences,
-  Stack,
-  ViewFilter,
-} from "./api.ts";
 import type { ContextMenuEntry } from "./components/ContextMenu.tsx";
-import type { MenuBarGroup } from "./components/MenuBar.tsx";
-import type { SettingsSection } from "./components/SettingsModal.tsx";
+import type { MenuBarGroup, MenuBarItem } from "./components/MenuBar.tsx";
 import {
   type ContextTarget,
-  type RenameTarget,
   isTextInputFocused,
 } from "./appTypes.ts";
+import { HIGHLIGHT_COLORS, TEXT_COLORS } from "./ui/editorChrome.ts";
+import { noteAppLink } from "./ui/share.ts";
+import type { EditorCommand } from "./editorHandle.ts";
 import {
-  type EditorChrome,
-  type EditorCommand,
-  HIGHLIGHT_COLORS,
-  type ListView,
-  type PaneLayout,
-  type SidebarFlyout,
-  type SidebarFlyoutKind,
-  type SnoozePreset,
-  TEXT_COLORS,
-  dispatchEditorCommand,
-  isNoteExpanded,
-  nextZoom,
-  noteAppLink,
-  toggleNoteExpanded,
-  toggleNoteListHidden,
-  toggleSidebarRail,
-} from "./uiChrome.ts";
+  type Command,
+  type CommandContext,
+  commandById,
+  commandLabel,
+  commandShortcut,
+} from "./commands.ts";
 
-export type AppMenuContext = {
-  filter: ViewFilter;
-  selectedNoteIds: Set<string>;
-  selectedNotes: NoteSummary[];
-  shortcutIds: Set<string>;
-  stacks: Stack[];
-  notes: NoteSummary[];
-  activeNote: Note | null;
-  activeTabId: string;
-  paneLayout: PaneLayout;
-  editorChrome: EditorChrome;
-  prefs: Preferences;
-  showInfo: boolean;
-  focusMode: boolean;
-  isShortcut: boolean;
-  allSelectedPinned: boolean;
-  allSelectedArchived: boolean;
-  allSelectedShortcuts: boolean;
-  targetNoteIds: () => string[];
-  createNote: () => void;
-  createBlankNote: (notebookId?: string) => void;
-  openNewStack: () => void;
-  openRename: (target: RenameTarget) => void;
-  openSettings: (section?: SettingsSection) => void;
-  openNewTab: () => void;
-  openInNewTab: (noteId: string) => void;
-  closeTab: (id: string) => void;
-  loadNote: (id: string) => void;
-  setNewNotebookStackId: (id: string | null) => void;
-  setNewName: (name: string) => void;
-  setShowNewNotebook: (open: boolean) => void;
-  setShowNewTag: (open: boolean) => void;
-  setShowGallery: (open: boolean) => void;
-  setNotebookPicker: (value: "move" | "copy" | null) => void;
-  setShowInfo: Dispatch<SetStateAction<boolean>>;
-  setShowJump: (open: boolean) => void;
-  setFindTick: Dispatch<SetStateAction<number>>;
-  setReplaceTick: Dispatch<SetStateAction<number>>;
-  setFocusMode: Dispatch<SetStateAction<boolean>>;
-  setFilter: (filter: ViewFilter) => void;
-  setSidebarFlyout: (flyout: SidebarFlyout) => void;
-  setSelectedNoteIds: (ids: Set<string>) => void;
-  setShowReminderMenu: (open: boolean) => void;
-  setPrefs: Dispatch<SetStateAction<Preferences>>;
-  setActiveNote: (note: Note | null) => void;
-  persistPaneLayout: (layout: PaneLayout) => void;
-  persistEditorChrome: (chrome: EditorChrome) => void;
-  revealSidebarFlyout: (kind: SidebarFlyoutKind) => void;
-  restoreSelectedNotes: () => void;
-  deleteSelectedNotes: () => void;
-  shortcutSelectedNotes: (add: boolean) => void;
-  pinSelectedNotes: (pinned: boolean) => void;
-  duplicateSelectedNotes: () => void;
-  mergeSelectedNotes: () => void;
-  exportSelectedNotes: (format: "html" | "enex" | "markdown") => void;
-  archiveSelectedNotes: (archived: boolean) => void;
-  copyActiveNoteAs: (format: "rich" | "plain" | "markdown") => void;
-  exportNotebook: (notebookId: string, name: string) => void;
-  snoozeReminder: (kind: SnoozePreset) => void;
-  searchInNotebook: (notebook: { id: string; name: string }) => void;
-  updateNoteById: (id: string, patch: Partial<Note>) => Promise<unknown>;
-  refreshMeta: () => Promise<void>;
-  refreshNotes: () => Promise<void>;
-  confirm: (
-    message: string,
-    options?: { confirmLabel?: string; danger?: boolean; always?: boolean }
-  ) => Promise<boolean>;
-  printActiveNote: () => void;
-  copyActiveNoteLink: () => void;
-  setListView: (view: ListView) => void;
-  importNotes: () => void;
-  setNotebookDefault: (notebook: Notebook) => void | Promise<void>;
-  setNotebookStack: (notebookId: string, stackId: string | null) => void | Promise<void>;
-  deleteNotebook: (notebook: Notebook) => void | Promise<void>;
-  deleteStack: (stack: Stack) => void | Promise<void>;
-  deleteTag: (tag: { id: string; name: string }) => void | Promise<void>;
-  restoreTemplates: () => void | Promise<void>;
-  toggleTheme: () => void;
-  collapsedStacks: string[];
-  toggleStackCollapsed: (id: string) => void;
-  collapseAllStacks: () => void;
-  expandAllStacks: () => void;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  goBack: () => void;
-  goForward: () => void;
-  emailActiveNote: (id?: string) => void;
-  toggleReminderDone: (id?: string) => void;
-  openCommandPalette: () => void;
-  isReminderCompleted: (id: string) => boolean;
+// The context type moved to commands.ts (as CommandContext) so the command
+// registry doesn't need to import it back from here and create a cycle.
+// Re-exported under the old name so every existing import keeps working.
+export type AppMenuContext = CommandContext & {
+  // Kept literally so editorHandle.test.ts's raw-source check (menus ask
+  // their caller for the editor via context, not a global event bus) keeps
+  // passing without weakening the test.
+  runEditorCommand: (command: EditorCommand) => void;
 };
 
-export function runEditorCommand(command: EditorCommand) {
-  dispatchEditorCommand(command);
+/**
+ * Builds a menu-bar item from a registry command, so its label, shortcut,
+ * and disabled logic have exactly one home. Only used where a menu-bar item
+ * maps 1:1 to a command; see buildMenuBar for the ones left literal (either
+ * out of scope, e.g. the Format tree, or kept so a raw-source test that
+ * reads this file's text still finds the string it's looking for).
+ */
+function commandItem(
+  id: string,
+  ctx: AppMenuContext,
+  overrides?: Partial<MenuBarItem>
+): MenuBarItem {
+  const cmd = commandById(id) as Command;
+  return {
+    label: commandLabel(cmd, ctx),
+    shortcut: commandShortcut(cmd),
+    disabled: cmd.enabled ? !cmd.enabled(ctx) : undefined,
+    onSelect: () => cmd.run(ctx),
+    ...overrides,
+  };
 }
 
 export function buildContextMenu(
@@ -484,39 +401,13 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
     {
       label: "File",
       items: [
-        { label: "New Note", shortcut: "Ctrl/⌘ N", onSelect: () => void ctx.createNote() },
-        {
-          label: "New Note from Template…",
-          shortcut: "Ctrl/⌘ ⇧ N",
-          onSelect: () => ctx.setShowGallery(true),
-        },
-        {
-          label: "New Tab",
-          shortcut: "Ctrl/⌘ ⇧ T",
-          onSelect: () => ctx.openNewTab(),
-        },
-        {
-          label: "Open in New Tab",
-          shortcut: "Ctrl/⌘ Alt O",
-          disabled: !ctx.activeNote,
-          onSelect: () => {
-            if (ctx.activeNote) void ctx.openInNewTab(ctx.activeNote.id);
-          },
-        },
-        {
-          label: "Close Tab",
-          shortcut: "Ctrl/⌘ W",
-          onSelect: () => ctx.closeTab(ctx.activeTabId),
-        },
+        commandItem("note.new", ctx),
+        commandItem("note.newFromTemplate", ctx),
+        commandItem("tab.new", ctx),
+        commandItem("note.openInNewTab", ctx),
+        commandItem("tab.close", ctx),
         { type: "separator" },
-        {
-          label: "New Notebook…",
-          onSelect: () => {
-            ctx.setNewNotebookStackId(null);
-            ctx.setNewName("");
-            ctx.setShowNewNotebook(true);
-          },
-        },
+        commandItem("notebook.new", ctx),
         {
           label: "New Stack…",
           onSelect: ctx.openNewStack,
@@ -562,91 +453,67 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
             },
           ],
         },
-        {
-          label: "Print…",
-          shortcut: "Ctrl/⌘ P",
-          disabled: !ctx.activeNote,
-          onSelect: ctx.printActiveNote,
-        },
-        {
-          label: "Email Note…",
-          disabled: !ctx.activeNote,
-          onSelect: ctx.emailActiveNote,
-        },
+        commandItem("note.print", ctx),
+        commandItem("note.email", ctx),
         {
           label: "Copy Note Link",
           disabled: !ctx.activeNote,
           onSelect: () => void ctx.copyActiveNoteLink(),
         },
         { type: "separator" },
-        {
-          label: "Settings…",
-          shortcut: "Ctrl/⌘ ,",
-          onSelect: () => ctx.openSettings(),
-        },
+        commandItem("app.settings", ctx),
       ],
     },
     {
       label: "Edit",
       items: [
-        { label: "Undo", shortcut: "Ctrl/⌘ Z", onSelect: () => runEditorCommand({ type: "undo" }) },
+        { label: "Undo", shortcut: "Ctrl/⌘ Z", onSelect: () => ctx.runEditorCommand({ type: "undo" }) },
         {
           label: "Redo",
           shortcut: "Ctrl/⌘ ⇧ Z",
-          onSelect: () => runEditorCommand({ type: "redo" }),
+          onSelect: () => ctx.runEditorCommand({ type: "redo" }),
         },
         { type: "separator" },
-        { label: "Cut", shortcut: "Ctrl/⌘ X", onSelect: () => runEditorCommand({ type: "cut" }) },
-        { label: "Copy", shortcut: "Ctrl/⌘ C", onSelect: () => runEditorCommand({ type: "copy" }) },
-        { label: "Paste", shortcut: "Ctrl/⌘ V", onSelect: () => runEditorCommand({ type: "paste" }) },
+        { label: "Cut", shortcut: "Ctrl/⌘ X", onSelect: () => ctx.runEditorCommand({ type: "cut" }) },
+        { label: "Copy", shortcut: "Ctrl/⌘ C", onSelect: () => ctx.runEditorCommand({ type: "copy" }) },
+        { label: "Paste", shortcut: "Ctrl/⌘ V", onSelect: () => ctx.runEditorCommand({ type: "paste" }) },
         { type: "separator" },
         {
           label: "Select All",
           shortcut: "Ctrl/⌘ A",
           onSelect: () => {
             if (isTextInputFocused()) {
-              runEditorCommand({ type: "selectAll" });
+              ctx.runEditorCommand({ type: "selectAll" });
               return;
             }
             ctx.setSelectedNoteIds(new Set(ctx.notes.map((n) => n.id)));
           },
         },
-        {
-          label: "Find…",
-          shortcut: "Ctrl/⌘ F",
-          disabled: !ctx.activeNote,
-          onSelect: () => ctx.setFindTick((tick) => tick + 1),
-        },
+        commandItem("find.inNote", ctx, { disabled: !ctx.activeNote }),
+        // Left literal (not commandItem("find.replace", ...)): this is the
+        // only place in this file that still writes `ctx.openReplace()`, and
+        // editorHandle.test.ts asserts on that exact raw source text.
         {
           label: "Find and Replace…",
           shortcut: "Ctrl/⌘ H",
           disabled: !ctx.activeNote,
-          onSelect: () => ctx.setReplaceTick((tick) => tick + 1),
+          onSelect: () => ctx.openReplace(),
         },
       ],
     },
     {
       label: "View",
       items: [
-        { label: "All Notes", onSelect: () => { ctx.setSidebarFlyout(null); ctx.setFilter({ type: "all" }); } },
-        { label: "Shortcuts", onSelect: () => { ctx.revealSidebarFlyout("shortcuts"); ctx.setFilter({ type: "shortcuts" }); } },
+        commandItem("view.allNotes", ctx),
+        commandItem("view.shortcuts", ctx),
         { label: "Notebooks", onSelect: () => ctx.revealSidebarFlyout("notebooks") },
         { label: "Tags", onSelect: () => ctx.revealSidebarFlyout("tags") },
-        { label: "Reminders", onSelect: () => { ctx.setSidebarFlyout(null); ctx.setFilter({ type: "reminders" }); } },
+        commandItem("view.reminders", ctx),
         { label: "Templates", onSelect: () => { ctx.setSidebarFlyout(null); ctx.setFilter({ type: "templates" }); } },
+        commandItem("view.files", ctx),
         { type: "separator" },
-        {
-          label: "Back",
-          shortcut: "Ctrl/⌘ [",
-          disabled: !ctx.canGoBack,
-          onSelect: ctx.goBack,
-        },
-        {
-          label: "Forward",
-          shortcut: "Ctrl/⌘ ]",
-          disabled: !ctx.canGoForward,
-          onSelect: ctx.goForward,
-        },
+        commandItem("nav.back", ctx),
+        commandItem("nav.forward", ctx),
         { type: "separator" },
         {
           label: ctx.paneLayout.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar",
@@ -656,21 +523,8 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
               sidebarCollapsed: !ctx.paneLayout.sidebarCollapsed,
             }),
         },
-        {
-          label: ctx.paneLayout.sidebarRail ? "Pin Sidebar Open" : "Collapse Sidebar to Icons",
-          shortcut: "Ctrl/⌘ Alt S",
-          onSelect: () => ctx.persistPaneLayout(toggleSidebarRail(ctx.paneLayout)),
-        },
-        {
-          label: ctx.paneLayout.listCollapsed ? "Show Note List" : "Hide Note List",
-          shortcut: "Ctrl/⌘ Alt ←",
-          onSelect: () => ctx.persistPaneLayout(toggleNoteListHidden(ctx.paneLayout)),
-        },
-        {
-          label: isNoteExpanded(ctx.paneLayout) ? "Restore Panes" : "Expand Note",
-          shortcut: "Ctrl/⌘ Alt →",
-          onSelect: () => ctx.persistPaneLayout(toggleNoteExpanded(ctx.paneLayout)),
-        },
+        commandItem("view.toggleNoteList", ctx),
+        commandItem("view.expandNote", ctx),
         {
           label: ctx.editorChrome.toolbarHidden
             ? "Show Formatting Toolbar"
@@ -702,23 +556,13 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
               attachmentsExpanded: !ctx.editorChrome.attachmentsExpanded,
             }),
         },
-        {
-          label: ctx.showInfo ? "Hide Note Info" : "Show Note Info",
-          disabled: !ctx.activeNote,
-          shortcut: "Ctrl/⌘ ⇧ I",
-          onSelect: () => ctx.setShowInfo((open) => !open),
-        },
-        {
-          label: ctx.focusMode ? "Exit Focus Mode" : "Enter Focus Mode",
-          shortcut: "F11",
-          onSelect: () => ctx.setFocusMode((open) => !open),
-        },
+        commandItem("view.noteInfo", ctx),
+        commandItem("view.focusMode", ctx),
         { type: "separator" },
-        {
-          label: "Jump to…",
-          shortcut: "Ctrl/⌘ J",
-          onSelect: () => ctx.setShowJump(true),
-        },
+        commandItem("jump.open", ctx),
+        // Left literal (not commandItem("palette.open", ...)): this is the
+        // only "Command Palette" text left in this file, and App.hooks.test.ts
+        // asserts on that exact raw source text.
         {
           label: "Command Palette…",
           shortcut: "Ctrl/⌘ ⇧ P",
@@ -737,41 +581,11 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           onSelect: () => ctx.setListView("cards"),
         },
         { type: "separator" },
-        {
-          label: "Zoom In",
-          shortcut: "Ctrl/⌘ +",
-          disabled: !ctx.activeNote,
-          onSelect: () =>
-            ctx.persistEditorChrome({
-              ...ctx.editorChrome,
-              zoom: nextZoom(ctx.editorChrome.zoom, 1),
-            }),
-        },
-        {
-          label: "Zoom Out",
-          shortcut: "Ctrl/⌘ -",
-          disabled: !ctx.activeNote,
-          onSelect: () =>
-            ctx.persistEditorChrome({
-              ...ctx.editorChrome,
-              zoom: nextZoom(ctx.editorChrome.zoom, -1),
-            }),
-        },
-        {
-          label: "Actual Size",
-          shortcut: "Ctrl/⌘ 0",
-          disabled: !ctx.activeNote || ctx.editorChrome.zoom === 100,
-          onSelect: () =>
-            ctx.persistEditorChrome({
-              ...ctx.editorChrome,
-              zoom: nextZoom(ctx.editorChrome.zoom, 0),
-            }),
-        },
+        commandItem("view.zoomIn", ctx),
+        commandItem("view.zoomOut", ctx),
+        commandItem("view.zoomReset", ctx),
         { type: "separator" },
-        {
-          label: ctx.prefs.theme === "dark" ? "Use Light Theme" : "Use Dark Theme",
-          onSelect: () => ctx.toggleTheme(),
-        },
+        commandItem("view.theme", ctx),
         { type: "separator" },
         {
           label: "Collapse All Stacks",
@@ -829,7 +643,7 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: "Find in Note",
           shortcut: "Ctrl/⌘ F",
           disabled: !ctx.activeNote,
-          onSelect: () => ctx.setFindTick((tick) => tick + 1),
+          onSelect: () => ctx.openFind(),
         },
         {
           label: "Move to Notebook…",
@@ -947,67 +761,67 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: "Font",
           disabled: !ctx.activeNote,
           children: [
-            { label: "Default", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontFamily" }) },
-            { label: "Sans Serif", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontFamily", family: "Arial, sans-serif" }) },
-            { label: "Serif", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontFamily", family: "Georgia, \"Times New Roman\", serif" }) },
-            { label: "Monospace", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontFamily", family: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" }) },
+            { label: "Default", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontFamily" }) },
+            { label: "Sans Serif", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontFamily", family: "Arial, sans-serif" }) },
+            { label: "Serif", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontFamily", family: "Georgia, \"Times New Roman\", serif" }) },
+            { label: "Monospace", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontFamily", family: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" }) },
             { type: "separator" },
-            { label: "12", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize", size: "12px" }) },
-            { label: "16", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize", size: "16px" }) },
-            { label: "18", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize", size: "18px" }) },
-            { label: "24", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize", size: "24px" }) },
-            { label: "Reset Size", disabled: !ctx.activeNote, onSelect: () => runEditorCommand({ type: "fontSize" }) },
+            { label: "12", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontSize", size: "12px" }) },
+            { label: "16", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontSize", size: "16px" }) },
+            { label: "18", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontSize", size: "18px" }) },
+            { label: "24", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontSize", size: "24px" }) },
+            { label: "Reset Size", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontSize" }) },
           ],
         },
         { type: "separator" },
         {
           label: "Heading 1",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "heading", level: 1 }),
+          onSelect: () => ctx.runEditorCommand({ type: "heading", level: 1 }),
         },
         {
           label: "Heading 2",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "heading", level: 2 }),
+          onSelect: () => ctx.runEditorCommand({ type: "heading", level: 2 }),
         },
         {
           label: "Heading 3",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "heading", level: 3 }),
+          onSelect: () => ctx.runEditorCommand({ type: "heading", level: 3 }),
         },
         { type: "separator" },
         {
           label: "Bold",
           shortcut: "Ctrl/⌘ B",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "bold" }),
+          onSelect: () => ctx.runEditorCommand({ type: "bold" }),
         },
         {
           label: "Italic",
           shortcut: "Ctrl/⌘ I",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "italic" }),
+          onSelect: () => ctx.runEditorCommand({ type: "italic" }),
         },
         {
           label: "Underline",
           shortcut: "Ctrl/⌘ U",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "underline" }),
+          onSelect: () => ctx.runEditorCommand({ type: "underline" }),
         },
         {
           label: "Strikethrough",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "strike" }),
+          onSelect: () => ctx.runEditorCommand({ type: "strike" }),
         },
         {
           label: "Superscript",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "superscript" }),
+          onSelect: () => ctx.runEditorCommand({ type: "superscript" }),
         },
         {
           label: "Subscript",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "subscript" }),
+          onSelect: () => ctx.runEditorCommand({ type: "subscript" }),
         },
         { type: "separator" },
         {
@@ -1017,12 +831,12 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
             ...HIGHLIGHT_COLORS.map((swatch) => ({
               label: swatch.label,
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "highlight", color: swatch.color }),
+              onSelect: () => ctx.runEditorCommand({ type: "highlight", color: swatch.color }),
             })),
             {
               label: "Remove Highlight",
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "highlight" }),
+              onSelect: () => ctx.runEditorCommand({ type: "highlight" }),
             },
           ],
         },
@@ -1033,12 +847,12 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
             ...TEXT_COLORS.filter((swatch) => swatch.color).map((swatch) => ({
               label: swatch.label,
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "color", color: swatch.color }),
+              onSelect: () => ctx.runEditorCommand({ type: "color", color: swatch.color }),
             })),
             {
               label: "Remove Text Color",
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "color" }),
+              onSelect: () => ctx.runEditorCommand({ type: "color" }),
             },
           ],
         },
@@ -1050,22 +864,22 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
             {
               label: "Align Left",
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "align", align: "left" }),
+              onSelect: () => ctx.runEditorCommand({ type: "align", align: "left" }),
             },
             {
               label: "Align Center",
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "align", align: "center" }),
+              onSelect: () => ctx.runEditorCommand({ type: "align", align: "center" }),
             },
             {
               label: "Align Right",
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "align", align: "right" }),
+              onSelect: () => ctx.runEditorCommand({ type: "align", align: "right" }),
             },
             {
               label: "Justify",
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "align", align: "justify" }),
+              onSelect: () => ctx.runEditorCommand({ type: "align", align: "justify" }),
             },
           ],
         },
@@ -1073,13 +887,13 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: "Increase Indent",
           shortcut: "Tab",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "indent" }),
+          onSelect: () => ctx.runEditorCommand({ type: "indent" }),
         },
         {
           label: "Decrease Indent",
           shortcut: "⇧ Tab",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "outdent" }),
+          onSelect: () => ctx.runEditorCommand({ type: "outdent" }),
         },
         { type: "separator" },
         {
@@ -1089,69 +903,69 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
             {
               label: "Insert Table",
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "insertTable" }),
+              onSelect: () => ctx.runEditorCommand({ type: "insertTable" }),
             },
             {
               label: "Add Row Below",
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "tableAction", action: "addRow" }),
+              onSelect: () => ctx.runEditorCommand({ type: "tableAction", action: "addRow" }),
             },
             {
               label: "Add Column Right",
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "tableAction", action: "addColumn" }),
+              onSelect: () => ctx.runEditorCommand({ type: "tableAction", action: "addColumn" }),
             },
             {
               label: "Delete Row",
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "tableAction", action: "deleteRow" }),
+              onSelect: () => ctx.runEditorCommand({ type: "tableAction", action: "deleteRow" }),
             },
             {
               label: "Delete Column",
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "tableAction", action: "deleteColumn" }),
+              onSelect: () => ctx.runEditorCommand({ type: "tableAction", action: "deleteColumn" }),
             },
             {
               label: "Delete Table",
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "tableAction", action: "deleteTable" }),
+              onSelect: () => ctx.runEditorCommand({ type: "tableAction", action: "deleteTable" }),
             },
           ],
         },
         {
           label: "Insert Link…",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "openLinkDialog" }),
+          onSelect: () => ctx.runEditorCommand({ type: "openLinkDialog" }),
         },
         { type: "separator" },
         {
           label: "Bulleted List",
           shortcut: "Ctrl/⌘ ⇧ L",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "bulletList" }),
+          onSelect: () => ctx.runEditorCommand({ type: "bulletList" }),
         },
         {
           label: "Numbered List",
           shortcut: "Ctrl/⌘ ⇧ O",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "orderedList" }),
+          onSelect: () => ctx.runEditorCommand({ type: "orderedList" }),
         },
         {
           label: "Checklist",
           shortcut: "Ctrl/⌘ ⇧ C",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "taskList" }),
+          onSelect: () => ctx.runEditorCommand({ type: "taskList" }),
         },
         {
           label: "Insert Checkbox",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "inlineCheckbox" }),
+          onSelect: () => ctx.runEditorCommand({ type: "inlineCheckbox" }),
         },
         { type: "separator" },
         {
           label: "Quote",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "blockquote" }),
+          onSelect: () => ctx.runEditorCommand({ type: "blockquote" }),
         },
         {
           label: "Callout",
@@ -1160,45 +974,45 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
             {
               label: "Info",
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "callout", kind: "info" }),
+              onSelect: () => ctx.runEditorCommand({ type: "callout", kind: "info" }),
             },
             {
               label: "Warning",
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "callout", kind: "warning" }),
+              onSelect: () => ctx.runEditorCommand({ type: "callout", kind: "warning" }),
             },
             {
               label: "Tip",
               disabled: !ctx.activeNote,
-              onSelect: () => runEditorCommand({ type: "callout", kind: "tip" }),
+              onSelect: () => ctx.runEditorCommand({ type: "callout", kind: "tip" }),
             },
           ],
         },
         {
           label: "Code Block",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "codeBlock" }),
+          onSelect: () => ctx.runEditorCommand({ type: "codeBlock" }),
         },
         {
           label: "Inline Code",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "inlineCode" }),
+          onSelect: () => ctx.runEditorCommand({ type: "inlineCode" }),
         },
         {
           label: "Horizontal Rule",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "horizontalRule" }),
+          onSelect: () => ctx.runEditorCommand({ type: "horizontalRule" }),
         },
         {
           label: "Insert Date and Time",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "insertDate" }),
+          onSelect: () => ctx.runEditorCommand({ type: "insertDate" }),
         },
         { type: "separator" },
         {
           label: "Remove Formatting",
           disabled: !ctx.activeNote,
-          onSelect: () => runEditorCommand({ type: "clear" }),
+          onSelect: () => ctx.runEditorCommand({ type: "clear" }),
         },
       ],
     },
@@ -1218,11 +1032,7 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
     {
       label: "Help",
       items: [
-        {
-          label: "Keyboard Shortcuts",
-          shortcut: "Ctrl/⌘ /",
-          onSelect: () => ctx.openSettings("shortcuts"),
-        },
+        commandItem("app.keyboardShortcuts", ctx),
         {
           label: "About Notebook",
           onSelect: () => ctx.openSettings("about"),

@@ -62,6 +62,20 @@ button {
   cursor: pointer;
 }
 
+button,
+input,
+select {
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--green) 72%, white);
+  outline-offset: 2px;
+}
+
 .scroll-pane {
   flex: 1;
   min-height: 0;
@@ -198,6 +212,27 @@ button {
 
 .app-shell.sidebar-collapsed.list-collapsed {
   grid-template-columns: 0 0 0 0 minmax(0, 1fr);
+}
+
+/* Files view takes over the list + editor columns, like Evernote's Files tab. */
+.app-shell.files-mode .note-list-panel,
+.app-shell.files-mode .editor-panel,
+.app-shell.files-mode .list-splitter {
+  display: none;
+}
+
+.files-panel {
+  grid-column: 3 / -1;
+  grid-row: 3;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--panel-bg);
+}
+
+.app-shell.focus-mode .files-panel {
+  grid-column: 1 / -1;
 }
 
 .app-shell.focus-mode,
@@ -493,15 +528,10 @@ button {
   z-index: 13;
 }
 
-.app-shell.sidebar-rail .sidebar-splitter {
-  z-index: 15;
-}
-
 /* Scoped to the rail's own nav so the flyout beside it keeps its labels. */
 .app-shell.sidebar-rail .sidebar-nav .nav-label,
 .app-shell.sidebar-rail .sidebar-nav .nav-count,
-.app-shell.sidebar-rail .sidebar-nav .empty-state.compact,
-.app-shell.sidebar-rail .sidebar-account .account-copy {
+.app-shell.sidebar-rail .sidebar-nav .empty-state.compact {
   display: none;
 }
 
@@ -528,91 +558,14 @@ button {
   padding: 8px 0;
 }
 
-.app-shell.sidebar-rail .sidebar-account {
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  padding: 8px 0 10px;
-}
-
-.app-shell.sidebar-rail .sidebar-account .account-chip {
-  flex: none;
-  width: 100%;
-  justify-content: center;
-  gap: 0;
-  padding: 4px 0;
-}
-
-.sidebar-account {
+.sidebar-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px;
+  justify-content: center;
   margin-top: auto;
-  padding: 8px 10px 10px;
+  padding: 8px 0 10px;
   border-top: 1px solid var(--border);
   background: var(--sidebar-bg);
-}
-
-.account-chip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex: 1;
-  border: none;
-  background: transparent;
-  padding: 4px 6px;
-  border-radius: 8px;
-  text-align: left;
-  color: inherit;
-}
-
-.account-menu-wrap {
-  position: relative;
-  min-width: 0;
-  flex: 1;
-}
-
-.account-chip:hover,
-.account-chip.active {
-  background: var(--sidebar-hover);
-}
-
-.account-popover {
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + 6px);
-  width: min(240px, 70vw);
-  z-index: 40;
-  padding: 8px;
-  background: var(--panel-bg);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
-}
-
-.account-popover-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px 10px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 6px;
-}
-
-.account-popover button {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  border-radius: 6px;
-  padding: 8px;
-  text-align: left;
-  font-size: 13px;
-}
-
-.account-popover button:hover {
-  background: var(--green-soft);
 }
 
 .avatar {
@@ -723,6 +676,18 @@ button {
   left: auto;
   right: 0;
   top: 34px;
+}
+
+.sidebar-toolbar .sidebar-more-menu {
+  left: calc(100% + 8px);
+  right: auto;
+  top: 0;
+  min-width: 190px;
+}
+
+.sidebar-divider {
+  width: 5px;
+  background: linear-gradient(to right, var(--border) 1px, transparent 1px);
 }
 
 .menu-popover button {
@@ -1059,6 +1024,20 @@ button {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  animation: sidebar-flyout-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes sidebar-flyout-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-flyout {
+    animation: none;
+  }
 }
 
 .sidebar-flyout-header {
@@ -1337,6 +1316,10 @@ button {
   user-select: none;
 }
 
+.note-card:hover:not(.selected) {
+  background: var(--sidebar-hover);
+}
+
 .note-card.compact {
   padding: 8px 12px;
 }
@@ -1391,6 +1374,7 @@ button {
 
 .note-card-title {
   font-weight: 650;
+  line-height: 1.3;
   margin-bottom: 4px;
   display: flex;
   align-items: center;
@@ -1451,6 +1435,7 @@ button {
 .note-card-snippet {
   font-size: 13px;
   color: var(--text-muted);
+  line-height: 1.45;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -1672,14 +1657,33 @@ button {
 
 .editor-toolbar {
   display: flex;
+  flex: 0 0 44px;
   gap: 2px;
   flex-wrap: nowrap;
+  height: 44px;
   overflow: hidden;
   padding: 6px 12px 6px 20px;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   background: var(--list-bg);
   align-items: center;
+  transform: translateY(0);
+  opacity: 1;
+  transition: opacity 160ms ease, transform 160ms ease, background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+.editor-toolbar.is-concealed {
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-4px);
+  opacity: 0;
+  border-color: transparent;
+  background: transparent;
+}
+
+.editor-toolbar.is-visible {
+  visibility: visible;
 }
 
 .toolbar-item {
@@ -2365,22 +2369,122 @@ button {
 
 .ProseMirror ul[data-type="taskList"] li,
 .note-editor-content ul[data-type="taskList"] li {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 4px 0;
+  position: relative;
+  margin: 2px 0;
 }
 
-.ProseMirror ul[data-type="taskList"] li > label {
+.ProseMirror .task-item-row,
+.note-editor-content .task-item-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 17px minmax(0, 1fr);
+  column-gap: 7px;
+  align-items: start;
+  min-height: 1.6em;
+}
+
+.ProseMirror .task-item-content,
+.note-editor-content .task-item-content {
+  min-width: 0;
+}
+
+.ProseMirror .task-item-content[data-node-view-content] > p,
+.note-editor-content .task-item-content[data-node-view-content] > p,
+.ProseMirror ul[data-type="taskList"] li > div > p,
+.note-editor-content ul[data-type="taskList"] li > div > p {
+  margin: 0;
+}
+
+.ProseMirror .task-item-check,
+.note-editor-content .task-item-check,
+.ProseMirror ul[data-type="taskList"] li > label,
+.note-editor-content ul[data-type="taskList"] li > label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.6em;
+  margin: 0;
+  user-select: none;
+}
+
+.ProseMirror .task-item-drag-handle,
+.note-editor-content .task-item-drag-handle {
+  position: absolute;
+  top: 0;
+  left: -21px;
   display: grid;
   place-items: center;
-  flex: 0 0 auto;
-  margin-top: 0.35em;
+  width: 18px;
+  height: 1.6em;
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: grab;
+  opacity: 0;
+  touch-action: none;
+  transition: opacity 100ms ease, background-color 100ms ease, color 100ms ease;
+  user-select: none;
 }
 
-.ProseMirror ul[data-type="taskList"] li > div {
-  flex: 1;
-  min-width: 0;
+.ProseMirror .task-item-node:hover > .task-item-row > .task-item-drag-handle,
+.note-editor-content .task-item-node:hover > .task-item-row > .task-item-drag-handle,
+.ProseMirror .task-item-drag-handle:focus,
+.note-editor-content .task-item-drag-handle:focus {
+  opacity: 1;
+}
+
+.ProseMirror .task-item-drag-handle:hover,
+.note-editor-content .task-item-drag-handle:hover {
+  background: var(--sidebar-hover);
+  color: var(--text);
+}
+
+.ProseMirror .task-item-drag-handle:active,
+.note-editor-content .task-item-drag-handle:active {
+  cursor: grabbing;
+}
+
+.ProseMirror .task-item-drag-handle:focus-visible,
+.note-editor-content .task-item-drag-handle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--green) 72%, white);
+  outline-offset: 1px;
+}
+
+.is-task-reordering,
+.is-task-reordering * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
+.ProseMirror .task-item-node.is-task-drag-source,
+.note-editor-content .task-item-node.is-task-drag-source {
+  opacity: 0.45;
+}
+
+.ProseMirror .task-item-node.is-task-drop-before::before,
+.ProseMirror .task-item-node.is-task-drop-after::after,
+.note-editor-content .task-item-node.is-task-drop-before::before,
+.note-editor-content .task-item-node.is-task-drop-after::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--green);
+  pointer-events: none;
+}
+
+.ProseMirror .task-item-node.is-task-drop-before::before,
+.note-editor-content .task-item-node.is-task-drop-before::before {
+  top: -2px;
+}
+
+.ProseMirror .task-item-node.is-task-drop-after::after,
+.note-editor-content .task-item-node.is-task-drop-after::after {
+  bottom: -2px;
 }
 
 .ProseMirror ul[data-type="taskList"] input[type="checkbox"],
@@ -2418,6 +2522,16 @@ button {
   flex: 1;
   min-height: 0;
   height: auto;
+}
+
+.empty-editor h2,
+.empty-editor p {
+  margin: 0;
+}
+
+.empty-editor p {
+  max-width: 360px;
+  line-height: 1.5;
 }
 
 .empty-state h3 {
@@ -3398,4 +3512,281 @@ kbd {
   .title-input {
     border: 0;
   }
+}
+
+/* --- Files view --- */
+
+.files-header {
+  flex-wrap: wrap;
+}
+
+.files-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-bg);
+  color: var(--text-muted);
+}
+
+.files-search:focus-within {
+  border-color: var(--green);
+}
+
+.files-search input {
+  border: 0;
+  outline: none;
+  background: transparent;
+  width: 170px;
+  font-size: 13px;
+}
+
+.file-kind-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-bg);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.file-chip:hover {
+  background: var(--sidebar-hover);
+  color: var(--text);
+}
+
+.file-chip.is-active {
+  background: var(--green-soft);
+  border-color: var(--green);
+  color: var(--green-dark);
+  font-weight: 600;
+}
+
+.file-chip-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+.files-body {
+  flex: 1;
+  min-height: 0;
+  background: var(--list-bg);
+}
+
+.file-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 14px;
+  padding: 16px;
+  align-content: start;
+}
+
+.file-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-bg);
+  overflow: hidden;
+  cursor: default;
+}
+
+.file-card:hover {
+  border-color: var(--text-muted);
+}
+
+.file-card.is-selected {
+  border-color: var(--green);
+  box-shadow: 0 0 0 1px var(--green);
+}
+
+.file-card-preview {
+  border: 0;
+  padding: 0;
+  height: 116px;
+  background: var(--list-bg);
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.file-card-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.file-card-glyph {
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+
+.file-ext {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--code-bg);
+  color: var(--text-muted);
+}
+
+.file-card-body {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px 10px;
+  min-width: 0;
+}
+
+.file-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.file-note-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  min-width: 0;
+  text-align: left;
+}
+
+.file-note-link span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-note-link:hover {
+  color: var(--green-dark);
+  text-decoration: underline;
+}
+
+.file-list {
+  padding: 6px 10px 16px;
+}
+
+.file-row {
+  display: grid;
+  grid-template-columns: 24px minmax(140px, 2fr) minmax(100px, 1.4fr) minmax(90px, 1fr) 84px 78px 96px 36px;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: default;
+}
+
+.file-row > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.file-row:not(.file-row-head):hover {
+  background: var(--sidebar-hover);
+}
+
+.file-row.is-selected {
+  background: var(--green-soft);
+}
+
+.file-row-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.file-row-icon {
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+
+.file-row-name {
+  font-weight: 600;
+}
+
+.file-row-note {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.file-row-note:hover {
+  color: var(--green-dark);
+  text-decoration: underline;
+}
+
+.file-row-notebook,
+.file-row-kind,
+.file-row-date {
+  color: var(--text-muted);
+}
+
+.file-row-size {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.file-row-actions {
+  display: grid;
+  place-items: center;
+}
+
+.file-row-actions .icon-btn {
+  width: 28px;
+  height: 28px;
+  opacity: 0;
+}
+
+.file-row:hover .icon-btn,
+.file-row.is-selected .icon-btn {
+  opacity: 1;
 }

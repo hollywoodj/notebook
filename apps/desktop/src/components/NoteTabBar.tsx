@@ -1,6 +1,6 @@
 import { DragEvent } from "react";
 import { Icon } from "./Icons";
-import { NOTE_TAB_DRAG_TYPE } from "../uiChrome";
+import { NOTE_TAB_DRAG_TYPE } from "../ui/tabs";
 
 export type NoteTabItem = {
   id: string;

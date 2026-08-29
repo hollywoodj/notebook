@@ -93,6 +93,13 @@ export interface Attachment {
   updated_at: string;
 }
 
+/** An attachment plus the note it lives in, for the Files view. */
+export interface AttachmentSummary extends Attachment {
+  note_title: string;
+  notebook_id: string;
+  notebook_name: string;
+}
+
 export type ViewFilter =
   | { type: "all" }
   | { type: "notebook"; id: string; name: string }
@@ -100,6 +107,7 @@ export type ViewFilter =
   | { type: "shortcuts" }
   | { type: "reminders" }
   | { type: "templates" }
+  | { type: "files" }
   | { type: "trash" }
   | { type: "search"; query: string };
 
@@ -132,6 +140,7 @@ export interface Preferences {
   show_tags: boolean;
   show_templates: boolean;
   show_trash: boolean;
+  show_files: boolean;
   show_import: boolean;
   show_reminders: boolean;
   default_notebook_id: string | null;
@@ -159,6 +168,7 @@ export const defaultPreferences: Preferences = {
   show_tags: true,
   show_templates: true,
   show_trash: true,
+  show_files: true,
   show_import: true,
   show_reminders: true,
   default_notebook_id: null,
@@ -171,6 +181,7 @@ export interface SidebarCounts {
   trash: number;
   templates: number;
   shortcuts: number;
+  files: number;
 }
 
 export interface TemplateCatalogItem {
@@ -180,7 +191,12 @@ export interface TemplateCatalogItem {
   description: string;
 }
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8799";
+// `import.meta.env` is a Vite-injected global and is undefined under plain
+// Node (e.g. `node --experimental-strip-types --test`), so this module can be
+// imported from node:test suites without crashing.
+const API_BASE =
+  (import.meta as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL ||
+  "http://127.0.0.1:8799";
 
 export const attachmentUrl = (id: string) =>
   `${API_BASE}/api/v1/attachments/${encodeURIComponent(id)}`;
@@ -371,6 +387,9 @@ export const api = {
 
   listAttachments: (noteId: string) =>
     request<Attachment[]>(`/api/v1/notes/${noteId}/attachments`),
+
+  /** Every attachment on a live note, for the Files view. */
+  listAllAttachments: () => request<AttachmentSummary[]>("/api/v1/attachments"),
 
   uploadAttachment: async (noteId: string, file: File): Promise<Attachment> => {
     const form = new FormData();

@@ -39,11 +39,11 @@ describe("App hook order", () => {
     assert.match(editorSource, /note-attachments-toggle/);
   });
 
-  it("declares note tab state before the boot-screen return", () => {
-    const tabsState = appSource.indexOf("const [tabs, setTabs]");
+  it("declares the note session before the boot-screen return", () => {
+    const sessionHook = appSource.indexOf("useNoteSession(noteSession)");
     const bootReturn = appSource.indexOf("if (error) {");
-    assert.ok(tabsState > 0);
-    assert.ok(tabsState < bootReturn);
+    assert.ok(sessionHook > 0);
+    assert.ok(sessionHook < bootReturn);
     assert.match(appSource, /Open in New Tab/);
     assert.match(appSource, /<NoteTabBar/);
   });
@@ -55,6 +55,7 @@ describe("Evernote sidebar chrome", () => {
     assert.match(appSource, /title="Search"/);
     assert.match(appSource, /title="New note"/);
     assert.match(appSource, /title="More actions"/);
+    assert.match(appSource, /className="menu-popover sidebar-more-menu" role="menu"/);
     assert.match(appSource, /searchOpen \|\| filter\.type === "search"/);
     assert.match(appSource, /sidebarFilterOpen \|\| Boolean\(sidebarFilter\.trim\(\)\)/);
     assert.equal(appSource.includes('placeholder="Search"'), false);
@@ -85,17 +86,23 @@ describe("Evernote sidebar chrome", () => {
     assert.equal(appSource.includes("prefs.show_import"), false);
   });
 
-  it("pops out shortcuts, notebooks, and tags with their contents", () => {
+  it("previews shortcuts, notebooks, and tags on hover and pins them on click", () => {
     assert.match(appSource, /sidebarFlyout === "shortcuts"/);
     assert.match(appSource, /sidebarFlyout === "notebooks"/);
     assert.match(appSource, /sidebarFlyout === "tags"/);
-    assert.match(appSource, /className="sidebar-flyout"/);
+    assert.match(appSource, /sidebar-flyout \$\{sidebarFlyoutPinned/);
     assert.match(appSource, /shortcutNotes\.map/);
     assert.match(appSource, /visibleTags\.map/);
     assert.match(appSource, /Star a note to add it to Shortcuts/);
+    assert.match(appSource, /previewSidebarFlyout\("tags"\)/);
+    assert.match(appSource, /previewSidebarFlyout\("notebooks"\)/);
+    assert.match(appSource, /previewSidebarFlyout\("shortcuts"\)/);
+    assert.match(appSource, /onMouseLeave=\{scheduleSidebarFlyoutClose\}/);
+    assert.match(appSource, /aria-haspopup="dialog"/);
     assert.match(appSource, /openSidebarFlyout\("tags"\)/);
     assert.match(appSource, /openSidebarFlyout\("notebooks"\)/);
     assert.match(appSource, /openSidebarFlyout\("shortcuts"\)/);
+    assert.match(appSource, /closeSidebarFlyout\(\);/);
   });
 
   it("keeps tags out of the nav list now that they have their own panel", () => {
@@ -110,6 +117,9 @@ describe("Evernote sidebar chrome", () => {
     assert.equal(appSource.includes("rail-open"), false);
     assert.equal(appSource.includes("sidebarHovered"), false);
     assert.equal(appSource.includes("sidebarFocused"), false);
+    assert.equal(appSource.includes("sidebar-rail-toggle"), false);
+    assert.equal(appSource.includes('label="Resize sidebar"'), false);
+    assert.match(appSource, /className="sidebar-divider"/);
 
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
     assert.match(styles, /\.app-shell\.sidebar-rail \{/);
@@ -117,12 +127,19 @@ describe("Evernote sidebar chrome", () => {
     assert.equal(styles.includes("rail-open"), false);
   });
 
-  it("labels every rail icon so hover reveals the same nav text", () => {
+  it("labels every rail icon without an account or expansion control", () => {
     for (const label of ["Notes", "Shortcuts", "Reminders", "Notebooks", "Tags", "Templates", "Trash"]) {
       assert.match(appSource, new RegExp(`<span className="nav-label">${label}</span>`));
     }
-    assert.match(appSource, /title=\{sidebarRail \? "Pin sidebar open" : "Collapse sidebar to icons"\}/);
-    assert.match(menuSource, /sidebarRail \? "Pin Sidebar Open" : "Collapse Sidebar to Icons"/);
+    assert.equal(appSource.includes('title="Account"'), false);
+    assert.equal(appSource.includes("account-popover"), false);
+    assert.equal(menuSource.includes("Expand Sidebar"), false);
+    assert.equal(menuSource.includes("Pin Sidebar Open"), false);
+    const settingsSource = readFileSync(
+      new URL("./components/SettingsModal.tsx", import.meta.url),
+      "utf8"
+    );
+    assert.equal(settingsSource.includes("Collapse / expand sidebar"), false);
   });
 
   it("counts the current view rather than repeating the all-notes total", () => {
@@ -134,14 +151,14 @@ describe("Evernote sidebar chrome", () => {
   });
 });
 
-describe("Evernote list and account chrome", () => {
+describe("Evernote list chrome", () => {
   it("shows recent searches, filter chips, and stack collapse", () => {
     assert.match(appSource, /Has reminder/);
     assert.match(appSource, /Has attachment/);
     assert.match(appSource, /note-card-thumb/);
     assert.match(appSource, /meta-chip/);
     assert.match(appSource, /persistCollapsedStacks/);
-    assert.match(appSource, /account-popover/);
+    assert.equal(appSource.includes("account-popover"), false);
     assert.match(appSource, /e\.key === "j" \|\| e\.key === "k"/);
     assert.match(appSource, /This week/);
     assert.match(appSource, /Later today/);

@@ -4,7 +4,6 @@ import Underline from "@tiptap/extension-underline";
 import Link from "@tiptap/extension-link";
 import Highlight from "@tiptap/extension-highlight";
 import TaskList from "@tiptap/extension-task-list";
-import TaskItem from "@tiptap/extension-task-item";
 import Placeholder from "@tiptap/extension-placeholder";
 import Image from "@tiptap/extension-image";
 import Table from "@tiptap/extension-table";
@@ -16,24 +15,30 @@ import { Color } from "@tiptap/extension-color";
 import { TextStyle } from "@tiptap/extension-text-style";
 import type { Editor } from "@tiptap/core";
 import type { JSONContent } from "@tiptap/core";
-import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  ReactNode,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Ref,
+} from "react";
 import { api, Attachment, attachmentUrl } from "../api";
 import { Icon } from "./Icons";
 import {
-  EDITOR_COMMAND_EVENT,
   CODE_LANGUAGES,
   EDITOR_FONTS,
   EDITOR_FONT_SIZES,
   HIGHLIGHT_COLORS,
   TEXT_COLORS,
   attachmentsLabel,
-  escapeHtml,
-  findMatchOffsets,
   formattingToolbarVisible,
-  nextMatchIndex,
-  visibleToolbarCount,
-  type EditorCommand,
-} from "../uiChrome";
+} from "../ui/editorChrome";
+import { escapeHtml } from "../ui/noteContent";
+import { findMatchOffsets, nextMatchIndex } from "../ui/search";
+import { visibleToolbarCount } from "../ui/panes";
+import type { EditorCommand, EditorHandle } from "../editorHandle";
 import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
 import { LinkDialog } from "./LinkDialog";
 import { FontFamily, FontSize } from "./fontMarks";
@@ -49,6 +54,7 @@ import {
   titleFromFilename,
 } from "./fileAttachment";
 import { InlineCheckbox } from "./inlineCheckbox";
+import { DraggableTaskItem } from "./draggableTaskItem";
 
 interface Props {
   noteId: string;
@@ -62,8 +68,7 @@ interface Props {
   pdfView?: "expanded" | "title";
   placeholder?: string;
   onUseAsTitle?: (filename: string) => void;
-  findTick?: number;
-  replaceTick?: number;
+  editorRef?: Ref<EditorHandle>;
   toolbarHidden?: boolean;
   attachmentsExpanded?: boolean;
   onAttachmentsExpandedChange?: (expanded: boolean) => void;
@@ -138,8 +143,7 @@ export function NoteEditor({
   pdfView = "expanded",
   placeholder = "Start writing, or pick a template…",
   onUseAsTitle,
-  findTick = 0,
-  replaceTick = 0,
+  editorRef,
   toolbarHidden = false,
   attachmentsExpanded = false,
   onAttachmentsExpandedChange,
@@ -150,6 +154,9 @@ export function NoteEditor({
   const fileRef = useRef<HTMLInputElement>(null);
   const queueFilesRef = useRef<(files: File[], position?: number) => void>(() => {});
   const findInputRef = useRef<HTMLInputElement>(null);
+  const selectFindInput = () => {
+    window.setTimeout(() => findInputRef.current?.select(), 0);
+  };
   const toolbarRef = useRef<HTMLDivElement>(null);
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(0);
@@ -188,7 +195,7 @@ export function NoteEditor({
       }),
       Highlight.configure({ multicolor: true }),
       TaskList,
-      TaskItem.configure({ nested: true }),
+      DraggableTaskItem.configure({ nested: true }),
       InlineCheckbox,
       Placeholder.configure({ placeholder }),
       Image.configure({ allowBase64: true }),
@@ -343,19 +350,6 @@ export function NoteEditor({
   }, [editor]);
 
   useEffect(() => {
-    if (!findTick) return;
-    setShowFind(true);
-    window.setTimeout(() => findInputRef.current?.select(), 0);
-  }, [findTick]);
-
-  useEffect(() => {
-    if (!replaceTick) return;
-    setShowFind(true);
-    setShowReplace(true);
-    window.setTimeout(() => findInputRef.current?.select(), 0);
-  }, [replaceTick]);
-
-  useEffect(() => {
     if (!editor || !showFind) return;
     const text = editor.state.doc.textBetween(0, editor.state.doc.content.size, "", "");
     const offsets = findMatchOffsets(text, findQuery);
@@ -393,164 +387,177 @@ export function NoteEditor({
     }
   };
 
-  useEffect(() => {
+  const runEditorCommand = (command: EditorCommand) => {
     if (!editor) return;
-    const onCommand = (event: Event) => {
-      const command = (event as CustomEvent<EditorCommand>).detail;
-      if (!command) return;
-      const chain = editor.chain().focus();
-      switch (command.type) {
-        case "undo":
-          chain.undo().run();
-          break;
-        case "redo":
-          chain.redo().run();
-          break;
-        case "cut":
-          document.execCommand("cut");
-          break;
-        case "copy":
-          document.execCommand("copy");
-          break;
-        case "paste":
-          document.execCommand("paste");
-          break;
-        case "selectAll":
-          chain.selectAll().run();
-          break;
-        case "bold":
-          chain.toggleBold().run();
-          break;
-        case "italic":
-          chain.toggleItalic().run();
-          break;
-        case "underline":
-          chain.toggleUnderline().run();
-          break;
-        case "strike":
-          chain.toggleStrike().run();
-          break;
-        case "clear":
-          chain.unsetAllMarks().clearNodes().run();
-          break;
-        case "highlight":
-          if (command.color) chain.toggleHighlight({ color: command.color }).run();
-          else chain.unsetHighlight().run();
-          break;
-        case "color":
-          if (command.color) chain.setColor(command.color).run();
-          else chain.unsetColor().run();
-          break;
-        case "horizontalRule":
-          chain.setHorizontalRule().run();
-          break;
-        case "insertDate":
-          chain.insertContent(new Date().toLocaleString()).run();
-          break;
-        case "insertTable":
+    const chain = editor.chain().focus();
+    switch (command.type) {
+      case "undo":
+        chain.undo().run();
+        break;
+      case "redo":
+        chain.redo().run();
+        break;
+      case "cut":
+        document.execCommand("cut");
+        break;
+      case "copy":
+        document.execCommand("copy");
+        break;
+      case "paste":
+        document.execCommand("paste");
+        break;
+      case "selectAll":
+        chain.selectAll().run();
+        break;
+      case "bold":
+        chain.toggleBold().run();
+        break;
+      case "italic":
+        chain.toggleItalic().run();
+        break;
+      case "underline":
+        chain.toggleUnderline().run();
+        break;
+      case "strike":
+        chain.toggleStrike().run();
+        break;
+      case "clear":
+        chain.unsetAllMarks().clearNodes().run();
+        break;
+      case "highlight":
+        if (command.color) chain.toggleHighlight({ color: command.color }).run();
+        else chain.unsetHighlight().run();
+        break;
+      case "color":
+        if (command.color) chain.setColor(command.color).run();
+        else chain.unsetColor().run();
+        break;
+      case "horizontalRule":
+        chain.setHorizontalRule().run();
+        break;
+      case "insertDate":
+        chain.insertContent(new Date().toLocaleString()).run();
+        break;
+      case "insertTable":
+        chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+        break;
+      case "heading":
+        chain.toggleHeading({ level: command.level }).run();
+        break;
+      case "bulletList":
+        chain.toggleBulletList().run();
+        break;
+      case "orderedList":
+        chain.toggleOrderedList().run();
+        break;
+      case "taskList":
+        chain.toggleTaskList().run();
+        break;
+      case "inlineCheckbox":
+        chain.insertInlineCheckbox(false).run();
+        break;
+      case "blockquote":
+        chain.toggleBlockquote().run();
+        break;
+      case "codeBlock":
+        chain.toggleCodeBlock().run();
+        break;
+      case "inlineCode":
+        chain.toggleCode().run();
+        break;
+      case "align":
+        chain.setTextAlign(command.align).run();
+        break;
+      case "indent":
+        applyIndent(editor, 1);
+        break;
+      case "outdent":
+        applyIndent(editor, -1);
+        break;
+      case "openLinkDialog":
+        setLinkDialog(openLinkDialog(editor));
+        break;
+      case "fontFamily":
+        if (command.family) chain.setFontFamily(command.family).run();
+        else chain.unsetFontFamily().run();
+        break;
+      case "fontSize":
+        if (command.size) chain.setFontSize(command.size).run();
+        else chain.unsetFontSize().run();
+        break;
+      case "tableAction":
+        if (command.action === "insert") {
           chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
-          break;
-        case "heading":
-          chain.toggleHeading({ level: command.level }).run();
-          break;
-        case "bulletList":
-          chain.toggleBulletList().run();
-          break;
-        case "orderedList":
-          chain.toggleOrderedList().run();
-          break;
-        case "taskList":
-          chain.toggleTaskList().run();
-          break;
-        case "inlineCheckbox":
-          chain.insertInlineCheckbox(false).run();
-          break;
-        case "blockquote":
-          chain.toggleBlockquote().run();
-          break;
-        case "codeBlock":
-          chain.toggleCodeBlock().run();
-          break;
-        case "inlineCode":
-          chain.toggleCode().run();
-          break;
-        case "align":
-          chain.setTextAlign(command.align).run();
-          break;
-        case "indent":
-          applyIndent(editor, 1);
-          break;
-        case "outdent":
-          applyIndent(editor, -1);
-          break;
-        case "openLinkDialog":
+        } else if (command.action === "addRow") {
+          chain.addRowAfter().run();
+        } else if (command.action === "addColumn") {
+          chain.addColumnAfter().run();
+        } else if (command.action === "deleteRow") {
+          chain.deleteRow().run();
+        } else if (command.action === "deleteColumn") {
+          chain.deleteColumn().run();
+        } else {
+          chain.deleteTable().run();
+        }
+        break;
+      case "superscript":
+        chain.toggleSuperscript().run();
+        break;
+      case "subscript":
+        chain.toggleSubscript().run();
+        break;
+      case "callout": {
+        const kind = command.kind || "info";
+        if (editor.isActive("callout")) {
+          const current = String(editor.getAttributes("callout").kind || "info");
+          if (current === kind) chain.unsetCallout().run();
+          else chain.updateAttributes("callout", { kind }).run();
+        } else {
+          chain.setCallout(kind).run();
+        }
+        break;
+      }
+      case "link": {
+        if (!command.href) {
           setLinkDialog(openLinkDialog(editor));
           break;
-        case "fontFamily":
-          if (command.family) chain.setFontFamily(command.family).run();
-          else chain.unsetFontFamily().run();
-          break;
-        case "fontSize":
-          if (command.size) chain.setFontSize(command.size).run();
-          else chain.unsetFontSize().run();
-          break;
-        case "tableAction":
-          if (command.action === "insert") {
-            chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
-          } else if (command.action === "addRow") {
-            chain.addRowAfter().run();
-          } else if (command.action === "addColumn") {
-            chain.addColumnAfter().run();
-          } else if (command.action === "deleteRow") {
-            chain.deleteRow().run();
-          } else if (command.action === "deleteColumn") {
-            chain.deleteColumn().run();
-          } else {
-            chain.deleteTable().run();
-          }
-          break;
-        case "superscript":
-          chain.toggleSuperscript().run();
-          break;
-        case "subscript":
-          chain.toggleSubscript().run();
-          break;
-        case "callout": {
-          const kind = command.kind || "info";
-          if (editor.isActive("callout")) {
-            const current = String(editor.getAttributes("callout").kind || "info");
-            if (current === kind) chain.unsetCallout().run();
-            else chain.updateAttributes("callout", { kind }).run();
-          } else {
-            chain.setCallout(kind).run();
-          }
-          break;
         }
-        case "link": {
-          if (!command.href) {
-            setLinkDialog(openLinkDialog(editor));
-            break;
-          }
-          if (command.text) {
-            chain
-              .insertContent(
-                `<a href="${escapeHtml(command.href)}">${escapeHtml(command.text)}</a>`
-              )
-              .run();
-          } else {
-            chain.setLink({ href: command.href }).run();
-          }
-          break;
+        if (command.text) {
+          chain
+            .insertContent(
+              `<a href="${escapeHtml(command.href)}">${escapeHtml(command.text)}</a>`
+            )
+            .run();
+        } else {
+          chain.setLink({ href: command.href }).run();
         }
-        case "replace":
-          if (command.all) replaceAll();
-          else replaceCurrent();
-          break;
+        break;
       }
-    };
-    window.addEventListener(EDITOR_COMMAND_EVENT, onCommand);
-    return () => window.removeEventListener(EDITOR_COMMAND_EVENT, onCommand);
-  }, [editor, findQuery, replaceQuery]);
+      case "replace":
+        if (command.all) replaceAll();
+        else replaceCurrent();
+        break;
+    }
+  };
+
+  useImperativeHandle(
+    editorRef,
+    () => ({
+      run: runEditorCommand,
+      openFind: () => {
+        setShowFind(true);
+        selectFindInput();
+      },
+      openReplace: () => {
+        setShowFind(true);
+        setShowReplace(true);
+        selectFindInput();
+      },
+    }),
+    // Matches the dependency list the window listener used: `run` closes over the
+    // live editor and over findQuery/replaceQuery for the replace commands.
+    [editor, findQuery, replaceQuery]
+  );
 
   useLayoutEffect(() => {
     const el = toolbarRef.current;
@@ -917,8 +924,12 @@ export function NoteEditor({
           </button>
         </div>
       )}
-      {showToolbar && (
-      <div ref={toolbarRef} className="editor-toolbar">
+      {!toolbarHidden && (
+      <div
+        ref={toolbarRef}
+        className={`editor-toolbar ${showToolbar ? "is-visible" : "is-concealed"}`}
+        aria-hidden={!showToolbar}
+      >
         {wrap(
           "font-family",
           <select

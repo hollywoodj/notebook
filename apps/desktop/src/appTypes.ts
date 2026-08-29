@@ -1,5 +1,5 @@
 import type { Note, Notebook, NoteSummary, Preferences, Stack, Tag, ViewFilter } from "./api.ts";
-import { createNoteTab } from "./uiChrome.ts";
+import { createNoteTab } from "./ui/tabs.ts";
 
 export type ContextTarget =
   | { kind: "note"; x: number; y: number; note: NoteSummary }

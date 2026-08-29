@@ -1,6 +1,6 @@
 import { FormEvent, useMemo, useState } from "react";
 import { Tag } from "../api";
-import { suggestedTags } from "../uiChrome";
+import { suggestedTags } from "../ui/noteContent";
 import { Icon } from "./Icons";
 
 export function NoteTagBar({

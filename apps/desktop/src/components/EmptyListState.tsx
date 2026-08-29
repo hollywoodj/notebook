@@ -1,5 +1,5 @@
 import { ViewFilter } from "../api";
-import { emptyStateCopy } from "../uiChrome";
+import { emptyStateCopy } from "../ui/noteList";
 import { Icon } from "./Icons";
 
 export function EmptyListState({

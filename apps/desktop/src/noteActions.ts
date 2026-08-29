@@ -1,14 +1,8 @@
 import type { MutableRefObject } from "react";
 import type { Note, NoteSummary, Preferences, ViewFilter } from "./api.ts";
 import { batchConfirmMessage } from "./noteSelection.ts";
-import {
-  downloadTextFile,
-  htmlToMarkdown,
-  mergeNoteBodies,
-  notesToEnex,
-  notesToHtmlDocument,
-  safeFilename,
-} from "./uiChrome.ts";
+import { downloadTextFile, notesToEnex, notesToHtmlDocument, safeFilename } from "./ui/share.ts";
+import { htmlToMarkdown, mergeNoteBodies } from "./ui/noteContent.ts";
 
 export type NoteActionApi = {
   getNote: (id: string) => Promise<Note>;
@@ -99,7 +93,6 @@ export function createNoteActions(deps: NoteActionDeps) {
     options?: {
       closeActive?: boolean;
       clearSelection?: boolean;
-      refreshMeta?: boolean;
     }
   ) => {
     try {
@@ -114,8 +107,10 @@ export function createNoteActions(deps: NoteActionDeps) {
         deps.setSelectedNoteIds(new Set());
         deps.lastClickedNoteId.current = null;
       }
+      // Always run the full note-change invalidation (notes + counts +
+      // shortcuts + templates) so callers never have to remember to also
+      // refresh sidebar counts after a batch action.
       await deps.refreshNotes();
-      if (options?.refreshMeta) await deps.refreshMeta();
     }
   };
 
@@ -224,10 +219,8 @@ export function createNoteActions(deps: NoteActionDeps) {
   const shortcutSelectedNotes = async (add: boolean) => {
     const ids = targetNoteIds();
     if (ids.length === 0) return;
-    await applyToNotes(
-      ids,
-      (id) => (add ? deps.api.addShortcut(id) : deps.api.removeShortcut(id)),
-      { refreshMeta: true }
+    await applyToNotes(ids, (id) =>
+      add ? deps.api.addShortcut(id) : deps.api.removeShortcut(id)
     );
   };
 

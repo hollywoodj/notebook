@@ -5,7 +5,8 @@ import {
   buildMenuBar,
   type AppMenuContext,
 } from "./appMenus.ts";
-import { defaultEditorChrome, defaultPaneLayout } from "./uiChrome.ts";
+import { defaultEditorChrome } from "./ui/editorChrome.ts";
+import { defaultPaneLayout } from "./ui/panes.ts";
 
 const noop = () => {};
 const asyncNoop = async () => {};
@@ -50,8 +51,9 @@ function stubMenu(overrides: Partial<AppMenuContext> = {}): AppMenuContext {
     setNotebookPicker: noop,
     setShowInfo: noop,
     setShowJump: noop,
-    setFindTick: noop,
-    setReplaceTick: noop,
+    runEditorCommand: noop,
+    openFind: noop,
+    openReplace: noop,
     setFocusMode: noop,
     setFilter: noop,
     setSidebarFlyout: noop,
@@ -101,6 +103,8 @@ function stubMenu(overrides: Partial<AppMenuContext> = {}): AppMenuContext {
     toggleReminderDone: noop,
     openCommandPalette: noop,
     isReminderCompleted: () => false,
+    openGlobalSearch: noop,
+    closeSidebarFlyout: noop,
     ...overrides,
   };
 }
@@ -126,7 +130,7 @@ describe("buildMenuBar", () => {
     );
   });
 
-  it("pairs pin-sidebar and hide-attachments with the current chrome", () => {
+  it("keeps the sidebar fixed while exposing the remaining view controls", () => {
     const groups = buildMenuBar(
       stubMenu({
         paneLayout: { ...defaultPaneLayout(), sidebarRail: true },
@@ -137,7 +141,11 @@ describe("buildMenuBar", () => {
     const view = groups.find((group) => group.label === "View");
     assert.ok(view);
     const viewLabels = labels(view.items);
-    assert.equal(viewLabels.includes("Pin Sidebar Open"), true);
+    assert.equal(viewLabels.includes("Expand Sidebar"), false);
+    assert.equal(viewLabels.includes("Collapse Sidebar"), false);
+    assert.equal(viewLabels.includes("Pin Sidebar Open"), false);
+    assert.equal(viewLabels.includes("Collapse Sidebar to Icons"), false);
+    assert.equal(viewLabels.includes("Hide Sidebar"), true);
     assert.equal(viewLabels.includes("Hide Attachments"), true);
     assert.equal(viewLabels.includes("Show Note Outline"), true);
     assert.equal(viewLabels.includes("Back"), true);
