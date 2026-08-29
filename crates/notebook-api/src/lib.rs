@@ -11,7 +11,7 @@ use axum::{
     Json, Router,
 };
 use notebook_core::{
-    CreateNotebookRequest, CreateNoteRequest, CreateStackRequest, CreateTagRequest, Database,
+    CreateNoteRequest, CreateNotebookRequest, CreateStackRequest, CreateTagRequest, Database,
     EnexImportRequest, HealthResponse, NotebookService, SearchQuery, UpdateNoteRequest,
     UpdateNotebookRequest, UpdateStackRequest, UpdateTagRequest, UpdateUserRequest,
     UseTemplateRequest,
@@ -88,7 +88,10 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
-        .route("/api/v1/notebooks", get(list_notebooks).post(create_notebook))
+        .route(
+            "/api/v1/notebooks",
+            get(list_notebooks).post(create_notebook),
+        )
         .route(
             "/api/v1/notebooks/:id",
             get(get_notebook)
@@ -126,6 +129,7 @@ fn build_router(state: AppState) -> Router {
             "/api/v1/notes/:id/attachments/upload",
             post(upload_attachment),
         )
+        .route("/api/v1/attachments", get(list_all_attachments))
         .route("/api/v1/attachments/:id", get(download_attachment))
         .route("/api/v1/attachments/:id/meta", get(get_attachment))
         .route("/api/v1/attachments/:id", delete(delete_attachment))
@@ -139,7 +143,9 @@ fn build_router(state: AppState) -> Router {
         .route("/api/v1/account", get(get_account).put(update_account))
         .route(
             "/api/v1/settings",
-            get(get_settings).put(update_settings).delete(reset_settings),
+            get(get_settings)
+                .put(update_settings)
+                .delete(reset_settings),
         )
         .route("/api/v1/templates/catalog", get(template_catalog))
         .route("/api/v1/templates/restore", post(restore_templates))
@@ -200,7 +206,9 @@ async fn list_notebooks(
     Query(q): Query<ListNotebooksQuery>,
 ) -> Result<Json<Vec<notebook_core::Notebook>>, AppError> {
     let svc = state.service.lock().await;
-    Ok(Json(svc.list_notebooks(q.include_deleted.unwrap_or(false))?))
+    Ok(Json(
+        svc.list_notebooks(q.include_deleted.unwrap_or(false))?,
+    ))
 }
 
 async fn create_notebook(
@@ -416,6 +424,13 @@ async fn list_attachments(
     Ok(Json(svc.list_attachments(id)?))
 }
 
+async fn list_all_attachments(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<notebook_core::AttachmentSummary>>, AppError> {
+    let svc = state.service.lock().await;
+    Ok(Json(svc.list_all_attachments()?))
+}
+
 async fn upload_attachment(
     State(state): State<AppState>,
     Path(note_id): Path<Uuid>,
@@ -468,7 +483,7 @@ async fn download_attachment(
     let att = svc.get_attachment(id)?;
     let data = svc.read_attachment_data(id)?;
     let mut content_type = att.mime_type.clone();
-    if looks_like_pdf_attachment(&att.filename, &att.mime_type, &data) {
+    if notebook_core::content::looks_like_pdf(&att.mime_type, Some(&att.filename), &data) {
         content_type = "application/pdf".to_string();
     }
     let disposition = content_disposition(&att.filename);
@@ -480,14 +495,6 @@ async fn download_attachment(
         data,
     )
         .into_response())
-}
-
-fn looks_like_pdf_attachment(filename: &str, mime: &str, data: &[u8]) -> bool {
-    let mime = mime.to_ascii_lowercase();
-    mime == "application/pdf"
-        || mime == "application/x-pdf"
-        || filename.to_ascii_lowercase().ends_with(".pdf")
-        || data.starts_with(b"%PDF")
 }
 
 fn content_disposition(filename: &str) -> String {
@@ -630,9 +637,7 @@ async fn import_enex_path(
     )?))
 }
 
-async fn get_account(
-    State(state): State<AppState>,
-) -> Result<Json<notebook_core::User>, AppError> {
+async fn get_account(State(state): State<AppState>) -> Result<Json<notebook_core::User>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.get_account()?))
 }
@@ -645,9 +650,7 @@ async fn update_account(
     Ok(Json(svc.update_account(req)?))
 }
 
-async fn get_settings(
-    State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, AppError> {
+async fn get_settings(State(state): State<AppState>) -> Result<Json<serde_json::Value>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.get_preferences()?))
 }
@@ -691,9 +694,7 @@ async fn use_template(
     Ok(Json(svc.use_template(id, req.notebook_id)?))
 }
 
-async fn storage_info(
-    State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, AppError> {
+async fn storage_info(State(state): State<AppState>) -> Result<Json<serde_json::Value>, AppError> {
     let svc = state.service.lock().await;
     Ok(Json(svc.storage_info()))
 }
@@ -724,13 +725,13 @@ impl IntoResponse for AppError {
         let (status, message) = match &self.0 {
             // Callers build these as bare "note <id>" strings, so use the Display
             // impl to keep the "not found: " / "invalid input: " prefix on the wire.
-            notebook_core::NotebookError::NotFound(_) => (StatusCode::NOT_FOUND, self.0.to_string()),
+            notebook_core::NotebookError::NotFound(_) => {
+                (StatusCode::NOT_FOUND, self.0.to_string())
+            }
             notebook_core::NotebookError::InvalidInput(_) => {
                 (StatusCode::BAD_REQUEST, self.0.to_string())
             }
-            notebook_core::NotebookError::Conflict(_) => {
-                (StatusCode::CONFLICT, self.0.to_string())
-            }
+            notebook_core::NotebookError::Conflict(_) => (StatusCode::CONFLICT, self.0.to_string()),
             // Database and IO failures are internal detail; do not leak driver text.
             notebook_core::NotebookError::Database(err) => {
                 tracing::error!("database error: {err}");
@@ -746,7 +747,20 @@ impl IntoResponse for AppError {
                     "internal server error".to_string(),
                 )
             }
-            _ => (StatusCode::INTERNAL_SERVER_ERROR, self.0.to_string()),
+            // `Other` is for genuinely internal faults (e.g. a stripper/parser
+            // invariant that should never fail on well-formed data). Do not
+            // leak its text on the wire, same as Database/Io above.
+            //
+            // Matched exhaustively (no `_` wildcard) on purpose: adding a new
+            // NotebookError variant should be a compile error here, not a
+            // silent 500.
+            notebook_core::NotebookError::Other(err) => {
+                tracing::error!("internal error: {err}");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal server error".to_string(),
+                )
+            }
         };
         (status, Json(serde_json::json!({ "error": message }))).into_response()
     }
@@ -774,13 +788,11 @@ mod tests {
         )
     }
 
-    fn test_app(unique: &str) -> Router {
-        let dir = std::env::temp_dir().join(format!("notebook-api-{unique}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let db = Database::open(dir.join("test.db")).unwrap();
+    fn test_app() -> Router {
         build_router(AppState {
-            service: Arc::new(Mutex::new(NotebookService::new(db))),
+            service: Arc::new(Mutex::new(NotebookService::new(
+                Database::in_memory().unwrap(),
+            ))),
         })
     }
 
@@ -788,10 +800,8 @@ mod tests {
         let mut body = Vec::new();
         body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
         body.extend_from_slice(
-            format!(
-                "Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
-            )
-            .as_bytes(),
+            format!("Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n")
+                .as_bytes(),
         );
         body.extend_from_slice(b"Content-Type: application/xml\r\n\r\n");
         body.extend_from_slice(data);
@@ -800,8 +810,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn other_error_maps_to_generic_500_without_leaking_internal_text() {
+        let err = AppError(notebook_core::NotebookError::Other(
+            "some internal driver-specific detail".to_string(),
+        ));
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body, serde_json::json!({ "error": "internal server error" }));
+        let raw = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(
+            !raw.contains("some internal driver-specific detail"),
+            "response leaked internal error text: {raw}"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_input_error_maps_to_400_with_its_message() {
+        let err = AppError(notebook_core::NotebookError::InvalidInput(
+            "ENEX file contains no notes".to_string(),
+        ));
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({ "error": "invalid input: ENEX file contains no notes" })
+        );
+    }
+
+    #[tokio::test]
     async fn imports_enex_larger_than_axum_default_limit() {
-        let app = test_app("large-upload");
+        let app = test_app();
         let padding = "x".repeat(2 * 1024 * 1024 + 50 * 1024);
         let enex = sample_enex("Large notebook export", &padding);
         assert!(
@@ -836,10 +882,9 @@ mod tests {
 
     #[tokio::test]
     async fn imports_enex_from_local_path() {
-        let app = test_app("path-import");
-        let dir = std::env::temp_dir().join("notebook-api-path-import-file");
-        std::fs::create_dir_all(&dir).unwrap();
-        let file_path = dir.join("grouped.enex");
+        let app = test_app();
+        let dir = notebook_core::db::TempDir::new("notebook-api-path-import").unwrap();
+        let file_path = dir.path().join("grouped.enex");
         std::fs::write(&file_path, sample_enex("Path note", "Hello from disk")).unwrap();
 
         let response = app
@@ -871,7 +916,7 @@ mod tests {
 
     #[tokio::test]
     async fn seeds_templates_and_uses_them() {
-        let app = test_app("templates");
+        let app = test_app();
         let response = app
             .clone()
             .oneshot(
@@ -942,7 +987,7 @@ mod tests {
 
     #[tokio::test]
     async fn reads_and_updates_settings() {
-        let app = test_app("settings");
+        let app = test_app();
         let response = app
             .clone()
             .oneshot(
@@ -1007,7 +1052,7 @@ mod tests {
 
     #[tokio::test]
     async fn manages_context_menu_resources() {
-        let app = test_app("context-menu-resources");
+        let app = test_app();
 
         let response = app
             .clone()
@@ -1146,6 +1191,8 @@ mod tests {
             .await
             .unwrap();
         let notes: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
-        assert!(notes.iter().any(|note| note["title"] == "Trash with notebook"));
+        assert!(notes
+            .iter()
+            .any(|note| note["title"] == "Trash with notebook"));
     }
 }

@@ -1,3 +1,4 @@
+pub mod content;
 pub mod datetime;
 pub mod db;
 pub mod error;

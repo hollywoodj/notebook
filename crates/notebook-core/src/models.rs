@@ -121,6 +121,23 @@ pub struct Attachment {
     pub updated_at: DateTime<Utc>,
 }
 
+/// An attachment plus the note and notebook it lives in, for the Files view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentSummary {
+    pub id: Uuid,
+    pub note_id: Uuid,
+    pub filename: String,
+    pub mime_type: String,
+    pub size: i64,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub note_title: String,
+    pub notebook_id: Uuid,
+    pub notebook_name: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteRevision {
     pub id: Uuid,
@@ -282,6 +299,7 @@ pub struct SidebarCounts {
     pub trash: i32,
     pub templates: i32,
     pub shortcuts: i32,
+    pub files: i32,
 }
 
 #[cfg(test)]

@@ -38,6 +38,7 @@ pub fn search_notes(service: &NotebookService, query: SearchQuery) -> Result<Sea
     let mut filters = vec!["n.user_id = ?1".to_string()];
     if !include_trash {
         filters.push("n.deleted_at IS NULL".to_string());
+        filters.push("n.is_template = 0".to_string());
     }
     if !include_archived {
         filters.push("n.is_archived = 0".to_string());
@@ -77,13 +78,7 @@ pub fn search_notes(service: &NotebookService, query: SearchQuery) -> Result<Sea
             .map(|id| Uuid::parse_str(&id).unwrap())
             .collect()
     };
-    let mut notes = note_query::summaries_by_ids(conn, &ids, !include_trash)?;
-    if !include_trash {
-        notes.retain(|note| !note.is_template);
-    }
-    if !include_archived {
-        notes.retain(|note| !note.is_archived);
-    }
+    let notes = note_query::summaries_by_ids(conn, &ids, !include_trash)?;
 
     Ok(SearchResult { notes, total })
 }

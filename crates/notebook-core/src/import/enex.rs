@@ -4,9 +4,13 @@ use std::io::Cursor;
 use base64::Engine;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use md5;
+use quick_xml::escape::resolve_xml_entity;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
+use crate::content::checklist::promote_checkbox_blocks;
+use crate::content::html::{escape_attr, escape_html, style_flag};
+use crate::content::{file_attachment_html, looks_like_pdf};
 use crate::error::{NotebookError, Result};
 
 #[derive(Debug, Clone)]
@@ -86,7 +90,10 @@ pub fn parse_enex(data: &[u8]) -> Result<EnexExport> {
                 }
             }
             Ok(Event::Text(e)) => {
-                let text = String::from_utf8_lossy(e.as_ref()).into_owned();
+                let text = e
+                    .unescape()
+                    .map_err(|err| NotebookError::InvalidInput(format!("invalid XML text: {err}")))?
+                    .into_owned();
                 if in_resource {
                     if let Some(resource) = current_resource.as_mut() {
                         match current_field.as_str() {
@@ -185,7 +192,7 @@ pub fn parse_enex(data: &[u8]) -> Result<EnexExport> {
                 }
             }
             Ok(Event::Eof) => break,
-            Err(err) => return Err(NotebookError::Other(err.to_string())),
+            Err(err) => return Err(NotebookError::InvalidInput(err.to_string())),
             _ => {}
         }
         buf.clear();
@@ -240,7 +247,7 @@ impl PartialResource {
     fn into_resource(self) -> Result<EnexResource> {
         let data = decode_enex_base64(&self.data_b64)?;
         if data.is_empty() {
-            return Err(NotebookError::Other("empty ENEX resource".into()));
+            return Err(NotebookError::InvalidInput("empty ENEX resource".into()));
         }
         let mut mime = if self.mime.is_empty() {
             "application/octet-stream".to_string()
@@ -265,7 +272,7 @@ impl PartialResource {
 fn decode_enex_base64(raw: &str) -> Result<Vec<u8>> {
     let compact: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
     if compact.is_empty() {
-        return Err(NotebookError::Other("empty ENEX resource data".into()));
+        return Err(NotebookError::InvalidInput("empty ENEX resource data".into()));
     }
     let padded = pad_base64(&compact);
     let engines = [
@@ -282,7 +289,9 @@ fn decode_enex_base64(raw: &str) -> Result<Vec<u8>> {
             return Ok(data);
         }
     }
-    Err(NotebookError::Other("invalid base64 in resource".into()))
+    Err(NotebookError::InvalidInput(
+        "invalid base64 in resource".into(),
+    ))
 }
 
 fn pad_base64(value: &str) -> String {
@@ -293,37 +302,9 @@ fn pad_base64(value: &str) -> String {
     padded
 }
 
-pub fn looks_like_pdf(mime: &str, filename: Option<&str>, data: &[u8]) -> bool {
-    let mime = mime.to_ascii_lowercase();
-    mime == "application/pdf"
-        || mime == "application/x-pdf"
-        || filename
-            .map(|name| name.to_ascii_lowercase().ends_with(".pdf"))
-            .unwrap_or(false)
-        || data.starts_with(b"%PDF")
-}
-
 pub fn is_inline_image(resource: &EnexResource) -> bool {
     resource.mime.to_ascii_lowercase().starts_with("image/")
         && !looks_like_pdf(&resource.mime, resource.filename.as_deref(), &resource.data)
-}
-
-pub fn file_attachment_html(href: &str, filename: &str, mime: &str) -> String {
-    let pdf = looks_like_pdf(mime, Some(filename), &[]);
-    let class_name = if pdf {
-        "notebook-file is-pdf is-expanded"
-    } else {
-        "notebook-file is-title"
-    };
-    format!(
-        "<div data-notebook-file=\"true\" data-href=\"{href}\" data-filename=\"{filename}\" data-mime=\"{mime}\" data-expanded=\"{expanded}\" class=\"{class_name}\"><a href=\"{href}\">{visible}</a></div>",
-        href = escape_attr(href),
-        filename = escape_attr(filename),
-        mime = escape_attr(mime),
-        expanded = if pdf { "true" } else { "false" },
-        class_name = class_name,
-        visible = escape_html(filename),
-    )
 }
 
 pub fn parse_evernote_datetime(value: &str) -> Option<DateTime<Utc>> {
@@ -349,6 +330,10 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
 
     let mut out = String::new();
     let mut buf = Vec::new();
+    let mut list_stack = Vec::<usize>::new();
+    let mut list_states = Vec::<EnmlListState>::new();
+    let mut item_stack = Vec::<usize>::new();
+    let mut item_states = Vec::<EnmlItemState>::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -357,11 +342,15 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
                 match name.as_str() {
                     "en-note" => out.push_str("<div>"),
                     "en-todo" => {
-                        let checked = e
-                            .attributes()
-                            .flatten()
-                            .any(|a| a.key.as_ref() == b"checked" && a.value.as_ref() != b"false");
-                        out.push_str(if checked { "<p>☑ " } else { "<p>☐ " });
+                        let checked = en_todo_checked(&e);
+                        if let Some(item_id) = item_stack.last().copied() {
+                            item_states[item_id].checked = Some(checked);
+                            if let Some(list_id) = item_states[item_id].list_id {
+                                list_states[list_id].is_task = true;
+                            }
+                        } else {
+                            render_en_todo(&mut out, checked);
+                        }
                     }
                     "en-crypt" => {
                         out.push_str("<p><em>[Encrypted content not imported]</em></p>");
@@ -369,18 +358,36 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
                     "en-media" => {
                         render_en_media(&mut out, &e, &resource_map);
                     }
-                    "a" | "div" | "span" | "p" | "br" | "ul" | "ol" | "li" | "b" | "i" | "u"
-                    | "strong" | "em" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote"
-                    | "pre" | "code" | "table" | "tr" | "td" | "th" | "thead" | "tbody" => {
+                    "ul" | "ol" => {
+                        let id = list_states.len();
+                        list_states.push(EnmlListState {
+                            original_tag: name.clone(),
+                            is_task: style_flag(&e, &reader, "--en-todo").unwrap_or(false),
+                        });
+                        list_stack.push(id);
                         out.push('<');
                         out.push_str(&name);
-                        for attr in e.attributes().flatten() {
-                            let key = String::from_utf8_lossy(attr.key.as_ref());
-                            if key == "style" || key == "href" || key == "class" {
-                                let value = String::from_utf8_lossy(&attr.value);
-                                out.push_str(&format!(" {key}=\"{value}\""));
-                            }
-                        }
+                        out.push_str(&format!(" data-enml-list-id=\"{id}\""));
+                        render_enml_attributes(&mut out, &e, &reader);
+                        out.push('>');
+                    }
+                    "li" => {
+                        let id = item_states.len();
+                        item_states.push(EnmlItemState {
+                            list_id: list_stack.last().copied(),
+                            checked: style_flag(&e, &reader, "--en-checked"),
+                        });
+                        item_stack.push(id);
+                        out.push_str(&format!("<li data-enml-item-id=\"{id}\""));
+                        render_enml_attributes(&mut out, &e, &reader);
+                        out.push('>');
+                    }
+                    "a" | "div" | "span" | "p" | "br" | "b" | "i" | "u" | "strong" | "em"
+                    | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote" | "pre" | "code"
+                    | "table" | "tr" | "td" | "th" | "thead" | "tbody" => {
+                        out.push('<');
+                        out.push_str(&name);
+                        render_enml_attributes(&mut out, &e, &reader);
                         out.push('>');
                     }
                     _ => {}
@@ -390,10 +397,25 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 match name.as_str() {
                     "en-note" => out.push_str("</div>"),
-                    "en-todo" => out.push_str("</p>"),
-                    "a" | "div" | "span" | "p" | "ul" | "ol" | "li" | "b" | "i" | "u"
-                    | "strong" | "em" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote"
-                    | "pre" | "code" | "table" | "tr" | "td" | "th" | "thead" | "tbody" => {
+                    "en-todo" => {}
+                    "ul" | "ol" => {
+                        if let Some(list_id) = list_stack.pop() {
+                            out.push_str(if list_states[list_id].is_task {
+                                "</ul>"
+                            } else if list_states[list_id].original_tag == "ol" {
+                                "</ol>"
+                            } else {
+                                "</ul>"
+                            });
+                        }
+                    }
+                    "li" => {
+                        item_stack.pop();
+                        out.push_str("</li>");
+                    }
+                    "a" | "div" | "span" | "p" | "b" | "i" | "u" | "strong" | "em" | "h1"
+                    | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote" | "pre" | "code"
+                    | "table" | "tr" | "td" | "th" | "thead" | "tbody" => {
                         out.push_str("</");
                         out.push_str(&name);
                         out.push('>');
@@ -402,13 +424,26 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
                 }
             }
             Ok(Event::Text(e)) => {
-                let text = String::from_utf8_lossy(e.as_ref());
-                out.push_str(&escape_html(&text));
+                let text = e
+                    .unescape_with(resolve_enml_entity)
+                    .map_err(|err| NotebookError::InvalidInput(format!("invalid ENML text: {err}")))?;
+                out.push_str(&escape_html(text.as_ref()));
             }
             Ok(Event::Empty(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 match name.as_str() {
                     "br" => out.push_str("<br/>"),
+                    "en-todo" => {
+                        let checked = en_todo_checked(&e);
+                        if let Some(item_id) = item_stack.last().copied() {
+                            item_states[item_id].checked = Some(checked);
+                            if let Some(list_id) = item_states[item_id].list_id {
+                                list_states[list_id].is_task = true;
+                            }
+                        } else {
+                            render_en_todo(&mut out, checked);
+                        }
+                    }
                     "en-media" => render_en_media(&mut out, &e, &resource_map),
                     _ => {}
                 }
@@ -416,7 +451,7 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
             Ok(Event::Eof) => break,
             Err(err) => {
                 if out.is_empty() {
-                    return Err(NotebookError::Other(format!("invalid ENML: {err}")));
+                    return Err(NotebookError::InvalidInput(format!("invalid ENML: {err}")));
                 }
                 break;
             }
@@ -429,7 +464,97 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
         out.push_str("<p></p>");
     }
 
-    Ok(out)
+    for (id, list) in list_states.iter().enumerate() {
+        let marker = format!("<{} data-enml-list-id=\"{id}\"", list.original_tag);
+        let replacement = if list.is_task {
+            "<ul data-type=\"taskList\"".to_string()
+        } else {
+            format!("<{}", list.original_tag)
+        };
+        out = out.replace(&marker, &replacement);
+    }
+    for (id, item) in item_states.iter().enumerate() {
+        let marker = format!("<li data-enml-item-id=\"{id}\"");
+        let replacement = if item
+            .list_id
+            .and_then(|list_id| list_states.get(list_id))
+            .is_some_and(|list| list.is_task)
+        {
+            format!(
+                "<li data-type=\"taskItem\" data-checked=\"{}\"",
+                item.checked.unwrap_or(false)
+            )
+        } else {
+            "<li".to_string()
+        };
+        out = out.replace(&marker, &replacement);
+    }
+
+    Ok(promote_checkbox_blocks(&out, &["div", "p"]).unwrap_or(out))
+}
+
+#[derive(Debug)]
+struct EnmlListState {
+    original_tag: String,
+    is_task: bool,
+}
+
+#[derive(Debug)]
+struct EnmlItemState {
+    list_id: Option<usize>,
+    checked: Option<bool>,
+}
+
+fn render_enml_attributes(
+    out: &mut String,
+    e: &quick_xml::events::BytesStart<'_>,
+    reader: &Reader<Cursor<&[u8]>>,
+) {
+    for attr in e.attributes().flatten() {
+        let key = String::from_utf8_lossy(attr.key.as_ref());
+        if key == "style" || key == "href" || key == "class" {
+            let value = attr
+                .decode_and_unescape_value(reader.decoder())
+                .unwrap_or_else(|_| String::from_utf8_lossy(&attr.value));
+            out.push_str(&format!(" {key}=\"{}\"", escape_attr(value.as_ref())));
+        }
+    }
+}
+
+fn resolve_enml_entity(entity: &str) -> Option<&'static str> {
+    resolve_xml_entity(entity).or_else(|| match entity {
+        // ENML is XML, but older Evernote exports sometimes contain a small
+        // set of HTML entities from pasted web content.
+        "nbsp" => Some("\u{00a0}"),
+        "ndash" => Some("–"),
+        "mdash" => Some("—"),
+        "hellip" => Some("…"),
+        "lsquo" => Some("‘"),
+        "rsquo" => Some("’"),
+        "ldquo" => Some("“"),
+        "rdquo" => Some("”"),
+        _ => None,
+    })
+}
+
+fn en_todo_checked(e: &quick_xml::events::BytesStart<'_>) -> bool {
+    e.attributes().flatten().any(|attr| {
+        attr.key.as_ref() == b"checked"
+            && !matches!(
+                attr.value.as_ref(),
+                b"false" | b"FALSE" | b"0" | b"no" | b"NO"
+            )
+    })
+}
+
+fn render_en_todo(out: &mut String, checked: bool) {
+    out.push_str("<input type=\"checkbox\" data-inline-checkbox=\"true\" data-checked=\"");
+    out.push_str(if checked { "true" } else { "false" });
+    if checked {
+        out.push_str("\" checked=\"checked\" />");
+    } else {
+        out.push_str("\" />");
+    }
 }
 
 fn render_en_media(
@@ -497,17 +622,6 @@ fn normalize_hash(hash: &str) -> String {
     hash.trim().to_ascii_lowercase()
 }
 
-fn escape_html(input: &str) -> String {
-    input
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
-fn escape_attr(input: &str) -> String {
-    escape_html(input).replace('"', "&quot;")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,6 +653,94 @@ mod tests {
     }
 
     #[test]
+    fn decodes_apostrophes_and_common_enml_entities_once() {
+        let enex = r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>James&apos;s note</title>
+    <content><![CDATA[<en-note><div>That&apos;s useful&nbsp;&mdash;&nbsp;keep it.</div><a href="https://example.com/?a=1&amp;b=2">Link</a></en-note>]]></content>
+  </note>
+</en-export>"#;
+        let export = parse_enex(enex.as_bytes()).unwrap();
+        assert_eq!(export.notes[0].title, "James's note");
+
+        let html = enml_to_html(&export.notes[0].content, &[]).unwrap();
+        assert!(
+            html.contains("That's useful\u{00a0}—\u{00a0}keep it."),
+            "got: {html}"
+        );
+        assert!(html.contains("?a=1&amp;b=2"), "got: {html}");
+        assert!(!html.contains("&amp;apos;"), "got: {html}");
+        assert!(!html.contains("&amp;amp;"), "got: {html}");
+    }
+
+    #[test]
+    fn promotes_classic_en_todo_blocks_to_one_task_list() {
+        let enml = r#"<en-note><div><en-todo checked="true"/>Done<br/></div><div><en-todo checked="false"/>Next<br/></div><div><br/></div></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert_eq!(
+            html.matches("<ul data-type=\"taskList\">").count(),
+            1,
+            "got: {html}"
+        );
+        assert!(
+            html.contains("<li data-type=\"taskItem\" data-checked=\"true\">Done</li>"),
+            "got: {html}"
+        );
+        assert!(
+            html.contains("<li data-type=\"taskItem\" data-checked=\"false\">Next</li>"),
+            "got: {html}"
+        );
+        // The row-padding <br/> would otherwise add an empty line inside the item.
+        assert!(!html.contains("Done<br/>"), "got: {html}");
+        assert!(!html.contains("data-inline-checkbox"), "got: {html}");
+    }
+
+    #[test]
+    fn keeps_mid_block_en_todos_inline() {
+        let enml = r#"<en-note><div>Deposit <en-todo checked="true"/> cleared</div></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert!(
+            html.contains("data-inline-checkbox=\"true\""),
+            "got: {html}"
+        );
+        assert!(!html.contains("taskList"), "got: {html}");
+    }
+
+    #[test]
+    fn separate_en_todo_runs_stay_separate_lists() {
+        let enml = r#"<en-note><div><en-todo checked="false"/>Kale</div><h2>Grains</h2><div><en-todo checked="false"/>Rice</div></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert_eq!(
+            html.matches("<ul data-type=\"taskList\">").count(),
+            2,
+            "got: {html}"
+        );
+        assert!(html.contains("</ul><h2>Grains</h2><ul"), "got: {html}");
+    }
+
+    #[test]
+    fn promotes_bulleted_en_todos_to_real_task_lists() {
+        let enml = r#"<en-note><ul><li><en-todo checked="true"/>Done</li><li><en-todo checked="false"/>Next</li></ul></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert!(html.contains("<ul data-type=\"taskList\">"), "got: {html}");
+        assert!(html.contains("<li data-type=\"taskItem\" data-checked=\"true\">Done</li>"));
+        assert!(html.contains("<li data-type=\"taskItem\" data-checked=\"false\">Next</li>"));
+        assert!(!html.contains("data-inline-checkbox"), "got: {html}");
+        assert!(!html.contains("<ul><li>"), "got: {html}");
+    }
+
+    #[test]
+    fn imports_modern_evernote_style_checklists_as_tasks() {
+        let enml = r#"<en-note><ul style="--en-todo:true;"><li style="--en-checked:true;"><div>Done</div></li><li style="--en-checked:false;"><div>Next</div></li><li><div>Defaults unchecked</div></li></ul></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert!(html.contains("<ul data-type=\"taskList\""), "got: {html}");
+        assert!(html.contains("data-type=\"taskItem\" data-checked=\"true\""));
+        assert_eq!(html.matches("data-checked=\"false\"").count(), 2);
+        assert!(!html.contains("<ul style=\"--en-todo:true;\"><li"));
+    }
+
+    #[test]
     fn parses_evernote_datetime() {
         let dt = parse_evernote_datetime("20240115T100000Z").unwrap();
         assert_eq!(dt.format("%Y-%m-%d").to_string(), "2024-01-15");
@@ -546,11 +748,7 @@ mod tests {
 
     #[test]
     fn imports_enex_into_database() {
-        let dir = std::env::temp_dir().join("notebook-import-test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let db_path = dir.join("test.db");
-        let db = crate::db::Database::open(&db_path).unwrap();
+        let db = crate::db::Database::in_memory().unwrap();
         let service = crate::service::NotebookService::new(db);
         let result = service
             .import_enex(
@@ -666,10 +864,7 @@ mod tests {
   </note>
 </en-export>"#
         );
-        let dir = std::env::temp_dir().join("notebook-pdf-import-test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let db = crate::db::Database::open(dir.join("test.db")).unwrap();
+        let db = crate::db::Database::in_memory().unwrap();
         let service = crate::service::NotebookService::new(db);
 
         let result = service
@@ -732,12 +927,8 @@ mod tests {
   </note>
 </en-export>"#
         );
-        let dir = std::env::temp_dir().join("notebook-pdf-uppercase-import-test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let service = crate::service::NotebookService::new(
-            crate::db::Database::open(dir.join("test.db")).unwrap(),
-        );
+        let service =
+            crate::service::NotebookService::new(crate::db::Database::in_memory().unwrap());
         let result = service
             .import_enex(
                 enex.as_bytes(),
@@ -783,12 +974,8 @@ mod tests {
   </note>
 </en-export>"#
         );
-        let dir = std::env::temp_dir().join("notebook-pdf-unreferenced-import-test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let service = crate::service::NotebookService::new(
-            crate::db::Database::open(dir.join("test.db")).unwrap(),
-        );
+        let service =
+            crate::service::NotebookService::new(crate::db::Database::in_memory().unwrap());
         let result = service
             .import_enex(
                 enex.as_bytes(),
@@ -836,12 +1023,8 @@ mod tests {
             hash = format!("{:x}", md5::compute(file_data)),
             encoded = encoded
         );
-        let dir = std::env::temp_dir().join("notebook-pdf-cdata-import-test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let service = crate::service::NotebookService::new(
-            crate::db::Database::open(dir.join("test.db")).unwrap(),
-        );
+        let service =
+            crate::service::NotebookService::new(crate::db::Database::in_memory().unwrap());
         let result = service
             .import_enex(
                 enex.as_bytes(),
@@ -882,11 +1065,7 @@ mod tests {
     <content><![CDATA[<en-note><div>Personal content</div></en-note>]]></content>
   </note>
 </en-export>"#;
-        let dir = std::env::temp_dir().join("notebook-multi-import-test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let db_path = dir.join("test.db");
-        let db = crate::db::Database::open(&db_path).unwrap();
+        let db = crate::db::Database::in_memory().unwrap();
         let service = crate::service::NotebookService::new(db);
         let result = service
             .import_enex(

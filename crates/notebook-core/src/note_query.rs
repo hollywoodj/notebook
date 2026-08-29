@@ -96,6 +96,8 @@ pub fn first_image_src(content: &str) -> Option<String> {
 }
 
 pub fn checklist_progress(content: &str) -> (i32, i32) {
+    let normalized = crate::content::normalize_evernote_checklist_html(content);
+    let content = normalized.as_str();
     let task_total = content.matches("data-type=\"taskItem\"").count()
         + content.matches("data-type='taskItem'").count();
     let inline_total = content.matches("data-inline-checkbox").count();
@@ -263,6 +265,8 @@ mod tests {
     fn checklist_progress_counts_task_items_and_inline_boxes() {
         let html = r#"<ul data-type="taskList"><li data-type="taskItem" data-checked="true">a</li><li data-type="taskItem" data-checked="false">b</li></ul><input data-inline-checkbox="true" data-checked="true">"#;
         assert_eq!(checklist_progress(html), (2, 3));
+        let modern_evernote = r#"<ul style="--en-todo:true;"><li style="--en-checked:true;">a</li><li style="--en-checked:false;">b</li></ul>"#;
+        assert_eq!(checklist_progress(modern_evernote), (1, 2));
         assert_eq!(checklist_progress("<p>plain</p>"), (0, 0));
     }
 

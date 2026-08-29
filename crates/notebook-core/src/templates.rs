@@ -133,11 +133,7 @@ pub fn builtin_template_catalog() -> Vec<serde_json::Value> {
         .collect()
 }
 
-pub fn seed_builtin_templates(
-    conn: &Connection,
-    user_id: Uuid,
-    notebook_id: Uuid,
-) -> Result<u32> {
+pub fn seed_builtin_templates(conn: &Connection, user_id: Uuid, notebook_id: Uuid) -> Result<u32> {
     let mut inserted = 0u32;
     let now = chrono::Utc::now().to_rfc3339();
     for tmpl in BUILTINS {
@@ -150,7 +146,7 @@ pub fn seed_builtin_templates(
             continue;
         }
         let id = Uuid::new_v4();
-        let plain = strip_html(tmpl.content);
+        let plain = crate::content::strip_html(tmpl.content);
         conn.execute(
             "INSERT INTO notes (id, user_id, notebook_id, title, content, content_plain, is_pinned, is_archived, is_template, template_category, template_key, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 0, 1, ?7, ?8, ?9, ?10)",
@@ -170,20 +166,6 @@ pub fn seed_builtin_templates(
         inserted += 1;
     }
     Ok(inserted)
-}
-
-fn strip_html(html: &str) -> String {
-    let mut out = String::with_capacity(html.len());
-    let mut in_tag = false;
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => out.push(ch),
-            _ => {}
-        }
-    }
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 pub fn default_preferences() -> serde_json::Value {
@@ -208,6 +190,7 @@ pub fn default_preferences() -> serde_json::Value {
         "show_tags": true,
         "show_templates": true,
         "show_trash": true,
+        "show_files": true,
         "show_import": true,
         "show_reminders": true,
         "default_notebook_id": null,

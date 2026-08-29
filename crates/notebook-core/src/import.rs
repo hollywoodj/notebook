@@ -59,7 +59,7 @@ impl NotebookService {
         }
 
         let notebook_id = primary_notebook_id
-            .ok_or_else(|| NotebookError::Other("ENEX file contains no notes".to_string()))?;
+            .ok_or_else(|| NotebookError::InvalidInput("ENEX file contains no notes".to_string()))?;
         let notebook_count = notebook_ids.len() as u32;
         let notebook_name = if notebook_count > 1 {
             format!("{} notebooks", notebook_count)
@@ -150,7 +150,7 @@ impl NotebookService {
             if was_referenced {
                 html = html.replace(&resource_marker, &attachment_href);
             } else {
-                html.push_str(&enex::file_attachment_html(
+                html.push_str(&crate::content::file_attachment_html(
                     &attachment_href,
                     &filename,
                     &resource.mime,
@@ -194,7 +194,7 @@ impl NotebookService {
 }
 
 fn default_attachment_name(mime: &str) -> String {
-    if enex::looks_like_pdf(mime, None, &[]) {
+    if crate::content::looks_like_pdf(mime, None, &[]) {
         "document.pdf".into()
     } else {
         "attachment".into()

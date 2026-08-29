@@ -340,7 +340,9 @@ impl NotebookService {
             )
             .optional()?;
         if existing.is_some() {
-            return Err(NotebookError::Conflict(format!("tag \"{name}\" already exists")));
+            return Err(NotebookError::Conflict(format!(
+                "tag \"{name}\" already exists"
+            )));
         }
         let id = Uuid::new_v4();
         let now = Self::now();
@@ -447,20 +449,6 @@ impl NotebookService {
         Ok(tags.get(&note_id).cloned().unwrap_or_default())
     }
 
-    fn strip_html(html: &str) -> String {
-        let mut out = String::with_capacity(html.len());
-        let mut in_tag = false;
-        for ch in html.chars() {
-            match ch {
-                '<' => in_tag = true,
-                '>' => in_tag = false,
-                _ if !in_tag => out.push(ch),
-                _ => {}
-            }
-        }
-        out.split_whitespace().collect::<Vec<_>>().join(" ")
-    }
-
     pub fn create_note(&self, req: CreateNoteRequest) -> Result<Note> {
         self.get_notebook(req.notebook_id)?;
         let user_id = self.db.default_user_id()?;
@@ -468,7 +456,7 @@ impl NotebookService {
         let now = Self::now();
         let title = req.title.unwrap_or_else(|| "Untitled".to_string());
         let content = req.content.unwrap_or_default();
-        let content_plain = Self::strip_html(&content);
+        let content_plain = crate::content::strip_html(&content);
 
         let is_template = req.is_template.unwrap_or(false);
         let template_category = req.template_category.clone();
@@ -535,6 +523,7 @@ impl NotebookService {
         let (tag_ids, tag_names) = self.get_note_tags(id)?;
         note.tag_ids = tag_ids;
         note.tag_names = tag_names;
+        note.content = crate::content::normalize_evernote_checklist_html(&note.content);
         Ok(note)
     }
 
@@ -549,7 +538,7 @@ impl NotebookService {
         }
         if let Some(content) = req.content {
             note.content = content.clone();
-            note.content_plain = Self::strip_html(&content);
+            note.content_plain = crate::content::strip_html(&content);
             self.save_revision(id, &note.title, &content)?;
         }
         if let Some(pinned) = req.is_pinned {
@@ -735,6 +724,40 @@ impl NotebookService {
                 height: row.get(6)?,
                 created_at: Self::parse_dt(&row.get::<_, String>(7)?).unwrap(),
                 updated_at: Self::parse_dt(&row.get::<_, String>(8)?).unwrap(),
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(NotebookError::from)
+    }
+
+    /// Every attachment on a live (non-trashed, non-template) note, newest first.
+    /// Backs the Files view, which browses attachments across all notebooks.
+    pub fn list_all_attachments(&self) -> Result<Vec<AttachmentSummary>> {
+        let user_id = self.db.default_user_id()?;
+        let conn = self.db.connection();
+        let mut stmt = conn.prepare(
+            "SELECT a.id, a.note_id, a.filename, a.mime_type, a.size, a.width, a.height,
+                    a.created_at, a.updated_at, n.title, nb.id, nb.name
+             FROM attachments a
+             JOIN notes n ON n.id = a.note_id
+             JOIN notebooks nb ON nb.id = n.notebook_id
+             WHERE n.user_id = ?1 AND n.deleted_at IS NULL AND IFNULL(n.is_template, 0) = 0
+             ORDER BY a.created_at DESC",
+        )?;
+        let rows = stmt.query_map(params![user_id.to_string()], |row| {
+            Ok(AttachmentSummary {
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+                note_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap(),
+                filename: row.get(2)?,
+                mime_type: row.get(3)?,
+                size: row.get(4)?,
+                width: row.get(5)?,
+                height: row.get(6)?,
+                created_at: Self::parse_dt(&row.get::<_, String>(7)?).unwrap(),
+                updated_at: Self::parse_dt(&row.get::<_, String>(8)?).unwrap(),
+                note_title: row.get(9)?,
+                notebook_id: Uuid::parse_str(&row.get::<_, String>(10)?).unwrap(),
+                notebook_name: row.get(11)?,
             })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -1066,12 +1089,19 @@ impl NotebookService {
             params![user_id.to_string()],
             |row| row.get(0),
         )?;
+        let files: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM attachments a JOIN notes n ON n.id = a.note_id
+             WHERE n.user_id = ?1 AND n.deleted_at IS NULL AND IFNULL(n.is_template, 0) = 0",
+            params![user_id.to_string()],
+            |row| row.get(0),
+        )?;
         Ok(crate::SidebarCounts {
             notes,
             reminders,
             trash,
             templates,
             shortcuts,
+            files,
         })
     }
 }
@@ -1098,16 +1128,39 @@ mod tests {
     use super::*;
     use crate::models::{CreateNoteRequest, CreateNotebookRequest, UpdateNoteRequest};
 
-    fn temp_service(name: &str) -> NotebookService {
-        let dir = std::env::temp_dir().join(format!("notebook-ui-gap-{name}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        NotebookService::new(Database::open(dir.join("test.db")).unwrap())
+    fn temp_service() -> NotebookService {
+        NotebookService::new(Database::in_memory().unwrap())
+    }
+
+    #[test]
+    fn reading_an_older_import_repairs_modern_evernote_checklists() {
+        let service = temp_service();
+        let notebook_id = service.list_notebooks(false).unwrap()[0].id;
+        let note = service
+            .create_note(CreateNoteRequest {
+                notebook_id,
+                title: Some("Groceries".into()),
+                content: Some(
+                    r#"<ul style="--en-todo:true;"><li style="--en-checked:false;">Milk</li></ul>"#
+                        .into(),
+                ),
+                tag_ids: None,
+                is_pinned: None,
+                reminder_at: None,
+                source_url: None,
+                is_template: None,
+                template_category: None,
+            })
+            .unwrap();
+
+        assert!(note.content.contains("data-type=\"taskList\""));
+        assert!(note.content.contains("data-type=\"taskItem\""));
+        assert!(note.content.contains("data-checked=\"false\""));
     }
 
     #[test]
     fn sidebar_counts_and_notebook_badges() {
-        let service = temp_service("counts");
+        let service = temp_service();
         let notebooks = service.list_notebooks(false).unwrap();
         let notebook_id = notebooks[0].id;
         service
@@ -1148,8 +1201,43 @@ mod tests {
     }
 
     #[test]
+    fn files_view_lists_attachments_across_notebooks_but_skips_trash() {
+        let service = temp_service();
+        let first = service.list_notebooks(false).unwrap()[0].id;
+        let second = service
+            .create_notebook(CreateNotebookRequest {
+                name: "Receipts".into(),
+                stack_id: None,
+                is_default: None,
+            })
+            .unwrap()
+            .id;
+        let kept = service.create_note(sample_note(first, "Keeper")).unwrap();
+        let trashed = service.create_note(sample_note(second, "Goner")).unwrap();
+        service
+            .add_attachment(kept.id, "plan.pdf".into(), "application/pdf".into(), b"pdf")
+            .unwrap();
+        service
+            .add_attachment(trashed.id, "old.png".into(), "image/png".into(), b"png")
+            .unwrap();
+
+        let all = service.list_all_attachments().unwrap();
+        assert_eq!(all.len(), 2);
+        let pdf = all.iter().find(|a| a.filename == "plan.pdf").unwrap();
+        assert_eq!(pdf.note_title, "Keeper");
+        assert_eq!(pdf.notebook_id, first);
+        assert_eq!(service.sidebar_counts().unwrap().files, 2);
+
+        service.delete_note(trashed.id).unwrap();
+        let live = service.list_all_attachments().unwrap();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].filename, "plan.pdf");
+        assert_eq!(service.sidebar_counts().unwrap().files, 1);
+    }
+
+    #[test]
     fn notebook_counts_are_per_notebook_not_the_global_total() {
-        let service = temp_service("per-notebook-counts");
+        let service = temp_service();
         let first = service.list_notebooks(false).unwrap()[0].id;
         let second = service
             .create_notebook(CreateNotebookRequest {
@@ -1183,7 +1271,7 @@ mod tests {
 
     #[test]
     fn clearing_a_reminder_writes_null() {
-        let service = temp_service("reminder-clear");
+        let service = temp_service();
         let notebook_id = service.list_notebooks(false).unwrap()[0].id;
         let note = service
             .create_note(CreateNoteRequest {
@@ -1213,7 +1301,7 @@ mod tests {
 
     #[test]
     fn list_notes_hydrates_tags_in_one_pass() {
-        let service = temp_service("list-tags");
+        let service = temp_service();
         let notebook_id = service.list_notebooks(false).unwrap()[0].id;
         let work = service
             .create_tag(CreateTagRequest {
@@ -1254,7 +1342,7 @@ mod tests {
 
     #[test]
     fn search_loads_hits_by_id_instead_of_the_full_note_list() {
-        let service = temp_service("search-by-id");
+        let service = temp_service();
         let notebook_id = service.list_notebooks(false).unwrap()[0].id;
         let tag = service
             .create_tag(CreateTagRequest {
@@ -1330,7 +1418,7 @@ mod tests {
 
     #[test]
     fn shortcuts_resolve_only_the_starred_notes() {
-        let service = temp_service("shortcut-by-id");
+        let service = temp_service();
         let notebook_id = service.list_notebooks(false).unwrap()[0].id;
         let first = service
             .create_note(sample_note(notebook_id, "Keep"))
@@ -1351,16 +1439,13 @@ mod validation_tests {
     use super::*;
     use crate::models::{CreateNotebookRequest, CreateTagRequest, SearchQuery};
 
-    fn temp_service(name: &str) -> NotebookService {
-        let dir = std::env::temp_dir().join(format!("notebook-validation-{name}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        NotebookService::new(Database::open(dir.join("test.db")).unwrap())
+    fn temp_service() -> NotebookService {
+        NotebookService::new(Database::in_memory().unwrap())
     }
 
     #[test]
     fn notebook_names_are_trimmed_and_bounded() {
-        let service = temp_service("names");
+        let service = temp_service();
 
         let created = service
             .create_notebook(CreateNotebookRequest {
@@ -1377,7 +1462,10 @@ mod validation_tests {
                 stack_id: None,
                 is_default: None,
             });
-            assert!(matches!(err, Err(NotebookError::InvalidInput(_))), "expected empty name to be rejected");
+            assert!(
+                matches!(err, Err(NotebookError::InvalidInput(_))),
+                "expected empty name to be rejected"
+            );
         }
 
         let too_long = "a".repeat(MAX_NAME_LEN + 1);
@@ -1393,12 +1481,16 @@ mod validation_tests {
 
     #[test]
     fn duplicate_tag_is_a_conflict_not_a_database_error() {
-        let service = temp_service("tags");
+        let service = temp_service();
         service
-            .create_tag(CreateTagRequest { name: "work".to_string() })
+            .create_tag(CreateTagRequest {
+                name: "work".to_string(),
+            })
             .unwrap();
 
-        let err = service.create_tag(CreateTagRequest { name: "work".to_string() });
+        let err = service.create_tag(CreateTagRequest {
+            name: "work".to_string(),
+        });
         assert!(
             matches!(err, Err(NotebookError::Conflict(_))),
             "duplicate tag should be a conflict, got {err:?}"
@@ -1410,19 +1502,118 @@ mod validation_tests {
     }
 
     #[test]
+    fn search_pagination_total_matches_non_template_results() {
+        let service = temp_service();
+        let notebook_id = service.list_notebooks(false).unwrap()[0].id;
+
+        // Seed a mix of normal notes and templates that all match the same FTS
+        // term. Templates are interleaved (not just at the end) so that at
+        // least one lands inside a small LIMIT/OFFSET window if the template
+        // filter were (incorrectly) applied after pagination instead of in
+        // the SQL WHERE clause.
+        let mut expected_ids = Vec::new();
+        for i in 0..10 {
+            let note = service
+                .create_note(CreateNoteRequest {
+                    notebook_id,
+                    title: Some(format!("Marmot note {i}")),
+                    content: Some("<p>marmot</p>".into()),
+                    tag_ids: None,
+                    is_pinned: None,
+                    reminder_at: None,
+                    source_url: None,
+                    is_template: None,
+                    template_category: None,
+                })
+                .unwrap();
+            expected_ids.push(note.id);
+
+            // Interleave a template matching the same term every other note.
+            if i % 2 == 0 {
+                service
+                    .create_note(CreateNoteRequest {
+                        notebook_id,
+                        title: Some(format!("Marmot template {i}")),
+                        content: Some("<p>marmot</p>".into()),
+                        tag_ids: None,
+                        is_pinned: None,
+                        reminder_at: None,
+                        source_url: None,
+                        is_template: Some(true),
+                        template_category: None,
+                    })
+                    .unwrap();
+            }
+        }
+
+        let base_query = |limit: Option<u32>, offset: Option<u32>| SearchQuery {
+            q: "marmot".into(),
+            notebook_id: None,
+            tag_id: None,
+            include_trash: None,
+            include_archived: None,
+            limit,
+            offset,
+        };
+
+        let full = crate::search::search_notes(&service, base_query(None, None)).unwrap();
+        assert_eq!(full.total, expected_ids.len() as u32);
+        assert!(full.notes.iter().all(|n| !n.is_template));
+
+        // Page through with a small limit and verify no short pages appear
+        // before the results are exhausted, and the total collected equals
+        // `total` with zero templates leaking in.
+        let page_size = 3u32;
+        let mut collected = Vec::new();
+        let mut offset = 0u32;
+        loop {
+            let page =
+                crate::search::search_notes(&service, base_query(Some(page_size), Some(offset)))
+                    .unwrap();
+            assert_eq!(page.total, expected_ids.len() as u32);
+            let page_len = page.notes.len() as u32;
+            collected.extend(page.notes);
+            offset += page_size;
+            if offset >= full.total {
+                break;
+            }
+            // Not the last page: it must be full-sized, never short.
+            assert_eq!(
+                page_len, page_size,
+                "page starting at offset {} was short",
+                offset - page_size
+            );
+        }
+
+        assert_eq!(collected.len() as u32, full.total);
+        assert!(collected.iter().all(|n| !n.is_template));
+        let collected_ids: std::collections::HashSet<_> =
+            collected.iter().map(|n| n.id).collect();
+        let expected_set: std::collections::HashSet<_> = expected_ids.iter().copied().collect();
+        assert_eq!(collected_ids, expected_set);
+    }
+
+    #[test]
     fn search_terms_containing_quotes_do_not_break_fts() {
-        let service = temp_service("search");
+        let service = temp_service();
         for q in ["\"", "a b\" c", "he said \"hi\"", "''", "%"] {
-            let result = crate::search::search_notes(&service, SearchQuery {
-                q: q.to_string(),
-                notebook_id: None,
-                tag_id: None,
-                include_trash: None,
-                include_archived: None,
-                limit: None,
-                offset: None,
-            });
-            assert!(result.is_ok(), "search for {q:?} failed: {:?}", result.err());
+            let result = crate::search::search_notes(
+                &service,
+                SearchQuery {
+                    q: q.to_string(),
+                    notebook_id: None,
+                    tag_id: None,
+                    include_trash: None,
+                    include_archived: None,
+                    limit: None,
+                    offset: None,
+                },
+            );
+            assert!(
+                result.is_ok(),
+                "search for {q:?} failed: {:?}",
+                result.err()
+            );
         }
     }
 }
