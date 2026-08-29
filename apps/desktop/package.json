@@ -11,7 +11,6 @@
     "test": "node --experimental-strip-types --test src/noteSelection.test.ts src/fileAttachment.test.ts src/ui/panes.test.ts src/ui/tabs.test.ts src/ui/noteList.test.ts src/ui/search.test.ts src/ui/reminders.test.ts src/ui/noteContent.test.ts src/ui/share.test.ts src/ui/editorChrome.test.ts src/ui/sidebar.test.ts src/ui/navigation.test.ts src/filesView.test.ts src/App.hooks.test.ts src/appMenus.test.ts src/noteActions.test.ts src/noteStore.test.ts src/noteSession.test.ts src/editorHandle.test.ts src/commands.test.ts src/components/inlineCheckbox.test.ts",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
     "electron:dev": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:1420 && electron .\"",
     "build:electron": "cross-env ELECTRON=true tsc && cross-env ELECTRON=true vite build",
     "electron:prepare": "node scripts/prepare-electron-resources.mjs",
@@ -21,8 +20,6 @@
     "electron:build:linux": "npm run build:electron && npm run electron:prepare && electron-builder --linux"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.2.0",
-    "@tauri-apps/plugin-shell": "^2.2.0",
     "@tiptap/core": "^2.27.2",
     "@tiptap/extension-color": "^2.27.2",
     "@tiptap/extension-highlight": "^2.11.5",
@@ -45,7 +42,6 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.2.0",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
