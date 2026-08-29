@@ -2,7 +2,7 @@
 
 Notebook is a faithful Evernote-style notes app **without AI features**. It includes notebooks, stacks, tags, rich-text notes, attachments, reminders metadata, shortcuts, trash, note history, and full-text search.
 
-Built for **macOS and Windows** (Tauri desktop), with a **REST API** and **CLI** for integrating with the rest of your stack. The architecture is API-first so an **iOS app** can be added later against the same endpoints.
+Built for **macOS and Windows** (Electron desktop), with a **REST API** and **CLI** for integrating with the rest of your stack. The architecture is API-first so an **iOS app** can be added later against the same endpoints.
 
 ## Features
 
@@ -13,6 +13,7 @@ Built for **macOS and Windows** (Tauri desktop), with a **REST API** and **CLI**
 | Tags | ✅ |
 | Full-text search (SQLite FTS5) | ✅ |
 | Attachments | ✅ |
+| Files view (all attachments, by type) | ✅ |
 | Trash / restore / empty trash | ✅ |
 | Note revision history | ✅ |
 | Shortcuts | ✅ |
@@ -21,14 +22,14 @@ Built for **macOS and Windows** (Tauri desktop), with a **REST API** and **CLI**
 | Pin / archive notes | ✅ |
 | REST API | ✅ |
 | CLI (local + remote API) | ✅ |
-| Desktop app (Mac/Windows via Tauri) | ✅ |
+| Desktop app (Mac/Windows via Electron) | ✅ |
 | AI assistant / AI search | ❌ intentionally omitted |
 
 ## Architecture
 
 ```
 ┌─────────────────────┐     ┌─────────────────────┐
-│  Desktop (Tauri)    │     │  Your stack / CI    │
+│  Desktop (Electron) │     │  Your stack / CI    │
 │  React + TipTap UI  │     │  scripts, services  │
 └─────────┬───────────┘     └─────────┬───────────┘
           │                           │
@@ -193,6 +194,7 @@ Base URL: `http://127.0.0.1:8799`
 ### Attachments
 
 - `GET /api/v1/notes/:id/attachments`
+- `GET /api/v1/attachments` — every attachment on a live note, with its note and notebook (backs the Files view)
 - `POST /api/v1/notes/:id/attachments/upload` (multipart field `file`)
 - `GET /api/v1/attachments/:id` (download)
 - `DELETE /api/v1/attachments/:id`
