@@ -113,7 +113,17 @@ This log is for future sessions continuing the exact-clone work. Passes 1–10 e
 - New dialogs: `JumpToDialog.tsx`, `SearchDialog.tsx`, `CommandPalette.tsx`, `LinkDialog.tsx`, `NotebookPickerDialog.tsx`
 - Preferences: `apps/desktop/src/api.ts` (`list_view`) and `crates/notebook-core/src/templates.rs`
 
-Run desktop checks from `apps/desktop`: `npm test` and `npx tsc --noEmit`.
+Run desktop checks from `apps/desktop`: `npm test` and `npm run typecheck`. The typecheck covers
+the app (`tsconfig.json`, which is `src` minus its tests) and then `e2e` (`tsconfig.e2e.json`),
+which needs its own config for the Node types the app does not use.
+
+`npm run test:e2e` drives the real Electron app for behaviour the unit tests cannot see: which
+handler is on which element, whether a real `mouseleave` reaches a timer, whether a menu item is
+wired to the command it claims. It starts Vite if it is not already running, uses a throwaway
+`--user-data-dir` so it never opens your real database, and needs the release backend
+(`cargo build --release -p notebook-api`) because that is what the dev app spawns. Neither
+runner takes a glob: a new `e2e/*.e2e.ts` file does not run until it is added to the
+`test:e2e` script, exactly like `src/**/*.test.ts` and `test`.
 
 ## Future improvements (next clone passes)
 
