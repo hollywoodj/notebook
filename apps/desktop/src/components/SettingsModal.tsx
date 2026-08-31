@@ -1,6 +1,9 @@
 import { ReactNode, useEffect, useState } from "react";
 import { Account, Notebook, Preferences } from "../api";
 import { Icon } from "./Icons";
+import { SPELLCHECK_LANGUAGES } from "../ui/editorChrome";
+import { KEYBOARD_SHORTCUTS } from "../ui/shortcuts";
+import { moveSidebarSection, sidebarSectionLabel, type SidebarSectionId } from "../ui/sidebar";
 
 export type SettingsSection =
   | "application"
@@ -10,6 +13,7 @@ export type SettingsSection =
   | "shortcuts"
   | "account"
   | "import"
+  | "integrations"
   | "advanced"
   | "about";
 
@@ -21,49 +25,12 @@ const SECTIONS: { id: SettingsSection; label: string; icon: typeof Icon.Applicat
   { id: "shortcuts", label: "Keyboard shortcuts", icon: Icon.Keyboard },
   { id: "account", label: "Account", icon: Icon.Account },
   { id: "import", label: "Import & Export", icon: Icon.Import },
+  { id: "integrations", label: "Integrations", icon: Icon.Link },
   { id: "advanced", label: "Advanced", icon: Icon.Advanced },
   { id: "about", label: "About", icon: Icon.Info },
 ];
 
-const SHORTCUTS = [
-  ["New note", "Ctrl/⌘ N"],
-  ["New note from template", "Ctrl/⌘ Shift N"],
-  ["Find in note", "Ctrl/⌘ F"],
-  ["Find and replace", "Ctrl/⌘ H"],
-  ["Search all notes", "Ctrl/⌘ K or Ctrl/⌘ Shift F"],
-  ["Hide / show note list", "Ctrl/⌘ Alt ←"],
-  ["Expand / restore note", "Ctrl/⌘ Alt →"],
-  ["Jump to note, notebook, or tag", "Ctrl/⌘ J"],
-  ["Command palette", "Ctrl/⌘ Shift P"],
-  ["Back", "Ctrl/⌘ ["],
-  ["Forward", "Ctrl/⌘ ]"],
-  ["Next note", "↓ or J"],
-  ["Previous note", "↑ or K"],
-  ["Print note", "Ctrl/⌘ P"],
-  ["Note info", "Ctrl/⌘ Shift I"],
-  ["Zoom in", "Ctrl/⌘ +"],
-  ["Zoom out", "Ctrl/⌘ -"],
-  ["Actual size", "Ctrl/⌘ 0"],
-  ["Settings", "Ctrl/⌘ ,"],
-  ["Keyboard shortcuts", "Ctrl/⌘ /"],
-  ["New tab", "Ctrl/⌘ Shift T"],
-  ["Open in new tab", "Ctrl/⌘ Alt O"],
-  ["Close tab", "Ctrl/⌘ W"],
-  ["Select all notes", "Ctrl/⌘ A"],
-  ["Range select notes", "Shift+click"],
-  ["Drag-select notes", "Click and drag"],
-  ["Toggle note selection", "Ctrl/⌘+click"],
-  ["Move selected notes to trash", "Delete"],
-  ["Bold", "Ctrl/⌘ B"],
-  ["Italic", "Ctrl/⌘ I"],
-  ["Underline", "Ctrl/⌘ U"],
-  ["Bulleted list", "Ctrl/⌘ Shift L"],
-  ["Numbered list", "Ctrl/⌘ Shift O"],
-  ["Checklist", "Ctrl/⌘ Shift C"],
-  ["Increase indent", "Tab"],
-  ["Decrease indent", "Shift+Tab"],
-  ["Focus mode", "F11"],
-];
+const SHORTCUTS = KEYBOARD_SHORTCUTS;
 
 export function SettingsModal({
   prefs,
@@ -79,6 +46,8 @@ export function SettingsModal({
   onImport,
   onEmptyTrash,
   initialSection = "application",
+  sidebarSections = [],
+  onMoveSidebarSection,
 }: {
   prefs: Preferences;
   account: Account;
@@ -93,6 +62,8 @@ export function SettingsModal({
   onImport: () => void;
   onEmptyTrash: () => void;
   initialSection?: SettingsSection;
+  sidebarSections?: SidebarSectionId[];
+  onMoveSidebarSection?: (sections: SidebarSectionId[]) => void;
 }) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [name, setName] = useState(account.display_name);
@@ -186,6 +157,21 @@ export function SettingsModal({
                     on={prefs.spell_check}
                     onChange={(v) => onSavePrefs({ spell_check: v })}
                   />
+                </SettingsRow>
+                <SettingsRow
+                  title="Spell check language"
+                  hint="Language used for the editor underline."
+                >
+                  <select
+                    value={prefs.spell_language || "en-US"}
+                    onChange={(e) => onSavePrefs({ spell_language: e.target.value })}
+                  >
+                    {SPELLCHECK_LANGUAGES.map((lang) => (
+                      <option key={lang.id} value={lang.id}>
+                        {lang.label}
+                      </option>
+                    ))}
+                  </select>
                 </SettingsRow>
                 <SettingsRow title="Date format" hint="How dates appear in the note list.">
                   <select
@@ -348,7 +334,26 @@ export function SettingsModal({
                     <option value="updated">Date updated</option>
                     <option value="created">Date created</option>
                     <option value="title">Title</option>
+                    <option value="reminder">Reminder</option>
                   </select>
+                </SettingsRow>
+                <SettingsRow
+                  title="Reverse sort"
+                  hint="Oldest first, or Z–A when sorting by title."
+                >
+                  <Toggle
+                    on={Boolean(prefs.sort_descending)}
+                    onChange={(v) => onSavePrefs({ sort_descending: v })}
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  title="Completed reminders"
+                  hint="Show reminder notes after you mark them done."
+                >
+                  <Toggle
+                    on={prefs.show_completed_reminders !== false}
+                    onChange={(v) => onSavePrefs({ show_completed_reminders: v })}
+                  />
                 </SettingsRow>
                 <SettingsRow
                   title="Auto-save delay"
@@ -413,6 +418,46 @@ export function SettingsModal({
                     />
                   </SettingsRow>
                 ))}
+                {sidebarSections.length > 0 && (
+                  <SettingsRow
+                    title="Section order"
+                    hint="Move sidebar sections up or down."
+                  >
+                    <div className="sidebar-order">
+                      {sidebarSections.map((id, index) => (
+                        <div key={id} className="sidebar-order-row">
+                          <span>{sidebarSectionLabel(id)}</span>
+                          <span>
+                            <button
+                              type="button"
+                              className="ghost-btn small"
+                              disabled={index === 0}
+                              onClick={() =>
+                                onMoveSidebarSection?.(
+                                  moveSidebarSection(sidebarSections, id, -1)
+                                )
+                              }
+                            >
+                              Up
+                            </button>
+                            <button
+                              type="button"
+                              className="ghost-btn small"
+                              disabled={index === sidebarSections.length - 1}
+                              onClick={() =>
+                                onMoveSidebarSection?.(
+                                  moveSidebarSection(sidebarSections, id, 1)
+                                )
+                              }
+                            >
+                              Down
+                            </button>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </SettingsRow>
+                )}
               </>
             )}
 
@@ -475,13 +520,72 @@ export function SettingsModal({
               </>
             )}
 
+            {section === "integrations" && (
+              <>
+                <SettingsRow
+                  title="OmniClone"
+                  hint="Same as Evernote → OmniFocus: Copy Note Link pastes a notebook:// link into a task note, and Send to OmniClone creates an Inbox action with that link."
+                >
+                  <Toggle
+                    on={prefs.omniclone_enabled !== false}
+                    onChange={(v) => onSavePrefs({ omniclone_enabled: v })}
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  title="Send actions to"
+                  hint="OmniClone uses omniclone:///add. OmniFocus uses the same URL scheme with omnifocus:///add."
+                >
+                  <select
+                    value={prefs.omniclone_scheme || "omniclone"}
+                    onChange={(e) =>
+                      onSavePrefs({
+                        omniclone_scheme: e.target.value as Preferences["omniclone_scheme"],
+                      })
+                    }
+                    disabled={prefs.omniclone_enabled === false}
+                  >
+                    <option value="omniclone">OmniClone</option>
+                    <option value="omnifocus">OmniFocus</option>
+                    <option value="both">Both</option>
+                  </select>
+                </SettingsRow>
+                <SettingsRow
+                  title="Use reminder as due date"
+                  hint="When a note has a reminder, Send to OmniClone sets that time as the action’s due date."
+                >
+                  <Toggle
+                    on={prefs.omniclone_send_due !== false}
+                    onChange={(v) => onSavePrefs({ omniclone_send_due: v })}
+                  />
+                </SettingsRow>
+              </>
+            )}
+
             {section === "advanced" && (
               <>
                 <SettingsRow title="Database" hint="SQLite file used by this app.">
-                  <code className="path-value">{storage.database}</code>
+                  <div className="path-row">
+                    <code className="path-value">{storage.database}</code>
+                    <button
+                      type="button"
+                      className="ghost-btn small"
+                      onClick={() => void navigator.clipboard.writeText(storage.database)}
+                    >
+                      Copy
+                    </button>
+                  </div>
                 </SettingsRow>
                 <SettingsRow title="Attachments" hint="Files saved with your notes.">
-                  <code className="path-value">{storage.attachments}</code>
+                  <div className="path-row">
+                    <code className="path-value">{storage.attachments}</code>
+                    <button
+                      type="button"
+                      className="ghost-btn small"
+                      onClick={() => void navigator.clipboard.writeText(storage.attachments)}
+                    >
+                      Copy
+                    </button>
+                  </div>
                 </SettingsRow>
                 <SettingsRow
                   title="Reset preferences"

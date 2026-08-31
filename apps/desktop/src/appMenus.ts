@@ -14,6 +14,8 @@ import {
   commandLabel,
   commandShortcut,
 } from "./commands.ts";
+import { LINE_HEIGHTS } from "./ui/editorChrome.ts";
+import { NOTE_COLORS } from "./ui/noteContent.ts";
 
 // The context type moved to commands.ts (as CommandContext) so the command
 // registry doesn't need to import it back from here and create a cycle.
@@ -123,6 +125,27 @@ export function buildContextMenu(
               label: "Open in New Tab",
               onSelect: () => void ctx.openInNewTab(targets[0].id),
             },
+            {
+              label: "Rename note…",
+              onSelect: () =>
+                ctx.openRename({
+                  kind: "note",
+                  id: targets[0].id,
+                  name: targets[0].title || "Untitled",
+                }),
+            },
+            {
+              label: "Copy title",
+              onSelect: () => ctx.copyNoteTitle(targets[0].title),
+            },
+          ]
+        : []),
+      ...(count > 1
+        ? [
+            {
+              label: `Open ${count} notes in new tabs`,
+              onSelect: ctx.openSelectedInTabs,
+            },
           ]
         : []),
       {
@@ -157,6 +180,22 @@ export function buildContextMenu(
         label: "Copy to notebook…",
         onSelect: () => ctx.setNotebookPicker("copy"),
       },
+      ...(count === 1
+        ? [
+            {
+              label: "Add tag",
+              children: ctx.tags.length
+                ? ctx.tags
+                    .filter((tag) => !targets[0].tag_ids.includes(tag.id))
+                    .slice(0, 12)
+                    .map((tag) => ({
+                      label: tag.name,
+                      onSelect: () => ctx.addTagToSelected(tag.id),
+                    }))
+                : [{ label: "No tags yet", disabled: true }],
+            },
+          ]
+        : []),
       ...(count > 1
         ? [
             {
@@ -176,6 +215,10 @@ export function buildContextMenu(
       {
         label: count > 1 ? "Export notes as Markdown" : "Export as Markdown",
         onSelect: () => void ctx.exportSelectedNotes("markdown"),
+      },
+      {
+        label: count > 1 ? "Export notes as PDF" : "Export as PDF",
+        onSelect: () => void ctx.exportSelectedNotes("pdf"),
       },
       ...(count === 1
         ? [
@@ -229,8 +272,17 @@ export function buildContextMenu(
         ? [
             {
               label: "Copy note link",
+              shortcut: "⌃⌥⌘ C",
               onSelect: () =>
                 void navigator.clipboard.writeText(noteAppLink(targets[0].id)),
+            },
+            {
+              label: "Send to OmniClone",
+              onSelect: () => ctx.sendToOmniClone("note"),
+            },
+            {
+              label: "Send Checkboxes to OmniClone",
+              onSelect: () => ctx.sendToOmniClone("checklists"),
             },
             {
               label: "Email note…",
@@ -409,6 +461,25 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         { type: "separator" },
         commandItem("notebook.new", ctx),
         {
+          label: "Close All Tabs",
+          onSelect: ctx.closeAllTabs,
+        },
+        {
+          label: "Reopen Closed Tab",
+          disabled: !ctx.canReopenClosedTab,
+          onSelect: ctx.reopenClosedTab,
+        },
+        {
+          label: "Open Recents",
+          disabled: ctx.recentNotes.length === 0,
+          children: ctx.recentNotes.length
+            ? ctx.recentNotes.map((note) => ({
+                label: note.title || "Untitled",
+                onSelect: () => void ctx.loadNote(note.id),
+              }))
+            : [{ label: "No recent notes", disabled: true }],
+        },
+        {
           label: "New Stack…",
           onSelect: ctx.openNewStack,
         },
@@ -431,6 +502,11 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: "Export as Markdown…",
           disabled: ctx.targetNoteIds().length === 0,
           onSelect: () => void ctx.exportSelectedNotes("markdown"),
+        },
+        {
+          label: "Export as PDF…",
+          disabled: ctx.targetNoteIds().length === 0,
+          onSelect: () => void ctx.exportSelectedNotes("pdf"),
         },
         {
           label: "Copy as",
@@ -456,7 +532,24 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         commandItem("note.print", ctx),
         commandItem("note.email", ctx),
         {
+          label: "Share",
+          disabled: !ctx.activeNote,
+          children: [
+            {
+              label: "Send to OmniClone",
+              disabled: !ctx.activeNote,
+              onSelect: () => ctx.sendToOmniClone("note"),
+            },
+            {
+              label: "Send Checkboxes to OmniClone",
+              disabled: !ctx.activeNote,
+              onSelect: () => ctx.sendToOmniClone("checklists"),
+            },
+          ],
+        },
+        {
           label: "Copy Note Link",
+          shortcut: "⌃⌥⌘ C",
           disabled: !ctx.activeNote,
           onSelect: () => void ctx.copyActiveNoteLink(),
         },
@@ -477,6 +570,12 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         { label: "Cut", shortcut: "Ctrl/⌘ X", onSelect: () => ctx.runEditorCommand({ type: "cut" }) },
         { label: "Copy", shortcut: "Ctrl/⌘ C", onSelect: () => ctx.runEditorCommand({ type: "copy" }) },
         { label: "Paste", shortcut: "Ctrl/⌘ V", onSelect: () => ctx.runEditorCommand({ type: "paste" }) },
+        {
+          label: "Paste and Match Style",
+          shortcut: "Ctrl/⌘ ⇧ V",
+          disabled: !ctx.activeNote,
+          onSelect: () => ctx.runEditorCommand({ type: "pastePlain" }),
+        },
         { type: "separator" },
         {
           label: "Select All",
@@ -499,6 +598,18 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           disabled: !ctx.activeNote,
           onSelect: () => ctx.openReplace(),
         },
+        {
+          label: "Find Next",
+          shortcut: "F3",
+          disabled: !ctx.activeNote,
+          onSelect: () => ctx.runEditorCommand({ type: "findNext" }),
+        },
+        {
+          label: "Find Previous",
+          shortcut: "⇧ F3",
+          disabled: !ctx.activeNote,
+          onSelect: () => ctx.runEditorCommand({ type: "findPrev" }),
+        },
       ],
     },
     {
@@ -511,6 +622,7 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         commandItem("view.reminders", ctx),
         { label: "Templates", onSelect: () => { ctx.closeSidebarFlyout(); ctx.setFilter({ type: "templates" }); } },
         commandItem("view.files", ctx),
+        { label: "Archived", onSelect: () => { ctx.closeSidebarFlyout(); ctx.setFilter({ type: "archived" }); } },
         { type: "separator" },
         commandItem("nav.back", ctx),
         commandItem("nav.forward", ctx),
@@ -563,6 +675,35 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         // Left literal (not commandItem("palette.open", ...)): this is the
         // only "Command Palette" text left in this file, and App.hooks.test.ts
         // asserts on that exact raw source text.
+        {
+          label: "Line Spacing",
+          disabled: !ctx.activeNote,
+          children: LINE_HEIGHTS.map((height) => ({
+            label: height === 1 ? "Single" : height === 2 ? "Double" : String(height),
+            disabled: !ctx.activeNote,
+            onSelect: () =>
+              ctx.persistEditorChrome({ ...ctx.editorChrome, lineHeight: height }),
+          })),
+        },
+        {
+          label: "Collapse All Groups",
+          disabled: !ctx.canCollapseListGroups,
+          onSelect: ctx.collapseAllListGroups,
+        },
+        {
+          label: "Expand All Groups",
+          onSelect: ctx.expandAllListGroups,
+        },
+        {
+          label: "Go to Notebook…",
+          shortcut: "Ctrl/⌘ Alt J",
+          onSelect: () => ctx.openJump("notebook"),
+        },
+        {
+          label: "Go to Tag…",
+          shortcut: "Ctrl/⌘ Alt T",
+          onSelect: () => ctx.openJump("tag"),
+        },
         {
           label: "Command Palette…",
           shortcut: "Ctrl/⌘ ⇧ P",
@@ -640,6 +781,37 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           onSelect: () => ctx.setShowInfo(true),
         },
         {
+          label: ctx.isNoteLocked ? "Unlock Note" : "Lock Note",
+          disabled: !ctx.activeNote,
+          onSelect: ctx.toggleNoteLocked,
+        },
+        {
+          label: "Note Color",
+          disabled: !ctx.activeNote,
+          children: NOTE_COLORS.map((color) => ({
+            label: color.label,
+            disabled: !ctx.activeNote,
+            onSelect: () => ctx.setNoteColor(color.id),
+          })),
+        },
+        {
+          label: "Rename Note…",
+          disabled: !ctx.activeNote,
+          onSelect: () => {
+            if (!ctx.activeNote) return;
+            ctx.openRename({
+              kind: "note",
+              id: ctx.activeNote.id,
+              name: ctx.activeNote.title || "Untitled",
+            });
+          },
+        },
+        {
+          label: "Copy Title",
+          disabled: !ctx.activeNote,
+          onSelect: () => ctx.copyNoteTitle(ctx.activeNote?.title),
+        },
+        {
           label: "Find in Note",
           shortcut: "Ctrl/⌘ F",
           disabled: !ctx.activeNote,
@@ -682,6 +854,11 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           onSelect: () => void ctx.exportSelectedNotes("markdown"),
         },
         {
+          label: "Export as PDF…",
+          disabled: ctx.targetNoteIds().length === 0,
+          onSelect: () => void ctx.exportSelectedNotes("pdf"),
+        },
+        {
           label: "Set Reminder",
           disabled: !ctx.activeNote,
           onSelect: () => ctx.setShowReminderMenu(true),
@@ -698,6 +875,28 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           label: "Email Note…",
           disabled: !ctx.activeNote,
           onSelect: ctx.emailActiveNote,
+        },
+        {
+          label: "Share",
+          disabled: !ctx.activeNote,
+          children: [
+            {
+              label: "Send to OmniClone",
+              disabled: !ctx.activeNote,
+              onSelect: () => ctx.sendToOmniClone("note"),
+            },
+            {
+              label: "Send Checkboxes to OmniClone",
+              disabled: !ctx.activeNote,
+              onSelect: () => ctx.sendToOmniClone("checklists"),
+            },
+          ],
+        },
+        {
+          label: "Copy Note Link",
+          shortcut: "⌃⌥⌘ C",
+          disabled: !ctx.activeNote,
+          onSelect: () => void ctx.copyActiveNoteLink(),
         },
         {
           label: `Merge ${ctx.selectedNoteIds.size} Notes`,
@@ -771,6 +970,8 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
             { label: "18", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontSize", size: "18px" }) },
             { label: "24", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontSize", size: "24px" }) },
             { label: "Reset Size", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontSize" }) },
+            { label: "Increase Size", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontSizeStep", direction: 1 }) },
+            { label: "Decrease Size", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontSizeStep", direction: -1 }) },
           ],
         },
         { type: "separator" },
@@ -937,6 +1138,16 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           disabled: !ctx.activeNote,
           onSelect: () => ctx.runEditorCommand({ type: "openLinkDialog" }),
         },
+        {
+          label: "Remove Link",
+          disabled: !ctx.activeNote,
+          onSelect: () => ctx.runEditorCommand({ type: "unlink" }),
+        },
+        {
+          label: "Insert Table of Contents",
+          disabled: !ctx.activeNote,
+          onSelect: () => ctx.runEditorCommand({ type: "insertToc" }),
+        },
         { type: "separator" },
         {
           label: "Bulleted List",
@@ -957,7 +1168,12 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           onSelect: () => ctx.runEditorCommand({ type: "taskList" }),
         },
         {
-          label: "Insert Checkbox",
+          label: "Check All Tasks",
+          disabled: !ctx.activeNote,
+          onSelect: () => ctx.runEditorCommand({ type: "tasks", action: "checkAll" }),
+        },
+        {
+          label: "Uncheck All Tasks",
           disabled: !ctx.activeNote,
           onSelect: () => ctx.runEditorCommand({ type: "inlineCheckbox" }),
         },
@@ -1004,9 +1220,24 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           onSelect: () => ctx.runEditorCommand({ type: "horizontalRule" }),
         },
         {
+          label: "Insert Date",
+          disabled: !ctx.activeNote,
+          onSelect: () => ctx.runEditorCommand({ type: "insertDate" }),
+        },
+        {
+          label: "Insert Time",
+          disabled: !ctx.activeNote,
+          onSelect: () => ctx.runEditorCommand({ type: "insertTime" }),
+        },
+        {
           label: "Insert Date and Time",
           disabled: !ctx.activeNote,
           onSelect: () => ctx.runEditorCommand({ type: "insertDate" }),
+        },
+        {
+          label: "Insert Time",
+          disabled: !ctx.activeNote,
+          onSelect: () => ctx.runEditorCommand({ type: "insertTime" }),
         },
         { type: "separator" },
         {
@@ -1022,6 +1253,10 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         {
           label: "Import from Evernote…",
           onSelect: ctx.importNotes,
+        },
+        {
+          label: "OmniClone Integration…",
+          onSelect: () => ctx.openSettings("integrations"),
         },
         {
           label: "Restore Built-in Templates",

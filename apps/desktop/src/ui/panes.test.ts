@@ -1,16 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  clampPaneWidth,
-  defaultPaneLayout,
-  isNoteExpanded,
-  isSidebarRail,
-  parsePaneLayout,
-  revealNoteBrowser,
-  toggleNoteExpanded,
-  toggleNoteListHidden,
-  visibleToolbarCount,
-} from "./panes.ts";
+import { clampPaneWidth, defaultPaneLayout, isNoteExpanded, parsePaneLayout, resizeSidebarTo, revealNoteBrowser, toggleNoteExpanded, toggleNoteListHidden, visibleToolbarCount } from "./panes.ts";
 
 describe("clampPaneWidth", () => {
   it("keeps widths inside Evernote-like pane bounds", () => {
@@ -35,13 +25,6 @@ describe("parsePaneLayout", () => {
     assert.equal(layout.sidebarCollapsed, true);
     assert.equal(layout.listCollapsed, true);
   });
-
-  it("always starts on the fixed icon rail", () => {
-    assert.equal(defaultPaneLayout().sidebarRail, true);
-    assert.equal(parsePaneLayout(null).sidebarRail, true);
-    assert.equal(parsePaneLayout(JSON.stringify({ listWidth: 400 })).sidebarRail, true);
-    assert.equal(parsePaneLayout(JSON.stringify({ sidebarRail: false })).sidebarRail, true);
-  });
 });
 
 describe("empty editor layout", () => {
@@ -56,14 +39,6 @@ describe("empty editor layout", () => {
     const listOnly = { ...defaultPaneLayout(), listCollapsed: true };
     assert.equal(revealNoteBrowser(listOnly).sidebarCollapsed, false);
     assert.equal(revealNoteBrowser(listOnly).listCollapsed, false);
-  });
-});
-
-describe("fixed sidebar icon rail", () => {
-  it("shows the icon rail only while the sidebar is visible", () => {
-    const hidden = { ...defaultPaneLayout(), sidebarCollapsed: true };
-    assert.equal(isSidebarRail(hidden), false);
-    assert.equal(isSidebarRail({ ...defaultPaneLayout(), sidebarRail: false }), true);
   });
 });
 
@@ -96,5 +71,18 @@ describe("visibleToolbarCount", () => {
     assert.equal(visibleToolbarCount(400, [40, 40, 40, 40]), 4);
     assert.equal(visibleToolbarCount(120, [40, 40, 40, 40], 30), 2);
     assert.equal(visibleToolbarCount(20, [40, 40], 30), 0);
+  });
+});
+
+describe("sidebar resize", () => {
+  it("clamps the dragged edge and brings a hidden sidebar back", () => {
+    const layout = defaultPaneLayout();
+    assert.equal(resizeSidebarTo(layout, 300).sidebarWidth, 300);
+    assert.equal(resizeSidebarTo(layout, 160).sidebarWidth, 180);
+    assert.equal(resizeSidebarTo(layout, 900).sidebarWidth, 420);
+    const hidden = { ...defaultPaneLayout(), sidebarCollapsed: true };
+    const shown = resizeSidebarTo(hidden, 260);
+    assert.equal(shown.sidebarCollapsed, false);
+    assert.equal(shown.sidebarWidth, 260);
   });
 });

@@ -1,3 +1,4 @@
+import { decodeXmlEntities } from "../htmlEntities.ts";
 export function countWords(text: string): number {
   const trimmed = text.trim();
   if (!trimmed) return 0;
@@ -59,19 +60,14 @@ export function resolveThumbnailUrl(
   return trimmed;
 }
 
-function decodeHtmlEntities(value: string): string {
-  return value
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'");
-}
 
-export function htmlToPlainText(html: string): string {
-  return decodeHtmlEntities(
-    html
+export function htmlToPlainText(html: string | null | undefined): string {
+  if (html == null) return "";
+  // decodeXmlEntities, not the local decodeHtmlEntities: imported Evernote
+  // notes carry `&apos;` and double-encoded `&amp;apos;`, which the HTML table
+  // does not cover.
+  return decodeXmlEntities(
+    String(html)
       .replace(/<style[\s\S]*?<\/style>/gi, "")
       .replace(/<script[\s\S]*?<\/script>/gi, "")
       .replace(/<br\s*\/?>/gi, "\n")
@@ -117,4 +113,93 @@ export function htmlToMarkdown(html: string): string {
   text = text.replace(/<p\b[^>]*>([\s\S]*?)<\/p>/gi, "$1\n\n");
   text = htmlToPlainText(`<p>${text}</p>`).replace(/\n{3,}/g, "\n\n").trim();
   return text;
+}
+
+export function countCharacters(text: string): number {
+  return text.replace(/\s+/g, " ").trim().length;
+}
+
+export function readingTimeLabel(wordCount: number): string | null {
+  if (!Number.isFinite(wordCount) || wordCount <= 0) return null;
+  const minutes = Math.max(1, Math.round(wordCount / 200));
+  return minutes === 1 ? "1 min read" : `${minutes} min read`;
+}
+
+export function noteHasUrl(note: {
+  source_url?: string | null;
+  snippet?: string;
+}): boolean {
+  if (note.source_url?.trim()) return true;
+  return /\bhttps?:\/\//i.test(note.snippet || "");
+}
+
+export function outlineToHtml(headings: { level: number; text: string }[]): string {
+  if (!headings.length) return "";
+  const items = headings
+    .map((heading) => {
+      const pad = "&nbsp;".repeat(Math.max(0, heading.level - 1) * 4);
+      return `<li>${pad}${escapeHtml(heading.text)}</li>`;
+    })
+    .join("");
+  return `<h2>Table of Contents</h2><ul>${items}</ul>`;
+}
+
+export function plaintextFromClipboardHtml(html: string): string {
+  return htmlToPlainText(html).replace(/\n/g, "<br>");
+}
+
+
+export const NOTE_COLORS = [
+  { id: "", label: "None", swatch: "transparent" },
+  { id: "red", label: "Red", swatch: "#f97066" },
+  { id: "orange", label: "Orange", swatch: "#f79009" },
+  { id: "yellow", label: "Yellow", swatch: "#f4c430" },
+  { id: "green", label: "Green", swatch: "#00a82d" },
+  { id: "blue", label: "Blue", swatch: "#2e90fa" },
+  { id: "purple", label: "Purple", swatch: "#7a5af8" },
+] as const;
+
+export const NOTE_COLORS_KEY = "notebook.noteColors";
+
+export type NoteColorId = (typeof NOTE_COLORS)[number]["id"];
+
+export function parseNoteColorMap(raw: string | null): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const next: Record<string, string> = {};
+    for (const [id, value] of Object.entries(parsed)) {
+      if (typeof value === "string" && NOTE_COLORS.some((color) => color.id === value && value)) {
+        next[id] = value;
+      }
+    }
+    return next;
+  } catch {
+    return {};
+  }
+}
+
+export function setNoteColor(
+  map: Record<string, string>,
+  id: string,
+  color: string
+): Record<string, string> {
+  const next = { ...map };
+  if (!color) delete next[id];
+  else next[id] = color;
+  return next;
+}
+
+export const LOCKED_NOTES_KEY = "notebook.lockedNotes";
+
+export function parseIdList(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item) => typeof item === "string");
+  } catch {
+    return [];
+  }
 }

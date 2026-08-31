@@ -1,14 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  checklistProgressLabel,
-  countWords,
-  htmlToMarkdown,
-  htmlToPlainText,
-  mergeNoteBodies,
-  resolveThumbnailUrl,
-  suggestedTags,
-} from "./noteContent.ts";
+import { checklistProgressLabel, countCharacters, countWords, htmlToMarkdown, htmlToPlainText, mergeNoteBodies, readingTimeLabel, resolveThumbnailUrl, suggestedTags } from "./noteContent.ts";
+import { parsePaneLayout } from "./panes.ts";
 
 describe("countWords", () => {
   it("ignores extra whitespace", () => {
@@ -71,5 +64,14 @@ describe("html export helpers", () => {
     assert.match(htmlToMarkdown(html), /\[link\]\(https:\/\/x\)/);
     assert.equal(htmlToPlainText(html).includes("Hello"), true);
     assert.equal(htmlToPlainText(html).includes("<"), false);
+  });
+});
+
+describe("parsePaneLayout", () => {
+  it("counts characters and reading time", () => {
+    assert.equal(countCharacters("hello world"), 11);
+    assert.equal(readingTimeLabel(0), null);
+    assert.equal(readingTimeLabel(50), "1 min read");
+    assert.equal(readingTimeLabel(400), "2 min read");
   });
 });

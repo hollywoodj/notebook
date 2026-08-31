@@ -9,7 +9,7 @@
  */
 
 export type EditorCommand =
-  | { type: "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll" }
+  | { type: "undo" | "redo" | "cut" | "copy" | "paste" | "pastePlain" | "selectAll" }
   | { type: "bold" | "italic" | "underline" | "strike" | "clear" }
   | { type: "highlight"; color?: string }
   | { type: "color"; color?: string }
@@ -28,7 +28,18 @@ export type EditorCommand =
     }
   | { type: "superscript" | "subscript" }
   | { type: "callout"; kind?: "info" | "warning" | "tip" }
-  | { type: "replace"; query: string; replacement: string; all?: boolean };
+  | { type: "replace"; query: string; replacement: string; all?: boolean }
+  | { type: "fontSizeStep"; direction: 1 | -1 }
+  | { type: "findNext" | "findPrev" }
+  | { type: "imageSize"; width?: string }
+  | { type: "imageCaption"; title?: string }
+  | { type: "imageAlign"; align: "left" | "center" | "right" }
+  | { type: "tasks"; action: "checkAll" | "uncheckAll" }
+  | { type: "unlink" }
+  | { type: "insertToc" }
+  | { type: "insertTime" }
+  | { type: "insertDateTime" }
+  | { type: "unsetColor" };
 
 export type EditorHandle = {
   /** Apply a formatting/editing command to the live document. No-op until the editor mounts. */

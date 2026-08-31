@@ -132,3 +132,105 @@ export function toggleCompletedReminder(ids: string[], id: string): string[] {
 export function isReminderDone(ids: string[], id: string): boolean {
   return ids.includes(id);
 }
+
+export function groupNotesByReminder<T extends { reminder_at?: string | null }>(
+  notes: T[],
+  now = new Date()
+): NoteListGroup<T>[] {
+  const today = startOfLocalDay(now);
+  const tomorrow = today + 86_400_000;
+  const buckets: Record<string, T[]> = {
+    overdue: [],
+    today: [],
+    tomorrow: [],
+    later: [],
+    none: [],
+  };
+  for (const note of notes) {
+    if (!note.reminder_at) {
+      buckets.none.push(note);
+      continue;
+    }
+    const stamp = startOfLocalDay(new Date(note.reminder_at));
+    if (Number.isNaN(stamp)) {
+      buckets.none.push(note);
+    } else if (stamp < today) buckets.overdue.push(note);
+    else if (stamp === today) buckets.today.push(note);
+    else if (stamp === tomorrow) buckets.tomorrow.push(note);
+    else buckets.later.push(note);
+  }
+  return (
+    [
+      ["overdue", "Overdue"],
+      ["today", "Today"],
+      ["tomorrow", "Tomorrow"],
+      ["later", "Later"],
+      ["none", "No reminder"],
+    ] as const
+  )
+    .filter(([key]) => buckets[key].length > 0)
+    .map(([key, label]) => ({ key, label, notes: buckets[key] }));
+}
+
+export function reminderFallsOnDay(iso: string | null, dayKey: string): boolean {
+  if (!iso) return false;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return false;
+  return isoDayKey(date) === dayKey;
+}
+
+export function isoDayKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+export type CalendarDay = {
+  key: string;
+  day: number;
+  inMonth: boolean;
+  isToday: boolean;
+};
+
+export function monthGrid(
+  year: number,
+  month: number,
+  weekStartsOn: "sunday" | "monday",
+  now = new Date()
+): CalendarDay[] {
+  const first = new Date(year, month, 1);
+  const startWeekday = first.getDay();
+  const mondayOffset = weekStartsOn === "monday" ? (startWeekday + 6) % 7 : startWeekday;
+  const gridStart = new Date(year, month, 1 - mondayOffset);
+  const todayKey = isoDayKey(now);
+  const days: CalendarDay[] = [];
+  for (let i = 0; i < 42; i += 1) {
+    const date = new Date(gridStart);
+    date.setDate(gridStart.getDate() + i);
+    const key = isoDayKey(date);
+    days.push({
+      key,
+      day: date.getDate(),
+      inMonth: date.getMonth() === month,
+      isToday: key === todayKey,
+    });
+  }
+  return days;
+}
+
+export function monthLabel(year: number, month: number): string {
+  return new Date(year, month, 1).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+export function shiftMonth(
+  year: number,
+  month: number,
+  delta: number
+): { year: number; month: number } {
+  const date = new Date(year, month + delta, 1);
+  return { year: date.getFullYear(), month: date.getMonth() };
+}

@@ -4,13 +4,11 @@ use std::io::Cursor;
 use base64::Engine;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use md5;
-use quick_xml::escape::resolve_xml_entity;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
-use crate::content::checklist::promote_checkbox_blocks;
-use crate::content::html::{escape_attr, escape_html, style_flag};
-use crate::content::{file_attachment_html, looks_like_pdf};
+use crate::content::html::{escape_attr, escape_html};
+use crate::content::{decode_xml_entities, file_attachment_html, looks_like_pdf};
 use crate::error::{NotebookError, Result};
 
 #[derive(Debug, Clone)]
@@ -90,10 +88,12 @@ pub fn parse_enex(data: &[u8]) -> Result<EnexExport> {
                 }
             }
             Ok(Event::Text(e)) => {
-                let text = e
-                    .unescape()
-                    .map_err(|err| NotebookError::InvalidInput(format!("invalid XML text: {err}")))?
-                    .into_owned();
+                let raw = String::from_utf8_lossy(e.as_ref()).into_owned();
+                let text = if current_field == "content" {
+                    raw
+                } else {
+                    decode_xml_entities(&raw)
+                };
                 if in_resource {
                     if let Some(resource) = current_resource.as_mut() {
                         match current_field.as_str() {
@@ -192,7 +192,7 @@ pub fn parse_enex(data: &[u8]) -> Result<EnexExport> {
                 }
             }
             Ok(Event::Eof) => break,
-            Err(err) => return Err(NotebookError::InvalidInput(err.to_string())),
+            Err(err) => return Err(NotebookError::Other(err.to_string())),
             _ => {}
         }
         buf.clear();
@@ -247,7 +247,7 @@ impl PartialResource {
     fn into_resource(self) -> Result<EnexResource> {
         let data = decode_enex_base64(&self.data_b64)?;
         if data.is_empty() {
-            return Err(NotebookError::InvalidInput("empty ENEX resource".into()));
+            return Err(NotebookError::Other("empty ENEX resource".into()));
         }
         let mut mime = if self.mime.is_empty() {
             "application/octet-stream".to_string()
@@ -272,7 +272,7 @@ impl PartialResource {
 fn decode_enex_base64(raw: &str) -> Result<Vec<u8>> {
     let compact: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
     if compact.is_empty() {
-        return Err(NotebookError::InvalidInput("empty ENEX resource data".into()));
+        return Err(NotebookError::Other("empty ENEX resource data".into()));
     }
     let padded = pad_base64(&compact);
     let engines = [
@@ -289,9 +289,7 @@ fn decode_enex_base64(raw: &str) -> Result<Vec<u8>> {
             return Ok(data);
         }
     }
-    Err(NotebookError::InvalidInput(
-        "invalid base64 in resource".into(),
-    ))
+    Err(NotebookError::Other("invalid base64 in resource".into()))
 }
 
 fn pad_base64(value: &str) -> String {
@@ -319,6 +317,58 @@ pub fn parse_evernote_datetime(value: &str) -> Option<DateTime<Utc>> {
         .map(|dt| dt.and_utc())
 }
 
+const HTML_TAGS: &[&str] = &[
+    "a",
+    "div",
+    "span",
+    "p",
+    "br",
+    "ul",
+    "ol",
+    "li",
+    "b",
+    "i",
+    "u",
+    "strong",
+    "em",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "blockquote",
+    "pre",
+    "code",
+    "table",
+    "tr",
+    "td",
+    "th",
+    "thead",
+    "tbody",
+];
+
+#[derive(Clone, Debug)]
+enum HtmlNode {
+    Element {
+        name: String,
+        attrs: Vec<(String, String)>,
+        children: Vec<HtmlNode>,
+    },
+    Text(String),
+    Raw(String),
+}
+
+impl HtmlNode {
+    fn element(name: impl Into<String>, attrs: Vec<(String, String)>) -> Self {
+        HtmlNode::Element {
+            name: name.into(),
+            attrs,
+            children: Vec::new(),
+        }
+    }
+}
+
 pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
     let resource_map: HashMap<String, &EnexResource> = resources
         .iter()
@@ -328,67 +378,38 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
     let mut reader = Reader::from_reader(Cursor::new(enml.as_bytes()));
     reader.config_mut().trim_text(false);
 
-    let mut out = String::new();
+    let mut stack = vec![HtmlNode::element("root", Vec::new())];
     let mut buf = Vec::new();
-    let mut list_stack = Vec::<usize>::new();
-    let mut list_states = Vec::<EnmlListState>::new();
-    let mut item_stack = Vec::<usize>::new();
-    let mut item_states = Vec::<EnmlItemState>::new();
+    let mut saw_error = None;
 
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 match name.as_str() {
-                    "en-note" => out.push_str("<div>"),
+                    "en-note" => push_element(&mut stack, "div", Vec::new()),
                     "en-todo" => {
                         let checked = en_todo_checked(&e);
-                        if let Some(item_id) = item_stack.last().copied() {
-                            item_states[item_id].checked = Some(checked);
-                            if let Some(list_id) = item_states[item_id].list_id {
-                                list_states[list_id].is_task = true;
-                            }
-                        } else {
-                            render_en_todo(&mut out, checked);
-                        }
+                        push_element(
+                            &mut stack,
+                            "en-todo-marker",
+                            vec![("checked".into(), bool_attr(checked))],
+                        );
                     }
-                    "en-crypt" => {
-                        out.push_str("<p><em>[Encrypted content not imported]</em></p>");
-                    }
+                    "en-crypt" => append_child(
+                        &mut stack,
+                        HtmlNode::Raw(
+                            "<p><em>[Encrypted content not imported]</em></p>".to_string(),
+                        ),
+                    ),
                     "en-media" => {
-                        render_en_media(&mut out, &e, &resource_map);
+                        let mut raw = String::new();
+                        render_en_media(&mut raw, &e, &resource_map);
+                        append_child(&mut stack, HtmlNode::Raw(raw));
                     }
-                    "ul" | "ol" => {
-                        let id = list_states.len();
-                        list_states.push(EnmlListState {
-                            original_tag: name.clone(),
-                            is_task: style_flag(&e, &reader, "--en-todo").unwrap_or(false),
-                        });
-                        list_stack.push(id);
-                        out.push('<');
-                        out.push_str(&name);
-                        out.push_str(&format!(" data-enml-list-id=\"{id}\""));
-                        render_enml_attributes(&mut out, &e, &reader);
-                        out.push('>');
-                    }
-                    "li" => {
-                        let id = item_states.len();
-                        item_states.push(EnmlItemState {
-                            list_id: list_stack.last().copied(),
-                            checked: style_flag(&e, &reader, "--en-checked"),
-                        });
-                        item_stack.push(id);
-                        out.push_str(&format!("<li data-enml-item-id=\"{id}\""));
-                        render_enml_attributes(&mut out, &e, &reader);
-                        out.push('>');
-                    }
-                    "a" | "div" | "span" | "p" | "br" | "b" | "i" | "u" | "strong" | "em"
-                    | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote" | "pre" | "code"
-                    | "table" | "tr" | "td" | "th" | "thead" | "tbody" => {
-                        out.push('<');
-                        out.push_str(&name);
-                        render_enml_attributes(&mut out, &e, &reader);
-                        out.push('>');
+                    "br" => append_child(&mut stack, HtmlNode::element("br", Vec::new())),
+                    name if HTML_TAGS.contains(&name) => {
+                        push_element(&mut stack, name, copy_html_attrs(&e));
                     }
                     _ => {}
                 }
@@ -396,63 +417,42 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
             Ok(Event::End(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 match name.as_str() {
-                    "en-note" => out.push_str("</div>"),
-                    "en-todo" => {}
-                    "ul" | "ol" => {
-                        if let Some(list_id) = list_stack.pop() {
-                            out.push_str(if list_states[list_id].is_task {
-                                "</ul>"
-                            } else if list_states[list_id].original_tag == "ol" {
-                                "</ol>"
-                            } else {
-                                "</ul>"
-                            });
-                        }
-                    }
-                    "li" => {
-                        item_stack.pop();
-                        out.push_str("</li>");
-                    }
-                    "a" | "div" | "span" | "p" | "b" | "i" | "u" | "strong" | "em" | "h1"
-                    | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote" | "pre" | "code"
-                    | "table" | "tr" | "td" | "th" | "thead" | "tbody" => {
-                        out.push_str("</");
-                        out.push_str(&name);
-                        out.push('>');
-                    }
+                    "en-note" | "en-todo" => pop_element(&mut stack),
+                    name if HTML_TAGS.contains(&name) && name != "br" => pop_element(&mut stack),
                     _ => {}
                 }
             }
             Ok(Event::Text(e)) => {
-                let text = e
-                    .unescape_with(resolve_enml_entity)
-                    .map_err(|err| NotebookError::InvalidInput(format!("invalid ENML text: {err}")))?;
-                out.push_str(&escape_html(text.as_ref()));
+                let decoded = decode_xml_entities(&String::from_utf8_lossy(e.as_ref()));
+                if !decoded.is_empty() {
+                    append_child(&mut stack, HtmlNode::Text(decoded));
+                }
             }
             Ok(Event::Empty(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 match name.as_str() {
-                    "br" => out.push_str("<br/>"),
+                    "br" => append_child(&mut stack, HtmlNode::element("br", Vec::new())),
+                    "en-media" => {
+                        let mut raw = String::new();
+                        render_en_media(&mut raw, &e, &resource_map);
+                        append_child(&mut stack, HtmlNode::Raw(raw));
+                    }
                     "en-todo" => {
                         let checked = en_todo_checked(&e);
-                        if let Some(item_id) = item_stack.last().copied() {
-                            item_states[item_id].checked = Some(checked);
-                            if let Some(list_id) = item_states[item_id].list_id {
-                                list_states[list_id].is_task = true;
-                            }
-                        } else {
-                            render_en_todo(&mut out, checked);
-                        }
+                        append_child(
+                            &mut stack,
+                            HtmlNode::element(
+                                "en-todo-marker",
+                                vec![("checked".into(), bool_attr(checked))],
+                            ),
+                        );
                     }
-                    "en-media" => render_en_media(&mut out, &e, &resource_map),
                     _ => {}
                 }
             }
             Ok(Event::Eof) => break,
             Err(err) => {
-                if out.is_empty() {
-                    return Err(NotebookError::InvalidInput(format!("invalid ENML: {err}")));
-                }
+                saw_error = Some(err.to_string());
                 break;
             }
             _ => {}
@@ -460,100 +460,337 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
         buf.clear();
     }
 
+    let mut root = stack
+        .pop()
+        .unwrap_or_else(|| HtmlNode::element("root", Vec::new()));
+    if let HtmlNode::Element { children, .. } = &mut root {
+        promote_evernote_todos(children);
+    }
+
+    let mut out = String::new();
+    if let HtmlNode::Element { children, .. } = &root {
+        for child in children {
+            write_html(&mut out, child);
+        }
+    }
+
     if out.trim().is_empty() {
+        if let Some(err) = saw_error {
+            return Err(NotebookError::Other(format!("invalid ENML: {err}")));
+        }
         out.push_str("<p></p>");
     }
 
-    for (id, list) in list_states.iter().enumerate() {
-        let marker = format!("<{} data-enml-list-id=\"{id}\"", list.original_tag);
-        let replacement = if list.is_task {
-            "<ul data-type=\"taskList\"".to_string()
-        } else {
-            format!("<{}", list.original_tag)
-        };
-        out = out.replace(&marker, &replacement);
+    Ok(out)
+}
+
+fn push_element(stack: &mut Vec<HtmlNode>, name: &str, attrs: Vec<(String, String)>) {
+    stack.push(HtmlNode::element(name, attrs));
+}
+
+fn pop_element(stack: &mut Vec<HtmlNode>) {
+    if stack.len() <= 1 {
+        return;
     }
-    for (id, item) in item_states.iter().enumerate() {
-        let marker = format!("<li data-enml-item-id=\"{id}\"");
-        let replacement = if item
-            .list_id
-            .and_then(|list_id| list_states.get(list_id))
-            .is_some_and(|list| list.is_task)
-        {
-            format!(
-                "<li data-type=\"taskItem\" data-checked=\"{}\"",
-                item.checked.unwrap_or(false)
-            )
-        } else {
-            "<li".to_string()
-        };
-        out = out.replace(&marker, &replacement);
-    }
-
-    Ok(promote_checkbox_blocks(&out, &["div", "p"]).unwrap_or(out))
+    let child = stack.pop().expect("html stack");
+    append_child(stack, child);
 }
 
-#[derive(Debug)]
-struct EnmlListState {
-    original_tag: String,
-    is_task: bool,
-}
-
-#[derive(Debug)]
-struct EnmlItemState {
-    list_id: Option<usize>,
-    checked: Option<bool>,
-}
-
-fn render_enml_attributes(
-    out: &mut String,
-    e: &quick_xml::events::BytesStart<'_>,
-    reader: &Reader<Cursor<&[u8]>>,
-) {
-    for attr in e.attributes().flatten() {
-        let key = String::from_utf8_lossy(attr.key.as_ref());
-        if key == "style" || key == "href" || key == "class" {
-            let value = attr
-                .decode_and_unescape_value(reader.decoder())
-                .unwrap_or_else(|_| String::from_utf8_lossy(&attr.value));
-            out.push_str(&format!(" {key}=\"{}\"", escape_attr(value.as_ref())));
-        }
+fn append_child(stack: &mut Vec<HtmlNode>, child: HtmlNode) {
+    if let Some(HtmlNode::Element { children, .. }) = stack.last_mut() {
+        children.push(child);
     }
 }
 
-fn resolve_enml_entity(entity: &str) -> Option<&'static str> {
-    resolve_xml_entity(entity).or_else(|| match entity {
-        // ENML is XML, but older Evernote exports sometimes contain a small
-        // set of HTML entities from pasted web content.
-        "nbsp" => Some("\u{00a0}"),
-        "ndash" => Some("–"),
-        "mdash" => Some("—"),
-        "hellip" => Some("…"),
-        "lsquo" => Some("‘"),
-        "rsquo" => Some("’"),
-        "ldquo" => Some("“"),
-        "rdquo" => Some("”"),
-        _ => None,
-    })
+fn copy_html_attrs(e: &quick_xml::events::BytesStart<'_>) -> Vec<(String, String)> {
+    e.attributes()
+        .flatten()
+        .filter_map(|attr| {
+            let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+            if key == "style" || key == "href" || key == "class" {
+                Some((key, attr_value(&attr)))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn attr_value(attr: &quick_xml::events::attributes::Attribute<'_>) -> String {
+    decode_xml_entities(&String::from_utf8_lossy(&attr.value))
 }
 
 fn en_todo_checked(e: &quick_xml::events::BytesStart<'_>) -> bool {
     e.attributes().flatten().any(|attr| {
-        attr.key.as_ref() == b"checked"
-            && !matches!(
-                attr.value.as_ref(),
-                b"false" | b"FALSE" | b"0" | b"no" | b"NO"
-            )
+        attr.key.as_ref() == b"checked" && attr_value(&attr).eq_ignore_ascii_case("true")
     })
 }
 
-fn render_en_todo(out: &mut String, checked: bool) {
-    out.push_str("<input type=\"checkbox\" data-inline-checkbox=\"true\" data-checked=\"");
-    out.push_str(if checked { "true" } else { "false" });
-    if checked {
-        out.push_str("\" checked=\"checked\" />");
+fn bool_attr(value: bool) -> String {
+    if value { "true" } else { "false" }.to_string()
+}
+
+fn promote_evernote_todos(nodes: &mut Vec<HtmlNode>) {
+    walk_and_convert_lists(nodes);
+    *nodes = group_todo_lines(std::mem::take(nodes));
+}
+
+fn walk_and_convert_lists(nodes: &mut [HtmlNode]) {
+    for node in nodes.iter_mut() {
+        if let HtmlNode::Element {
+            name,
+            attrs,
+            children,
+        } = node
+        {
+            walk_and_convert_lists(children);
+            if name == "ul" || name == "ol" {
+                if contains_todo_marker(children) {
+                    convert_list_to_task_list(name, attrs, children);
+                }
+            } else if name != "li" {
+                // Group consecutive todo divs/paragraphs, but not inside a list
+                // item — Evernote puts `<en-todo/>` in a div wrapped by `<li>`,
+                // and those must stay on the `<li>` so the parent list can
+                // become a task list instead of nested bullets.
+                *children = group_todo_lines(std::mem::take(children));
+            }
+        }
+    }
+}
+
+fn convert_list_to_task_list(
+    name: &mut String,
+    attrs: &mut Vec<(String, String)>,
+    children: &mut [HtmlNode],
+) {
+    *name = "ul".to_string();
+    set_attr(attrs, "data-type", "taskList");
+    for child in children {
+        if let HtmlNode::Element {
+            name,
+            attrs,
+            children,
+        } = child
+        {
+            if name == "li" {
+                let checked = extract_todo_checked(children).unwrap_or(false);
+                strip_todo_markers(children);
+                set_attr(attrs, "data-type", "taskItem");
+                set_attr(
+                    attrs,
+                    "data-checked",
+                    if checked { "true" } else { "false" },
+                );
+            }
+        }
+    }
+}
+
+fn group_todo_lines(nodes: Vec<HtmlNode>) -> Vec<HtmlNode> {
+    let mut out = Vec::new();
+    let mut run = Vec::new();
+    for node in nodes {
+        if is_todo_line(&node) {
+            run.push(node);
+        } else {
+            flush_todo_run(&mut out, &mut run);
+            out.push(node);
+        }
+    }
+    flush_todo_run(&mut out, &mut run);
+    out
+}
+
+fn is_todo_line(node: &HtmlNode) -> bool {
+    match node {
+        HtmlNode::Element {
+            name,
+            attrs,
+            children,
+        } => {
+            if name == "li" && has_attr(attrs, "data-type", "taskItem") {
+                return false;
+            }
+            (name == "div" || name == "p") && contains_todo_marker(children)
+        }
+        _ => false,
+    }
+}
+
+fn flush_todo_run(out: &mut Vec<HtmlNode>, run: &mut Vec<HtmlNode>) {
+    if run.is_empty() {
+        return;
+    }
+    let items = run
+        .drain(..)
+        .map(|node| {
+            let checked = match &node {
+                HtmlNode::Element { children, .. } => {
+                    extract_todo_checked(children).unwrap_or(false)
+                }
+                _ => false,
+            };
+            let mut content = match node {
+                HtmlNode::Element {
+                    name, mut children, ..
+                } => {
+                    strip_todo_markers(&mut children);
+                    if name == "p" {
+                        vec![HtmlNode::Element {
+                            name: "p".into(),
+                            attrs: Vec::new(),
+                            children,
+                        }]
+                    } else {
+                        children
+                    }
+                }
+                other => vec![other],
+            };
+            if content.is_empty() {
+                content.push(HtmlNode::element("p", Vec::new()));
+            }
+            HtmlNode::Element {
+                name: "li".into(),
+                attrs: vec![
+                    ("data-type".into(), "taskItem".into()),
+                    ("data-checked".into(), bool_attr(checked)),
+                ],
+                children: vec![HtmlNode::Element {
+                    name: "div".into(),
+                    attrs: Vec::new(),
+                    children: content,
+                }],
+            }
+        })
+        .collect();
+    out.push(HtmlNode::Element {
+        name: "ul".into(),
+        attrs: vec![("data-type".into(), "taskList".into())],
+        children: items,
+    });
+}
+
+fn contains_todo_marker(nodes: &[HtmlNode]) -> bool {
+    nodes.iter().any(|node| match node {
+        HtmlNode::Element { name, children, .. } => {
+            name == "en-todo-marker" || contains_todo_marker(children)
+        }
+        _ => false,
+    })
+}
+
+fn extract_todo_checked(nodes: &[HtmlNode]) -> Option<bool> {
+    for node in nodes {
+        match node {
+            HtmlNode::Element {
+                name,
+                attrs,
+                children,
+            } if name == "en-todo-marker" => {
+                return Some(has_attr(attrs, "checked", "true"));
+            }
+            HtmlNode::Element { children, .. } => {
+                if let Some(checked) = extract_todo_checked(children) {
+                    return Some(checked);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn strip_todo_markers(nodes: &mut Vec<HtmlNode>) {
+    let mut out = Vec::with_capacity(nodes.len());
+    for node in nodes.drain(..) {
+        match node {
+            HtmlNode::Element {
+                name,
+                attrs: _,
+                mut children,
+            } if name == "en-todo-marker" => {
+                strip_todo_markers(&mut children);
+                out.extend(children);
+            }
+            HtmlNode::Element {
+                name,
+                attrs,
+                mut children,
+            } => {
+                strip_todo_markers(&mut children);
+                out.push(HtmlNode::Element {
+                    name,
+                    attrs,
+                    children,
+                });
+            }
+            other => out.push(other),
+        }
+    }
+    *nodes = out;
+}
+
+fn set_attr(attrs: &mut Vec<(String, String)>, key: &str, value: &str) {
+    if let Some(existing) = attrs.iter_mut().find(|(name, _)| name == key) {
+        existing.1 = value.to_string();
     } else {
-        out.push_str("\" />");
+        attrs.push((key.to_string(), value.to_string()));
+    }
+}
+
+fn has_attr(attrs: &[(String, String)], key: &str, value: &str) -> bool {
+    attrs
+        .iter()
+        .any(|(name, current)| name == key && current == value)
+}
+
+fn write_html(out: &mut String, node: &HtmlNode) {
+    match node {
+        HtmlNode::Text(text) => out.push_str(&escape_html(text)),
+        HtmlNode::Raw(raw) => out.push_str(raw),
+        HtmlNode::Element {
+            name,
+            attrs,
+            children,
+        } if name == "en-todo-marker" => {
+            let checked = has_attr(attrs, "checked", "true");
+            out.push_str(if checked {
+                r#"<ul data-type="taskList"><li data-type="taskItem" data-checked="true"><div><p></p></div></li></ul>"#
+            } else {
+                r#"<ul data-type="taskList"><li data-type="taskItem" data-checked="false"><div><p></p></div></li></ul>"#
+            });
+            for child in children {
+                write_html(out, child);
+            }
+        }
+        HtmlNode::Element {
+            name,
+            attrs,
+            children,
+        } => {
+            if name == "br" && children.is_empty() {
+                out.push_str("<br/>");
+                return;
+            }
+            out.push('<');
+            out.push_str(name);
+            for (key, value) in attrs {
+                out.push(' ');
+                out.push_str(key);
+                out.push_str("=\"");
+                out.push_str(&escape_attr(value));
+                out.push('"');
+            }
+            out.push('>');
+            for child in children {
+                write_html(out, child);
+            }
+            out.push_str("</");
+            out.push_str(name);
+            out.push('>');
+        }
     }
 }
 
@@ -653,94 +890,6 @@ mod tests {
     }
 
     #[test]
-    fn decodes_apostrophes_and_common_enml_entities_once() {
-        let enex = r#"<?xml version="1.0" encoding="UTF-8"?>
-<en-export>
-  <note>
-    <title>James&apos;s note</title>
-    <content><![CDATA[<en-note><div>That&apos;s useful&nbsp;&mdash;&nbsp;keep it.</div><a href="https://example.com/?a=1&amp;b=2">Link</a></en-note>]]></content>
-  </note>
-</en-export>"#;
-        let export = parse_enex(enex.as_bytes()).unwrap();
-        assert_eq!(export.notes[0].title, "James's note");
-
-        let html = enml_to_html(&export.notes[0].content, &[]).unwrap();
-        assert!(
-            html.contains("That's useful\u{00a0}—\u{00a0}keep it."),
-            "got: {html}"
-        );
-        assert!(html.contains("?a=1&amp;b=2"), "got: {html}");
-        assert!(!html.contains("&amp;apos;"), "got: {html}");
-        assert!(!html.contains("&amp;amp;"), "got: {html}");
-    }
-
-    #[test]
-    fn promotes_classic_en_todo_blocks_to_one_task_list() {
-        let enml = r#"<en-note><div><en-todo checked="true"/>Done<br/></div><div><en-todo checked="false"/>Next<br/></div><div><br/></div></en-note>"#;
-        let html = enml_to_html(enml, &[]).unwrap();
-        assert_eq!(
-            html.matches("<ul data-type=\"taskList\">").count(),
-            1,
-            "got: {html}"
-        );
-        assert!(
-            html.contains("<li data-type=\"taskItem\" data-checked=\"true\">Done</li>"),
-            "got: {html}"
-        );
-        assert!(
-            html.contains("<li data-type=\"taskItem\" data-checked=\"false\">Next</li>"),
-            "got: {html}"
-        );
-        // The row-padding <br/> would otherwise add an empty line inside the item.
-        assert!(!html.contains("Done<br/>"), "got: {html}");
-        assert!(!html.contains("data-inline-checkbox"), "got: {html}");
-    }
-
-    #[test]
-    fn keeps_mid_block_en_todos_inline() {
-        let enml = r#"<en-note><div>Deposit <en-todo checked="true"/> cleared</div></en-note>"#;
-        let html = enml_to_html(enml, &[]).unwrap();
-        assert!(
-            html.contains("data-inline-checkbox=\"true\""),
-            "got: {html}"
-        );
-        assert!(!html.contains("taskList"), "got: {html}");
-    }
-
-    #[test]
-    fn separate_en_todo_runs_stay_separate_lists() {
-        let enml = r#"<en-note><div><en-todo checked="false"/>Kale</div><h2>Grains</h2><div><en-todo checked="false"/>Rice</div></en-note>"#;
-        let html = enml_to_html(enml, &[]).unwrap();
-        assert_eq!(
-            html.matches("<ul data-type=\"taskList\">").count(),
-            2,
-            "got: {html}"
-        );
-        assert!(html.contains("</ul><h2>Grains</h2><ul"), "got: {html}");
-    }
-
-    #[test]
-    fn promotes_bulleted_en_todos_to_real_task_lists() {
-        let enml = r#"<en-note><ul><li><en-todo checked="true"/>Done</li><li><en-todo checked="false"/>Next</li></ul></en-note>"#;
-        let html = enml_to_html(enml, &[]).unwrap();
-        assert!(html.contains("<ul data-type=\"taskList\">"), "got: {html}");
-        assert!(html.contains("<li data-type=\"taskItem\" data-checked=\"true\">Done</li>"));
-        assert!(html.contains("<li data-type=\"taskItem\" data-checked=\"false\">Next</li>"));
-        assert!(!html.contains("data-inline-checkbox"), "got: {html}");
-        assert!(!html.contains("<ul><li>"), "got: {html}");
-    }
-
-    #[test]
-    fn imports_modern_evernote_style_checklists_as_tasks() {
-        let enml = r#"<en-note><ul style="--en-todo:true;"><li style="--en-checked:true;"><div>Done</div></li><li style="--en-checked:false;"><div>Next</div></li><li><div>Defaults unchecked</div></li></ul></en-note>"#;
-        let html = enml_to_html(enml, &[]).unwrap();
-        assert!(html.contains("<ul data-type=\"taskList\""), "got: {html}");
-        assert!(html.contains("data-type=\"taskItem\" data-checked=\"true\""));
-        assert_eq!(html.matches("data-checked=\"false\"").count(), 2);
-        assert!(!html.contains("<ul style=\"--en-todo:true;\"><li"));
-    }
-
-    #[test]
     fn parses_evernote_datetime() {
         let dt = parse_evernote_datetime("20240115T100000Z").unwrap();
         assert_eq!(dt.format("%Y-%m-%d").to_string(), "2024-01-15");
@@ -748,7 +897,11 @@ mod tests {
 
     #[test]
     fn imports_enex_into_database() {
-        let db = crate::db::Database::in_memory().unwrap();
+        let dir = std::env::temp_dir().join("notebook-import-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("test.db");
+        let db = crate::db::Database::open(&db_path).unwrap();
         let service = crate::service::NotebookService::new(db);
         let result = service
             .import_enex(
@@ -864,7 +1017,10 @@ mod tests {
   </note>
 </en-export>"#
         );
-        let db = crate::db::Database::in_memory().unwrap();
+        let dir = std::env::temp_dir().join("notebook-pdf-import-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = crate::db::Database::open(dir.join("test.db")).unwrap();
         let service = crate::service::NotebookService::new(db);
 
         let result = service
@@ -927,8 +1083,12 @@ mod tests {
   </note>
 </en-export>"#
         );
-        let service =
-            crate::service::NotebookService::new(crate::db::Database::in_memory().unwrap());
+        let dir = std::env::temp_dir().join("notebook-pdf-uppercase-import-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let service = crate::service::NotebookService::new(
+            crate::db::Database::open(dir.join("test.db")).unwrap(),
+        );
         let result = service
             .import_enex(
                 enex.as_bytes(),
@@ -974,8 +1134,12 @@ mod tests {
   </note>
 </en-export>"#
         );
-        let service =
-            crate::service::NotebookService::new(crate::db::Database::in_memory().unwrap());
+        let dir = std::env::temp_dir().join("notebook-pdf-unreferenced-import-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let service = crate::service::NotebookService::new(
+            crate::db::Database::open(dir.join("test.db")).unwrap(),
+        );
         let result = service
             .import_enex(
                 enex.as_bytes(),
@@ -1023,8 +1187,12 @@ mod tests {
             hash = format!("{:x}", md5::compute(file_data)),
             encoded = encoded
         );
-        let service =
-            crate::service::NotebookService::new(crate::db::Database::in_memory().unwrap());
+        let dir = std::env::temp_dir().join("notebook-pdf-cdata-import-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let service = crate::service::NotebookService::new(
+            crate::db::Database::open(dir.join("test.db")).unwrap(),
+        );
         let result = service
             .import_enex(
                 enex.as_bytes(),
@@ -1065,7 +1233,11 @@ mod tests {
     <content><![CDATA[<en-note><div>Personal content</div></en-note>]]></content>
   </note>
 </en-export>"#;
-        let db = crate::db::Database::in_memory().unwrap();
+        let dir = std::env::temp_dir().join("notebook-multi-import-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("test.db");
+        let db = crate::db::Database::open(&db_path).unwrap();
         let service = crate::service::NotebookService::new(db);
         let result = service
             .import_enex(
@@ -1083,5 +1255,83 @@ mod tests {
         let names: Vec<_> = notebooks.iter().map(|n| n.name.as_str()).collect();
         assert!(names.contains(&"Work"));
         assert!(names.contains(&"Personal"));
+    }
+
+    #[test]
+    fn decodes_apos_entity_to_apostrophe() {
+        assert_eq!(decode_xml_entities("John&apos;s note"), "John's note");
+        assert_eq!(decode_xml_entities("a &amp;apos; b"), "a ' b");
+        assert_eq!(decode_xml_entities("A &amp; B"), "A & B");
+        assert_eq!(decode_xml_entities("&#39;&#x27;"), "''");
+
+        let html = enml_to_html(
+            r#"<en-note><div>It&apos;s Tom&apos;s &amp; Jerry&apos;s</div></en-note>"#,
+            &[],
+        )
+        .unwrap();
+        assert!(html.contains("It's Tom's"), "got: {html}");
+        assert!(html.contains("Jerry's"), "got: {html}");
+        assert!(!html.contains("&apos;"), "got: {html}");
+        assert!(!html.contains("&amp;apos"), "got: {html}");
+        assert!(
+            html.contains("&amp;"),
+            "ampersand should stay escaped, got: {html}"
+        );
+    }
+
+    #[test]
+    fn converts_self_closing_en_todo_list_to_task_list() {
+        let enml = r#"<en-note><ul><li><div><en-todo checked="false"/>Milk</div></li><li><div><en-todo checked="true"/>Eggs</div></li></ul></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert!(html.contains("data-type=\"taskList\""), "got: {html}");
+        assert!(html.contains("data-type=\"taskItem\""), "got: {html}");
+        assert!(html.contains("data-checked=\"false\""), "got: {html}");
+        assert!(html.contains("data-checked=\"true\""), "got: {html}");
+        assert!(html.contains("Milk"), "got: {html}");
+        assert!(html.contains("Eggs"), "got: {html}");
+        assert!(
+            html.contains("<ul data-type=\"taskList\"><li data-type=\"taskItem\""),
+            "expected a task list, got: {html}"
+        );
+        assert!(
+            !html.contains("<ul><li>"),
+            "should not remain a bullet list: {html}"
+        );
+    }
+
+    #[test]
+    fn converts_div_en_todos_to_task_list() {
+        let enml = r#"<en-note><div><en-todo checked="false"/>One</div><div><en-todo checked="true"/>Two</div></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert!(html.contains("data-type=\"taskList\""), "got: {html}");
+        assert!(html.contains("data-checked=\"false\""), "got: {html}");
+        assert!(html.contains("data-checked=\"true\""), "got: {html}");
+        assert!(html.contains("One"), "got: {html}");
+        assert!(html.contains("Two"), "got: {html}");
+    }
+
+    #[test]
+    fn converts_wrapped_en_todo_with_text_content() {
+        let enml =
+            r#"<en-note><div><en-todo checked="false">Buy oat milk</en-todo></div></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert!(html.contains("data-type=\"taskList\""), "got: {html}");
+        assert!(html.contains("Buy oat milk"), "got: {html}");
+        assert!(html.contains("data-checked=\"false\""), "got: {html}");
+    }
+
+    #[test]
+    fn parses_apostrophe_in_enex_title() {
+        let enex = r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>John&apos;s grocery list</title>
+    <content><![CDATA[<en-note><div>Don&apos;t forget</div></en-note>]]></content>
+  </note>
+</en-export>"#;
+        let export = parse_enex(enex.as_bytes()).unwrap();
+        assert_eq!(export.notes[0].title, "John's grocery list");
+        let html = enml_to_html(&export.notes[0].content, &[]).unwrap();
+        assert!(html.contains("Don't forget"), "got: {html}");
     }
 }

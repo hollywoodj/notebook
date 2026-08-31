@@ -7,10 +7,12 @@
 
 pub mod attachment;
 pub mod checklist;
+pub mod entities;
 pub mod html;
 pub mod plain;
 
 pub use attachment::looks_like_pdf;
 pub use checklist::normalize_evernote_checklist_html;
+pub use entities::decode_xml_entities;
 pub use html::file_attachment_html;
 pub use plain::strip_html;

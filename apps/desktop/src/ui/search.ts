@@ -1,12 +1,33 @@
-export function findMatchOffsets(text: string, query: string): number[] {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return [];
-  const hay = text.toLowerCase();
+export type FindMatchOptions = {
+  caseSensitive?: boolean;
+  wholeWord?: boolean;
+};
+
+function isWordChar(ch: string | undefined): boolean {
+  return Boolean(ch && /[A-Za-z0-9_]/.test(ch));
+}
+
+export function findMatchOffsets(
+  text: string,
+  query: string,
+  options: FindMatchOptions = {}
+): number[] {
+  const raw = query.trim();
+  if (!raw) return [];
+  const needle = options.caseSensitive ? raw : raw.toLowerCase();
+  const hay = options.caseSensitive ? text : text.toLowerCase();
   const offsets: number[] = [];
   let from = 0;
   while (from <= hay.length - needle.length) {
     const idx = hay.indexOf(needle, from);
     if (idx < 0) break;
+    if (
+      options.wholeWord &&
+      (isWordChar(hay[idx - 1]) || isWordChar(hay[idx + needle.length]))
+    ) {
+      from = idx + 1;
+      continue;
+    }
     offsets.push(idx);
     from = idx + needle.length;
   }
@@ -30,39 +51,47 @@ export function jumpToMatches(
   notes: { id: string; title: string; notebook_name: string }[],
   notebooks: { id: string; name: string }[],
   tags: { id: string; name: string }[],
-  limit = 12
+  limit = 12,
+  kinds?: JumpKind[]
 ): JumpTarget[] {
   const needle = query.trim().toLowerCase();
   const matches = (text: string) => !needle || text.toLowerCase().includes(needle);
+  const allow = (kind: JumpKind) => !kinds?.length || kinds.includes(kind);
   const results: JumpTarget[] = [];
-  for (const notebook of notebooks) {
-    if (matches(notebook.name)) {
-      results.push({
-        kind: "notebook",
-        id: notebook.id,
-        title: notebook.name,
-        subtitle: "Notebook",
-      });
+  if (allow("notebook")) {
+    for (const notebook of notebooks) {
+      if (matches(notebook.name)) {
+        results.push({
+          kind: "notebook",
+          id: notebook.id,
+          title: notebook.name,
+          subtitle: "Notebook",
+        });
+      }
     }
   }
-  for (const tag of tags) {
-    if (matches(tag.name)) {
-      results.push({
-        kind: "tag",
-        id: tag.id,
-        title: `#${tag.name}`,
-        subtitle: "Tag",
-      });
+  if (allow("tag")) {
+    for (const tag of tags) {
+      if (matches(tag.name)) {
+        results.push({
+          kind: "tag",
+          id: tag.id,
+          title: `#${tag.name}`,
+          subtitle: "Tag",
+        });
+      }
     }
   }
-  for (const note of notes) {
-    if (matches(note.title) || matches(note.notebook_name)) {
-      results.push({
-        kind: "note",
-        id: note.id,
-        title: note.title || "Untitled",
-        subtitle: note.notebook_name,
-      });
+  if (allow("note")) {
+    for (const note of notes) {
+      if (matches(note.title) || matches(note.notebook_name)) {
+        results.push({
+          kind: "note",
+          id: note.id,
+          title: note.title || "Untitled",
+          subtitle: note.notebook_name,
+        });
+      }
     }
   }
   return results.slice(0, limit);
@@ -114,7 +143,13 @@ export function rememberSearch(history: string[], query: string, limit = RECENT_
   );
 }
 
-export type NoteListFacet = "reminder" | "attachment";
+export type NoteListFacet =
+  | "reminder"
+  | "attachment"
+  | "untagged"
+  | "image"
+  | "url"
+  | "checklist";
 
 export function toggleListFacet(
   current: NoteListFacet[],
@@ -268,4 +303,18 @@ export function paletteMatches(query: string, actions: PaletteAction[], limit = 
   return actions
     .filter((action) => !needle || action.label.toLowerCase().includes(needle) || action.hint?.toLowerCase().includes(needle))
     .slice(0, limit);
+}
+
+export type JumpKind = JumpTarget["kind"];
+
+export type SearchResource = "image" | "attachment" | "pdf";
+
+export function renameSavedSearch(
+  list: SavedSearch[],
+  id: string,
+  name: string
+): SavedSearch[] {
+  const cleaned = name.trim();
+  if (!cleaned) return list;
+  return list.map((item) => (item.id === id ? { ...item, name: cleaned } : item));
 }

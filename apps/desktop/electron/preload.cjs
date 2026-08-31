@@ -1,4 +1,4 @@
-const { contextBridge, webUtils } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("notebookDesktop", {
   isElectron: true,
@@ -11,5 +11,11 @@ contextBridge.exposeInMainWorld("notebookDesktop", {
       console.error("getPathForFile failed", err);
     }
     return file && typeof file.path === "string" ? file.path : null;
+  },
+  openExternal: (url) => ipcRenderer.invoke("open-external", url),
+  onOpenUrl: (cb) => {
+    const handler = (_event, url) => cb(url);
+    ipcRenderer.on("open-url", handler);
+    return () => ipcRenderer.removeListener("open-url", handler);
   },
 });

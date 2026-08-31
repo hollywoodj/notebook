@@ -5,6 +5,7 @@ import {
   fromDatetimeLocalValue,
   toDatetimeLocalValue,
 } from "../ui/reminders";
+import { countCharacters, countWords, readingTimeLabel } from "../ui/noteContent";
 import { noteAppLink } from "../ui/share";
 import { Icon } from "./Icons";
 
@@ -51,6 +52,14 @@ export function NoteInfoPanel({
           <div>
             <dt>Updated</dt>
             <dd>{formatReminderLabel(note.updated_at, dateFormat)}</dd>
+          </div>
+          <div>
+            <dt>Characters</dt>
+            <dd>{countCharacters(note.content_plain || "")}</dd>
+          </div>
+          <div>
+            <dt>Reading time</dt>
+            <dd>{readingTimeLabel(countWords(note.content_plain || "")) || "—"}</dd>
           </div>
         </dl>
 

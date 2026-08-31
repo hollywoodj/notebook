@@ -1,3 +1,5 @@
+import { decodeXmlEntities, repairImportedHtml } from "./htmlEntities.ts";
+
 export interface Notebook {
   id: string;
   user_id: string;
@@ -109,6 +111,7 @@ export type ViewFilter =
   | { type: "templates" }
   | { type: "files" }
   | { type: "trash" }
+  | { type: "archived" }
   | { type: "search"; query: string };
 
 export interface Account {
@@ -132,7 +135,10 @@ export interface Preferences {
   show_snippets: boolean;
   list_view: "snippets" | "titles" | "cards";
   list_density: "comfortable" | "compact";
-  sort_by: "updated" | "created" | "title";
+  sort_by: "updated" | "created" | "title" | "reminder";
+  sort_descending: boolean;
+  spell_language: string;
+  show_completed_reminders: boolean;
   new_note_behavior: "blank" | "ask";
   auto_save_ms: number;
   show_shortcuts: boolean;
@@ -145,6 +151,9 @@ export interface Preferences {
   show_reminders: boolean;
   default_notebook_id: string | null;
   pdf_view: "expanded" | "title";
+  omniclone_enabled: boolean;
+  omniclone_scheme: "omniclone" | "omnifocus" | "both";
+  omniclone_send_due: boolean;
 }
 
 export const defaultPreferences: Preferences = {
@@ -161,6 +170,9 @@ export const defaultPreferences: Preferences = {
   list_view: "snippets",
   list_density: "comfortable",
   sort_by: "updated",
+  sort_descending: false,
+  spell_language: "en-US",
+  show_completed_reminders: true,
   new_note_behavior: "blank",
   auto_save_ms: 600,
   show_shortcuts: true,
@@ -173,6 +185,9 @@ export const defaultPreferences: Preferences = {
   show_reminders: true,
   default_notebook_id: null,
   pdf_view: "expanded",
+  omniclone_enabled: true,
+  omniclone_scheme: "omniclone",
+  omniclone_send_due: true,
 };
 
 export interface SidebarCounts {
@@ -201,10 +216,32 @@ const API_BASE =
 export const attachmentUrl = (id: string) =>
   `${API_BASE}/api/v1/attachments/${encodeURIComponent(id)}`;
 
-function hydrateAttachmentUrls(note: Note): Note {
+function repairImportedNote<T extends { title?: string | null; snippet?: string | null; content?: string | null; content_plain?: string | null }>(
+  note: T
+): T {
   return {
     ...note,
-    content: note.content.replace(
+    ...(note.title != null ? { title: decodeXmlEntities(note.title) } : {}),
+    ...(note.snippet != null ? { snippet: decodeXmlEntities(note.snippet) } : {}),
+    ...(note.content_plain != null
+      ? { content_plain: decodeXmlEntities(note.content_plain) }
+      : {}),
+    ...(note.content != null ? { content: repairImportedHtml(note.content) } : {}),
+  };
+}
+
+function asNoteList(value: unknown): NoteSummary[] {
+  if (!Array.isArray(value)) {
+    throw new Error("Notebook API did not return a note list");
+  }
+  return value.map(repairImportedNote);
+}
+
+function hydrateAttachmentUrls(note: Note): Note {
+  const repaired = repairImportedNote(note);
+  return {
+    ...repaired,
+    content: String(repaired.content ?? "").replace(
       /notebook-attachment:\/\/([0-9a-f-]{36})/gi,
       (_match, id: string) => attachmentUrl(id)
     ),
@@ -301,7 +338,9 @@ export const api = {
     if (params.archived !== undefined) qs.set("archived", String(params.archived));
     if (params.templates !== undefined) qs.set("templates", String(params.templates));
     const query = qs.toString();
-    return request<NoteSummary[]>(`/api/v1/notes${query ? `?${query}` : ""}`);
+    return request<NoteSummary[]>(`/api/v1/notes${query ? `?${query}` : ""}`).then(
+      asNoteList
+    );
   },
 
   getNote: (id: string) =>
@@ -369,9 +408,12 @@ export const api = {
   search: (q: string) =>
     request<{ notes: NoteSummary[]; total: number }>(
       `/api/v1/search?q=${encodeURIComponent(q)}`
-    ),
+    ).then((result) => ({
+      ...result,
+      notes: asNoteList(result.notes),
+    })),
 
-  listShortcuts: () => request<NoteSummary[]>("/api/v1/shortcuts"),
+  listShortcuts: () => request<NoteSummary[]>("/api/v1/shortcuts").then(asNoteList),
   addShortcut: (noteId: string) =>
     request(`/api/v1/shortcuts/${noteId}`, { method: "POST" }),
   removeShortcut: (noteId: string) =>

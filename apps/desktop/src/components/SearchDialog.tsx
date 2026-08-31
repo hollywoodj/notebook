@@ -15,6 +15,7 @@ export function SearchDialog({
   onClearScope,
   onSaveSearch,
   onDeleteSearch,
+  onRenameSearch,
   onClose,
   onSearch,
   onSelect,
@@ -31,6 +32,7 @@ export function SearchDialog({
   onClearScope: () => void;
   onSaveSearch: (query: string) => void;
   onDeleteSearch: (id: string) => void;
+  onRenameSearch?: (id: string, name: string) => void;
   onClose: () => void;
   onSearch: (query: string) => void;
   onSelect: (target: JumpTarget) => void;
@@ -127,7 +129,7 @@ export function SearchDialog({
           <input
             ref={inputRef}
             value={query}
-            placeholder="Search notes  notebook: tag: intitle:"
+            placeholder="Search notes  notebook: tag: created: resource:"
             aria-label="Search notes"
             onChange={(event) => onQueryChange(event.target.value)}
           />
@@ -193,6 +195,18 @@ export function SearchDialog({
                       {item.name !== item.query ? (
                         <span className="search-saved-query">{item.query}</span>
                       ) : null}
+                    </button>
+                    <button
+                      type="button"
+                      className="search-saved-delete"
+                      aria-label={`Rename saved search ${item.name}`}
+                      title="Rename"
+                      onClick={() => {
+                        const next = window.prompt("Rename saved search", item.name);
+                        if (next) onRenameSearch?.(item.id, next);
+                      }}
+                    >
+                      ✎
                     </button>
                     <button
                       type="button"

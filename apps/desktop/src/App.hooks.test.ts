@@ -110,44 +110,81 @@ describe("Evernote sidebar chrome", () => {
     assert.equal(appSource.includes("nav-section"), false);
   });
 
-  it("holds the icon rail at its width instead of popping the sidebar open", () => {
-    assert.match(appSource, /const sidebarRail = isSidebarRail\(paneLayout\)/);
-    assert.match(appSource, /sidebarRail \? " sidebar-rail" : ""/);
-    assert.match(appSource, /className="sidebar"/);
-    assert.equal(appSource.includes("rail-open"), false);
+  it("uses an Evernote-style icon-only sidebar rail", () => {
+    assert.match(appSource, /className=\{\s*"app-shell sidebar-rail"/);
+    assert.match(appSource, /SIDEBAR_RAIL_WIDTH/);
+    assert.equal(appSource.includes("toggleSidebarRail"), false);
     assert.equal(appSource.includes("sidebarHovered"), false);
     assert.equal(appSource.includes("sidebarFocused"), false);
     assert.equal(appSource.includes("sidebar-rail-toggle"), false);
     assert.equal(appSource.includes('label="Resize sidebar"'), false);
     assert.match(appSource, /className="sidebar-divider"/);
+    assert.equal(appSource.includes("Pin sidebar open"), false);
+    assert.equal(appSource.includes("Collapse sidebar to icons"), false);
+    assert.equal(menuSource.includes("Pin Sidebar Open"), false);
+    assert.equal(menuSource.includes("Collapse Sidebar to Icons"), false);
 
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
-    assert.match(styles, /\.app-shell\.sidebar-rail \{/);
     assert.match(styles, /\.app-shell\.sidebar-rail \.sidebar-nav \.nav-label/);
+    assert.match(styles, /display: none/);
     assert.equal(styles.includes("rail-open"), false);
   });
 
-  it("labels every rail icon without an account or expansion control", () => {
+  it("keeps section names for tooltips and flyouts, without pinning a labeled pane", () => {
     for (const label of ["Notes", "Shortcuts", "Reminders", "Notebooks", "Tags", "Templates", "Trash"]) {
       assert.match(appSource, new RegExp(`<span className="nav-label">${label}</span>`));
     }
-    assert.equal(appSource.includes('title="Account"'), false);
-    assert.equal(appSource.includes("account-popover"), false);
-    assert.equal(menuSource.includes("Expand Sidebar"), false);
-    assert.equal(menuSource.includes("Pin Sidebar Open"), false);
-    const settingsSource = readFileSync(
-      new URL("./components/SettingsModal.tsx", import.meta.url),
-      "utf8"
-    );
-    assert.equal(settingsSource.includes("Collapse / expand sidebar"), false);
+    assert.match(appSource, /navIconTitle\("Notes"/);
+    assert.match(appSource, /navIconTitle\("Notebooks"/);
   });
 
   it("counts the current view rather than repeating the all-notes total", () => {
     assert.match(appSource, /title="Notes in this view"/);
-    assert.match(appSource, /\{visibleNotes\.length\}/);
-    assert.match(appSource, /\{shortcutNotes\.length\}/);
-    assert.match(appSource, /\{notebooks\.length\}/);
-    assert.match(navSource, /notebook\.note_count \?\? 0/);
+    assert.match(appSource, /displayedListCount\(/);
+    assert.match(appSource, /knownViewNoteCount\(/);
+    assert.match(appSource, /stickyNavCount\(notebooks\.length/);
+    assert.match(navSource, /navCountLabel\(notebook\.note_count\)/);
+  });
+
+  it("does not flash a zero notes count before the current view has loaded", () => {
+    const start = appSource.indexOf("const health = await api.health()");
+    const end = appSource.indexOf('setError("Could not connect');
+    assert.ok(start > 0 && end > start);
+    const boot = appSource.slice(start, end);
+    const readyAt = boot.indexOf("setReady(true)");
+    assert.ok(readyAt > 0);
+    assert.ok(boot.lastIndexOf("await refreshMeta()", readyAt) >= 0);
+    // main tracked "is this list for the current view" with its own filter key;
+    // noteStore exposes it as `loaded`, so the guard reads through listLoaded.
+    assert.match(appSource, /const listLoaded = notesLoaded;/);
+    assert.match(appSource, /lastListCountRef\.current/);
+    assert.match(appSource, /navCountLabel\(counts\?\.notes\)/);
+    assert.match(appSource, /knownViewNoteCount\(/);
+    assert.match(appSource, /displayedListCount\(/);
+  });
+
+  it("shows the note list when Notes is clicked, even if the list was hidden", () => {
+    assert.match(appSource, /const showAllNotes = /);
+    assert.match(appSource, /onClick=\{\(\) => showAllNotes\(\)\}/);
+    // commands.ts owns dispatch since candidate 5, so the palette/menu path
+    // reveals the list through the command rather than a switch in App.
+    const commandSource = readFileSync(new URL("./commands.ts", import.meta.url), "utf8");
+    assert.match(commandSource, /id: "view\.allNotes"[\s\S]*?ctx\.revealNoteList\(\)/);
+    assert.match(appSource, /const revealNoteList = /);
+    assert.match(appSource, /listCollapsed: false/);
+  });
+
+  it("does not empty open note tabs until the matching list has loaded", () => {
+    // Same invariant as main's filter-key guard, expressed through the store's
+    // loaded flag: nothing empties the open tabs until the list matches.
+    assert.match(appSource, /if \(listLoaded && !\(notes\.length === 0/);
+    assert.match(appSource, /\{listLoaded && notes\.length === 0/);
+  });
+
+  it("repairs imported notes without pulling in the editor chrome module", () => {
+    const apiSource = readFileSync(new URL("./api.ts", import.meta.url), "utf8");
+    assert.match(apiSource, /from "\.\/htmlEntities\.ts"/);
+    assert.equal(apiSource.includes('from "./uiChrome"'), false);
   });
 });
 
@@ -158,14 +195,13 @@ describe("Evernote list chrome", () => {
     assert.match(appSource, /note-card-thumb/);
     assert.match(appSource, /meta-chip/);
     assert.match(appSource, /persistCollapsedStacks/);
-    assert.equal(appSource.includes("account-popover"), false);
     assert.match(appSource, /e\.key === "j" \|\| e\.key === "k"/);
     assert.match(appSource, /This week/);
     assert.match(appSource, /Later today/);
     assert.match(appSource, /outlineOpen=\{editorChrome\.outlineOpen\}/);
     const searchSource = readFileSync(new URL("./components/SearchDialog.tsx", import.meta.url), "utf8");
     assert.match(searchSource, /Recent searches/);
-    assert.match(searchSource, /notebook: tag: intitle:/);
+    assert.match(searchSource, /notebook: tag: created: resource:/);
     assert.match(menuSource, /Collapse stack/);
     assert.match(menuSource, /label: "Align"/);
     assert.match(menuSource, /label: "Table"/);
@@ -185,8 +221,54 @@ describe("Evernote list chrome", () => {
     assert.match(menuSource, /Email Note/);
     assert.match(menuSource, /Command Palette/);
     assert.match(menuSource, /Mark reminder done/);
+    assert.match(menuSource, /Export as PDF/);
+    assert.match(menuSource, /Paste and Match Style/);
+    assert.match(menuSource, /Go to Notebook/);
+    assert.match(menuSource, /Find Next/);
+    assert.match(menuSource, /Insert Table of Contents/);
+    assert.match(appSource, /type: "archived"/);
+    assert.match(appSource, /Untagged/);
+    assert.match(appSource, /Clear filters/);
+    assert.match(appSource, /trash-toast/);
+    assert.match(appSource, /formatRelativeTime/);
+    assert.match(appSource, /canReopenClosedTab/);
     const editorSource = readFileSync(new URL("./components/NoteEditor.tsx", import.meta.url), "utf8");
     assert.match(editorSource, /CODE_LANGUAGES/);
     assert.match(editorSource, /aria-label="Code language"/);
+    assert.match(editorSource, /findCaseSensitive/);
+    assert.match(editorSource, /code-copy-btn/);
+    assert.match(editorSource, /CaptionImage/);
+    assert.match(editorSource, /IMAGE_SIZE_PRESETS/);
+  });
+});
+
+describe("menu bar, sidebar icons, and OmniClone", () => {
+  it("keeps Settings in File and the account menu, not on the sidebar", () => {
+    assert.equal(appSource.includes('title="Settings"'), false);
+    assert.equal(appSource.includes("Icon.Gear"), false);
+    assert.match(menuSource, /label: "Settings…"/);
+    assert.match(appSource, /account-popover/);
+  });
+
+  it("uses 20px sidebar nav icons and a 22px application menu bar", () => {
+    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    const sidebarSource = readFileSync(new URL("./ui/sidebar.ts", import.meta.url), "utf8");
+    const panesSource = readFileSync(new URL("./ui/panes.ts", import.meta.url), "utf8");
+    assert.match(sidebarSource, /export const SIDEBAR_NAV_ICON_SIZE = 20/);
+    assert.match(panesSource, /export const SIDEBAR_RAIL_WIDTH = 56/);
+    assert.match(appSource, /Icon\.Notes size=\{SIDEBAR_NAV_ICON_SIZE\}/);
+    assert.match(styles, /\.app-menu-bar \{[\s\S]*height: 22px/);
+    assert.match(styles, /\.app-menu-trigger \{[\s\S]*height: 22px/);
+    assert.match(styles, /\.nav-item > svg \{[\s\S]*width: 20px/);
+  });
+
+  it("sends notes to OmniClone the way Evernote shares into OmniFocus", () => {
+    assert.match(menuSource, /Send to OmniClone/);
+    assert.match(menuSource, /Send Checkboxes to OmniClone/);
+    assert.match(menuSource, /OmniClone Integration/);
+    assert.match(appSource, /sendUrlsForNote/);
+    assert.match(appSource, /parseNotebookUrl/);
+    const settings = readFileSync(new URL("./components/SettingsModal.tsx", import.meta.url), "utf8");
+    assert.match(settings, /id: "integrations"/);
   });
 });

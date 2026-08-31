@@ -77,7 +77,9 @@ function stubMenu(overrides: Partial<AppMenuContext> = {}): AppMenuContext {
     confirm: async () => true,
     printActiveNote: noop,
     copyActiveNoteLink: noop,
+    sendToOmniClone: noop,
     copyActiveNoteAs: noop,
+    copyNoteTitle: noop,
     exportNotebook: noop,
     snoozeReminder: noop,
     searchInNotebook: noop,
@@ -104,6 +106,25 @@ function stubMenu(overrides: Partial<AppMenuContext> = {}): AppMenuContext {
     isReminderCompleted: () => false,
     openGlobalSearch: noop,
     closeSidebarFlyout: noop,
+    revealNoteList: noop,
+    tags: [],
+    addTagToSelected: noop,
+    openJump: noop,
+    reopenClosedTab: noop,
+    canReopenClosedTab: false,
+    recentNotes: [],
+    closeAllTabs: noop,
+    pinActiveTab: noop,
+    isActiveTabPinned: false,
+    openSelectedInTabs: noop,
+    toggleNoteLocked: noop,
+    isNoteLocked: false,
+    setNoteColor: noop,
+    noteColor: "",
+    openShortcutsOverlay: noop,
+    collapseAllListGroups: noop,
+    expandAllListGroups: noop,
+    canCollapseListGroups: false,
     ...overrides,
   };
 }
@@ -123,16 +144,22 @@ describe("buildMenuBar", () => {
     assert.ok(tools);
     assert.equal(labels(file.items).includes("Import Notes…"), true);
     assert.equal(labels(tools.items).includes("Import from Evernote…"), true);
+    const share = file.items.find((item) => "label" in item && item.label === "Share");
+    assert.ok(share && "children" in share && share.children);
+    assert.equal(labels(share.children).includes("Send to OmniClone"), true);
+    assert.equal(labels(share.children).includes("Send Checkboxes to OmniClone"), true);
+    assert.equal(labels(file.items).includes("Copy Note Link"), true);
+    assert.equal(labels(tools.items).includes("OmniClone Integration…"), true);
     assert.equal(
       groups.some((group) => labels(group.items).includes("Evernote (.enex)")),
       false
     );
   });
 
-  it("keeps the sidebar fixed while exposing the remaining view controls", () => {
+  it("pairs hide-sidebar and hide-attachments with the current chrome", () => {
     const groups = buildMenuBar(
       stubMenu({
-        paneLayout: { ...defaultPaneLayout(), sidebarRail: true },
+        paneLayout: { ...defaultPaneLayout(), sidebarCollapsed: true },
         editorChrome: { ...defaultEditorChrome(), attachmentsExpanded: true },
         activeNote: { id: "n1" } as AppMenuContext["activeNote"],
       })
@@ -140,11 +167,9 @@ describe("buildMenuBar", () => {
     const view = groups.find((group) => group.label === "View");
     assert.ok(view);
     const viewLabels = labels(view.items);
-    assert.equal(viewLabels.includes("Expand Sidebar"), false);
-    assert.equal(viewLabels.includes("Collapse Sidebar"), false);
+    assert.equal(viewLabels.includes("Show Sidebar"), true);
     assert.equal(viewLabels.includes("Pin Sidebar Open"), false);
     assert.equal(viewLabels.includes("Collapse Sidebar to Icons"), false);
-    assert.equal(viewLabels.includes("Hide Sidebar"), true);
     assert.equal(viewLabels.includes("Hide Attachments"), true);
     assert.equal(viewLabels.includes("Show Note Outline"), true);
     assert.equal(viewLabels.includes("Back"), true);
@@ -175,6 +200,9 @@ describe("buildMenuBar", () => {
     assert.equal(top.includes("Superscript"), true);
     assert.equal(top.includes("Subscript"), true);
     assert.equal(top.includes("Callout"), true);
+    assert.equal(top.includes("Insert Date"), true);
+    assert.equal(top.includes("Remove Link"), true);
+    assert.equal(top.includes("Insert Table of Contents"), true);
     const align = format.items.find((item) => "label" in item && item.label === "Align");
     assert.ok(align && "children" in align && align.children);
     assert.equal(labels(align.children).includes("Justify"), true);
@@ -215,6 +243,8 @@ describe("buildContextMenu", () => {
       stubMenu()
     );
     assert.equal(labels(normal).includes("Open in New Tab"), true);
+    assert.equal(labels(normal).includes("Send to OmniClone"), true);
+    assert.equal(labels(normal).includes("Copy note link"), true);
     assert.equal(labels(normal).includes("Move to trash"), true);
     assert.equal(labels(normal).includes("Export as Markdown"), true);
     assert.equal(labels(normal).includes("Copy as"), true);

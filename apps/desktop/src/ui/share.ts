@@ -74,3 +74,17 @@ export function noteMailtoHref(title: string, plain: string): string {
   const body = encodeURIComponent(plain.trim() || "");
   return `mailto:?subject=${subject}&body=${body}`;
 }
+
+export function printHtmlDocument(title: string, content: string) {
+  const html = notesToHtmlDocument(title, content);
+  const frame = window.open("", "_blank", "noopener,noreferrer");
+  if (!frame) {
+    window.print();
+    return;
+  }
+  frame.document.write(html);
+  frame.document.title = title || "Untitled";
+  frame.document.close();
+  frame.focus();
+  window.setTimeout(() => frame.print(), 50);
+}

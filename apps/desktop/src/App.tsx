@@ -9,6 +9,7 @@ import {
   Notebook,
   Preferences,
   TemplateCatalogItem,
+  ViewFilter,
 } from "./api";
 import { NoteEditor } from "./components/NoteEditor";
 import { editorCommands, type EditorHandle } from "./editorHandle";
@@ -33,12 +34,22 @@ import { SearchDialog } from "./components/SearchDialog";
 import { CommandPalette } from "./components/CommandPalette";
 import { NotebookPickerDialog } from "./components/NotebookPickerDialog";
 import { FilesView } from "./components/FilesView";
+import { ShortcutOverlay } from "./components/ShortcutOverlay";
+import { ReminderCalendar } from "./components/ReminderCalendar";
 import { noteIdsInRange } from "./noteSelection";
+import {
+  OmniCloneSchemePref,
+  parseNotebookUrl,
+  sendUrlsForChecklists,
+  sendUrlsForNote,
+} from "./omniFocus";
 import {
   applyTheme,
   formatDate,
   isBlankNote,
   isTextInputFocused,
+  makeNoteTab,
+  type NoteTab,
   type ContextTarget,
   type PendingConfirm,
   type RenameTarget,
@@ -53,93 +64,18 @@ import { useSidebarFlyout } from "./useSidebarFlyout";
 import { buildContextMenu, buildMenuBar, type AppMenuContext } from "./appMenus";
 import { matchCommand, paletteActions, runCommandById } from "./commands";
 import { isPdfFile, titleFromFilename } from "./components/fileAttachment";
-import {
-  EDITOR_CHROME_KEY,
-  parseEditorChrome,
-  windowTitleForNote,
-} from "./ui/editorChrome";
-import {
-  LIST_MAX,
-  LIST_MIN,
-  PANE_LAYOUT_KEY,
-  SIDEBAR_RAIL_WIDTH,
-  clampPaneWidth,
-  isNoteExpanded,
-  isSidebarRail,
-  parsePaneLayout,
-  revealNoteBrowser,
-  toggleNoteExpanded,
-  toggleNoteListHidden,
-} from "./ui/panes";
-import {
-  NOTE_DRAG_TYPE,
-  adjacentNoteId,
-  attachmentCountLabel,
-  decodeNoteDrag,
-  encodeNoteDrag,
-  groupNotesByNotebook,
-  groupNotesForList,
-  resolveListView,
-  type ListView,
-} from "./ui/noteList";
-import {
-  RECENT_SEARCHES_KEY,
-  SAVED_SEARCHES_KEY,
-  noteMatchesDateRange,
-  noteMatchesFacets,
-  parseRecentSearches,
-  parseSavedSearches,
-  rememberSearch,
-  snippetParts,
-  toggleListFacet,
-  deleteSavedSearch,
-  upsertSavedSearch,
-  type DateRangeFacet,
-  type NoteListFacet,
-} from "./ui/search";
-import {
-  COLLAPSED_STACKS_KEY,
-  collapseAllIds,
-  hasVisibleSidebarNotebooks,
-  matchesSidebarFilter,
-  notebooksMatchingFilter,
-  parseCollapsedStacks,
-  sidebarFilterLabel,
-  sidebarFlyoutTitle,
-  toggleCollapsedId,
-  type SidebarFlyoutKind,
-} from "./ui/sidebar";
-import {
-  COMPLETED_REMINDERS_KEY,
-  formatReminderLabel,
-  fromDatetimeLocalValue,
-  groupRemindersForList,
-  isReminderDone,
-  isReminderOverdue,
-  parseCompletedReminders,
-  reminderFromPreset,
-  reminderFromSnooze,
-  toDatetimeLocalValue,
-  toggleCompletedReminder,
-  type ReminderPreset,
-  type SnoozePreset,
-} from "./ui/reminders";
-import {
-  checklistProgressLabel,
-  countWords,
-  htmlToMarkdown,
-  htmlToPlainText,
-  resolveThumbnailUrl,
-} from "./ui/noteContent";
-import {
-  copyTextToClipboard,
-  downloadTextFile,
-  noteAppLink,
-  noteMailtoHref,
-  notesToEnex,
-  safeFilename,
-} from "./ui/share";
-import { LAST_SESSION_KEY, parseLastSession } from "./ui/navigation";
+import { EDITOR_CHROME_KEY, parseEditorChrome, windowTitleForNote } from "./ui/editorChrome";
+import { LAST_SESSION_KEY, RECENT_NOTES_KEY, parseLastSession, parseRecentNotes, rememberRecentNote, viewTitleForFilter } from "./ui/navigation";
+import { LOCKED_NOTES_KEY, NOTE_COLORS, NOTE_COLORS_KEY, checklistProgressLabel, countCharacters, countWords, htmlToMarkdown, htmlToPlainText, parseIdList, parseNoteColorMap, readingTimeLabel, resolveThumbnailUrl, setNoteColor as applyNoteColor } from "./ui/noteContent";
+import { NOTE_DRAG_TYPE, adjacentNoteId, attachmentCountLabel, decodeNoteDrag, displayedListCount, encodeNoteDrag, formatRelativeTime, groupNotesByNotebook, groupNotesForList, hasActiveListFilters, knownViewNoteCount, navCountLabel, resolveListView, stickyNavCount, trashToastCopy, type ListView } from "./ui/noteList";
+import { LIST_MAX, LIST_MIN, PANE_LAYOUT_KEY, SIDEBAR_RAIL_WIDTH, clampPaneWidth, isNoteExpanded, parsePaneLayout, revealNoteBrowser, toggleNoteExpanded, toggleNoteListHidden } from "./ui/panes";
+import { COMPLETED_REMINDERS_KEY, formatReminderLabel, fromDatetimeLocalValue, groupRemindersForList, isReminderDone, isReminderOverdue, isoDayKey, parseCompletedReminders, reminderFallsOnDay, reminderFromPreset, reminderFromSnooze, toDatetimeLocalValue, toggleCompletedReminder, type ReminderPreset, type SnoozePreset } from "./ui/reminders";
+import { RECENT_SEARCHES_KEY, SAVED_SEARCHES_KEY, deleteSavedSearch, noteMatchesDateRange, noteMatchesFacets, parseRecentSearches, parseSavedSearches, rememberSearch, renameSavedSearch, snippetParts, toggleListFacet, type DateRangeFacet, type NoteListFacet, upsertSavedSearch } from "./ui/search";
+import { copyTextToClipboard, downloadTextFile, noteAppLink, noteMailtoHref, notesToEnex, safeFilename } from "./ui/share";
+import { COLLAPSED_STACKS_KEY, SIDEBAR_NAV_ICON_SIZE, SIDEBAR_SECTIONS_KEY, SidebarSectionId, avatarColor, collapseAllIds, hasVisibleSidebarNotebooks, matchesSidebarFilter, navIconTitle, notebooksMatchingFilter, parseCollapsedStacks, parseSidebarSections, sidebarFilterLabel, sidebarFlyoutTitle, toggleCollapsedId, type SidebarFlyoutKind } from "./ui/sidebar";
+import { closeAllUnpinnedTabIds, closeOtherTabIds, closeTabsToTheRight, noteTabLabel, pinTabById, popClosedTab, rememberClosedTab } from "./ui/tabs";
+
+
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -171,6 +107,40 @@ export default function App() {
       typeof localStorage === "undefined" ? null : localStorage.getItem(SAVED_SEARCHES_KEY)
     )
   );
+  const [closedTabs, setClosedTabs] = useState<NoteTab[]>([]);
+  const [jumpMode, setJumpMode] = useState<"all" | "notebook" | "tag">("all");
+  const [trashToast, setTrashToast] = useState<{ ids: string[]; message: string } | null>(null);
+  const [collapsedListGroups, setCollapsedListGroups] = useState(() =>
+    parseCollapsedStacks(
+      typeof localStorage === "undefined" ? null : localStorage.getItem("notebook.collapsedListGroups")
+    )
+  );
+  const [recentNotes, setRecentNotes] = useState(() =>
+    parseRecentNotes(
+      typeof localStorage === "undefined" ? null : localStorage.getItem(RECENT_NOTES_KEY)
+    )
+  );
+  const [accountMenu, setAccountMenu] = useState(false);
+  const [sidebarSections, setSidebarSections] = useState<SidebarSectionId[]>(() =>
+    parseSidebarSections(
+      typeof localStorage === "undefined" ? null : localStorage.getItem(SIDEBAR_SECTIONS_KEY)
+    )
+  );
+  const [lockedNoteIds, setLockedNoteIds] = useState(() =>
+    parseIdList(typeof localStorage === "undefined" ? null : localStorage.getItem(LOCKED_NOTES_KEY))
+  );
+  const [noteColors, setNoteColors] = useState(() =>
+    parseNoteColorMap(
+      typeof localStorage === "undefined" ? null : localStorage.getItem(NOTE_COLORS_KEY)
+    )
+  );
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() };
+  });
+  const [calendarDay, setCalendarDay] = useState<string | null>(null);
+  const [selectionWords, setSelectionWords] = useState(0);
   const [completedReminders, setCompletedReminders] = useState(() =>
     parseCompletedReminders(
       typeof localStorage === "undefined" ? null : localStorage.getItem(COMPLETED_REMINDERS_KEY)
@@ -263,6 +233,10 @@ export default function App() {
   const skipNoteClickRef = useRef(false);
   const sessionReadyRef = useRef(false);
   const hoverTimerRef = useRef<number | null>(null);
+  const lastListCountRef = useRef("");
+  const lastNotebooksCountRef = useRef<number | null>(null);
+  const lastTagsCountRef = useRef<number | null>(null);
+  const lastShortcutsCountRef = useRef<number | null>(null);
 
   const openSettings = (section: SettingsSection = "application") => {
     setSettingsSection(section);
@@ -335,12 +309,16 @@ export default function App() {
     setSearchOpen(false);
   };
 
-  const searchInNotebook = (notebook: { id: string; name: string }) => {
-    setSearchScope(notebook);
-    setSearchOpen(true);
+  const revealNoteList = () => {
     if (paneLayout.listCollapsed) {
       persistPaneLayout({ ...paneLayout, listCollapsed: false });
     }
+  };
+
+  const searchInNotebook = (notebook: { id: string; name: string }) => {
+    setSearchScope(notebook);
+    setSearchOpen(true);
+    revealNoteList();
   };
 
   const openGlobalSearch = () => {
@@ -353,9 +331,20 @@ export default function App() {
     if (filter.type === "search") {
       setSearchInput(filter.query);
     }
-    if (paneLayout.listCollapsed) {
-      persistPaneLayout({ ...paneLayout, listCollapsed: false });
-    }
+    revealNoteList();
+  };
+
+  const showAllNotes = () => {
+    closeSidebarFlyout();
+    setSearchScope(null);
+    noteSession.setFilter({ type: "all" });
+    revealNoteList();
+  };
+
+  const showListFilter = (next: ViewFilter) => {
+    closeSidebarFlyout();
+    noteSession.setFilter(next);
+    revealNoteList();
   };
 
   /* The flyout state machine itself lives in `sidebarFlyout.ts`, where it is
@@ -397,10 +386,16 @@ export default function App() {
 
   useEffect(() => () => sidebarFlyoutStore.dispose(), []);
 
-  const loadNote = useCallback(
-    (id: string, tabId?: string) => noteSession.loadNoteInto(id, tabId),
-    []
-  );
+  const loadNote = useCallback(async (id: string, tabId?: string) => {
+    await noteSession.loadNoteInto(id, tabId);
+    const note = noteSession.get().activeNote;
+    if (!note) return;
+    setRecentNotes((current) => {
+      const next = rememberRecentNote(current, { id: note.id, title: note.title || "Untitled" });
+      localStorage.setItem(RECENT_NOTES_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
 
   const goBack = () => {
     const location = noteSession.goBack();
@@ -412,6 +407,14 @@ export default function App() {
     if (location?.filter.type === "search") setSearchInput(location.filter.query ?? "");
   };
 
+
+  // noteSession owns the tab verbs (candidate 1). main added a closed-tab
+  // stack on top, so closeTab is wrapped rather than reimplemented.
+  const closeTab = useCallback((tabId: string) => {
+    const closing = noteSession.get().tabs.find((tab) => tab.id === tabId);
+    if (closing?.noteId) setClosedTabs((stack) => rememberClosedTab(stack, closing));
+    noteSession.closeTab(tabId);
+  }, []);
   const openInNewTab = useCallback(
     async (noteId: string) => {
       const summary = notes.find((note) => note.id === noteId);
@@ -508,13 +511,12 @@ export default function App() {
             api.storageInfo(),
             api.templateCatalog(),
           ]);
-          setPrefs({ ...defaultPreferences, ...loadedPrefs });
+          const mergedPrefs = { ...defaultPreferences, ...loadedPrefs };
+          setPrefs(mergedPrefs);
           applyTheme(loadedPrefs.theme);
           setAccount(loadedAccount);
           setStorage(loadedStorage);
           setCatalog(loadedCatalog);
-          setReady(true);
-          await refreshMeta();
           if (loadedPrefs.startup_view === "shortcuts") {
             noteSession.setFilter({ type: "shortcuts" });
           } else {
@@ -526,7 +528,9 @@ export default function App() {
               if (location.filter.type === "search") setSearchInput(location.filter.query ?? "");
             }
           }
+          await refreshMeta();
           sessionReadyRef.current = true;
+          setReady(true);
           return;
         } catch {
           await new Promise((r) => setTimeout(r, 200));
@@ -695,6 +699,16 @@ export default function App() {
     },
   });
 
+  const deleteSelectedNotesWithUndo = async () => {
+    const ids = await deleteSelectedNotes();
+    if (!ids?.length) return;
+    const first = notes.find((note) => note.id === ids[0]);
+    setTrashToast({ ids, message: trashToastCopy(ids.length, first?.title || "Untitled") });
+    window.setTimeout(() => {
+      setTrashToast((current) => (current && current.ids[0] === ids[0] ? null : current));
+    }, 6000);
+  };
+
   const setReminderPreset = async (kind: ReminderPreset | "clear") => {
     if (!activeNote) return;
     setShowReminderMenu(false);
@@ -806,6 +820,75 @@ export default function App() {
     await navigator.clipboard.writeText(noteAppLink(activeNote.id));
   };
 
+  const openAppUrl = async (url: string): Promise<boolean> => {
+    try {
+      if (window.notebookDesktop?.openExternal) {
+        await window.notebookDesktop.openExternal(url);
+        return true;
+      }
+    } catch {
+      /* fall through to clipboard */
+    }
+    await copyTextToClipboard(url);
+    return false;
+  };
+
+  const sendToOmniClone = async (mode: "note" | "checklists" = "note") => {
+    if (prefs.omniclone_enabled === false) {
+      openSettings("integrations");
+      return;
+    }
+    const ids = targetNoteIds();
+    if (!ids.length) return;
+    const urls: string[] = [];
+    for (const id of ids) {
+      const note =
+        activeNote?.id === id
+          ? activeNote
+          : await api.getNote(id).catch(() => null);
+      if (!note) continue;
+      const schemePref = (prefs.omniclone_scheme || "omniclone") as OmniCloneSchemePref;
+      if (mode === "checklists") {
+        urls.push(
+          ...sendUrlsForChecklists({
+            title: note.title,
+            noteId: note.id,
+            html: note.content,
+            schemePref,
+          })
+        );
+      } else {
+        urls.push(
+          ...sendUrlsForNote({
+            title: note.title,
+            noteId: note.id,
+            snippet: note.content_plain || htmlToPlainText(note.content),
+            reminderAt: note.reminder_at,
+            schemePref,
+            sendDue: prefs.omniclone_send_due !== false,
+          })
+        );
+      }
+    }
+    if (!urls.length) return;
+    let opened = 0;
+    for (const url of urls) {
+      const ok = await openAppUrl(url);
+      if (ok) opened += 1;
+      else break;
+    }
+    setImportStatus(
+      opened === 0
+        ? "Copied OmniClone add link. Open OmniClone, or paste it into OmniFocus."
+        : mode === "checklists"
+          ? "Sent checkboxes to OmniClone."
+          : ids.length > 1
+            ? `Sent ${ids.length} notes to OmniClone.`
+            : "Sent note to OmniClone."
+    );
+    window.setTimeout(() => setImportStatus(null), 4500);
+  };
+
   const dropNoteIds = (event: DragEvent) => {
     event.preventDefault();
     setDropTarget(null);
@@ -855,12 +938,30 @@ export default function App() {
 
   const visibleNotes = useMemo(
     () =>
-      notes.filter(
-        (note) =>
-          noteMatchesFacets(note, listFacets) &&
-          noteMatchesDateRange(note.updated_at, listDateRange)
-      ),
-    [notes, listFacets, listDateRange]
+      notes.filter((note) => {
+        if (!noteMatchesFacets(note, listFacets)) return false;
+        if (!noteMatchesDateRange(note.updated_at, listDateRange)) return false;
+        if (
+          filter.type === "reminders" &&
+          prefs.show_completed_reminders === false &&
+          isReminderDone(completedReminders, note.id)
+        ) {
+          return false;
+        }
+        if (filter.type === "reminders" && calendarDay && !reminderFallsOnDay(note.reminder_at, calendarDay)) {
+          return false;
+        }
+        return true;
+      }),
+    [
+      notes,
+      listFacets,
+      listDateRange,
+      filter.type,
+      prefs.show_completed_reminders,
+      completedReminders,
+      calendarDay,
+    ]
   );
 
   const groupedNotes = useMemo(() => {
@@ -872,11 +973,9 @@ export default function App() {
     }
     return groupNotesForList(
       visibleNotes,
-      prefs.sort_by === "title"
-        ? "title"
-        : prefs.sort_by === "created"
-          ? "created"
-          : "updated"
+      prefs.sort_by === "title" || prefs.sort_by === "created" || prefs.sort_by === "reminder"
+        ? prefs.sort_by
+        : "updated"
     );
   }, [visibleNotes, prefs.sort_by, filter.type, completedReminders]);
 
@@ -918,6 +1017,18 @@ export default function App() {
     noteSession.recordLocation();
   }, [ready, filter, activeNote?.id]);
 
+  useEffect(() => {
+    if (!ready) return;
+    const openLinkedNote = (raw: string) => {
+      const parsed = parseNotebookUrl(raw);
+      if (parsed?.kind === "note") void loadNote(parsed.id);
+    };
+    openLinkedNote(window.location.href);
+    openLinkedNote(window.location.hash);
+    const unsub = window.notebookDesktop?.onOpenUrl?.(openLinkedNote);
+    return () => unsub?.();
+  }, [ready, loadNote]);
+
   if (error) {
     return (
       <div className="boot-screen">
@@ -941,24 +1052,28 @@ export default function App() {
     );
   }
 
-  const viewTitle =
-    filter.type === "all"
-      ? "Notes"
-      : filter.type === "notebook"
-        ? filter.name
-        : filter.type === "tag"
-          ? `#${filter.name}`
-          : filter.type === "shortcuts"
-            ? "Shortcuts"
-            : filter.type === "reminders"
-              ? "Reminders"
-              : filter.type === "templates"
-              ? "Templates"
-              : filter.type === "files"
-                ? "Files"
-                : filter.type === "trash"
-                ? "Trash"
-                : `Search: ${filter.query}`;
+  const viewTitle = viewTitleForFilter(filter);
+  const listLoaded = notesLoaded;
+  const knownCount = knownViewNoteCount(
+    filter,
+    notebooks,
+    tags,
+    counts,
+    shortcutNotes.length
+  );
+  const listCount = displayedListCount({
+    loaded: listLoaded,
+    visible: visibleNotes.length,
+    total: notes.length,
+    known: knownCount,
+    lastLabel: lastListCountRef.current,
+  });
+  if (listLoaded && !(notes.length === 0 && (knownCount ?? 0) > 0)) {
+    lastListCountRef.current = listCount;
+  }
+  if (notebooks.length > 0) lastNotebooksCountRef.current = notebooks.length;
+  if (tags.length > 0) lastTagsCountRef.current = tags.length;
+  if (shortcutNotes.length > 0) lastShortcutsCountRef.current = shortcutNotes.length;
 
   const isShortcut = activeNote ? shortcutIds.has(activeNote.id) : false;
   const allSelectedPinned =
@@ -985,6 +1100,45 @@ export default function App() {
     const theme = prefs.theme === "dark" ? "light" : "dark";
     setPrefs((current) => ({ ...current, theme }));
     void api.updateSettings({ theme });
+  };
+
+
+  // Ported from main. runPaletteAction stayed behind: commands.ts owns
+  // dispatch, so these are the handlers its context calls.
+  const copyNoteTitle = (title?: string) => {
+    void copyTextToClipboard((title || "").trim() || "Untitled");
+  };
+
+  const addTagToSelected = async (tagId: string) => {
+    for (const id of targetNoteIds()) {
+      const note = notes.find((item) => item.id === id);
+      const current = note?.tag_ids || (activeNote?.id === id ? activeNote.tag_ids : []);
+      if (current.includes(tagId)) continue;
+      await api.updateNote(id, { tag_ids: [...current, tagId] });
+    }
+    await refreshNotes();
+    if (activeNote) await loadNote(activeNote.id);
+  };
+
+  const reopenClosedTab = () => {
+    const popped = popClosedTab(closedTabs);
+    if (!popped) return;
+    setClosedTabs(popped.remaining);
+    const tab = { ...popped.item, id: popped.item.id || makeNoteTab().id };
+    noteSession.setTabs((current) => [...current, tab]);
+    noteSession.setActiveTabId(tab.id);
+    noteSession.setFilter(tab.filter);
+    if (tab.noteId) {
+      void loadNote(tab.noteId, tab.id);
+      return;
+    }
+    noteSession.markSkipNextSave();
+    noteSession.setActiveNote(null);
+  };
+
+  const persistCollapsedListGroups = (ids: string[]) => {
+    setCollapsedListGroups(ids);
+    localStorage.setItem("notebook.collapsedListGroups", JSON.stringify(ids));
   };
 
   const menuCtx: AppMenuContext = {
@@ -1036,8 +1190,9 @@ export default function App() {
     persistEditorChrome,
     revealSidebarFlyout,
     closeSidebarFlyout,
+    revealNoteList,
     restoreSelectedNotes,
-    deleteSelectedNotes,
+    deleteSelectedNotes: () => void deleteSelectedNotesWithUndo(),
     shortcutSelectedNotes,
     pinSelectedNotes,
     duplicateSelectedNotes,
@@ -1050,7 +1205,9 @@ export default function App() {
     confirm,
     printActiveNote,
     copyActiveNoteLink,
+    sendToOmniClone,
     copyActiveNoteAs,
+    copyNoteTitle,
     exportNotebook,
     snoozeReminder,
     searchInNotebook,
@@ -1129,6 +1286,49 @@ export default function App() {
     openCommandPalette: () => setShowPalette(true),
     isReminderCompleted: (id) => isReminderDone(completedReminders, id),
     openGlobalSearch,
+    tags,
+    addTagToSelected: (tagId) => void addTagToSelected(tagId),
+    openJump: (mode = "all") => {
+      setJumpMode(mode);
+      setShowJump(true);
+    },
+    reopenClosedTab,
+    canReopenClosedTab: closedTabs.length > 0,
+    recentNotes,
+    closeAllTabs: () => {
+      const ids = closeAllUnpinnedTabIds(noteSession.get().tabs);
+      if (!ids.length) return;
+      ids.forEach((id) => closeTab(id));
+    },
+    pinActiveTab: () => {
+      noteSession.setTabs((current) => {
+        const next = pinTabById(current, noteSession.get().activeTabId);
+                return next;
+      });
+    },
+    isActiveTabPinned: Boolean(tabs.find((tab) => tab.id === activeTabId)?.pinned),
+    openSelectedInTabs: () => {
+      targetNoteIds().forEach((id) => void openInNewTab(id));
+    },
+    toggleNoteLocked: () => {
+      if (!activeNote) return;
+      const next = toggleCollapsedId(lockedNoteIds, activeNote.id);
+      setLockedNoteIds(next);
+      localStorage.setItem(LOCKED_NOTES_KEY, JSON.stringify(next));
+    },
+    isNoteLocked: Boolean(activeNote && lockedNoteIds.includes(activeNote.id)),
+    setNoteColor: (color: string) => {
+      if (!activeNote) return;
+      const next = applyNoteColor(noteColors, activeNote.id, color);
+      setNoteColors(next);
+      localStorage.setItem(NOTE_COLORS_KEY, JSON.stringify(next));
+    },
+    noteColor: activeNote ? noteColors[activeNote.id] || "" : "",
+    openShortcutsOverlay: () => setShowShortcuts(true),
+    collapseAllListGroups: () =>
+      persistCollapsedListGroups(collapseAllIds(groupedNotes.map((group) => group.key))),
+    expandAllListGroups: () => persistCollapsedListGroups([]),
+    canCollapseListGroups: groupedNotes.some((group) => group.label),
   };
 
   onKeyRef.current = (e: KeyboardEvent) => {
@@ -1220,14 +1420,11 @@ export default function App() {
   const contextMenuItems = (target: ContextTarget) => buildContextMenu(target, menuCtx);
   const menuGroups = buildMenuBar(menuCtx);
 
-  const sidebarRail = isSidebarRail(paneLayout);
-
   return (
     <div
       className={
-        "app-shell" +
+        "app-shell sidebar-rail" +
         (paneLayout.sidebarCollapsed ? " sidebar-collapsed" : "") +
-        (sidebarRail ? " sidebar-rail" : "") +
         (paneLayout.listCollapsed ? " list-collapsed" : "") +
         (filter.type === "files" ? " files-mode" : "") +
         (focusMode ? " focus-mode" : "") +
@@ -1237,7 +1434,7 @@ export default function App() {
         {
           "--sidebar-width": paneLayout.sidebarCollapsed
             ? "0px"
-            : `${paneLayout.sidebarWidth}px`,
+            : `${SIDEBAR_RAIL_WIDTH}px`,
           "--sidebar-rail-width": `${SIDEBAR_RAIL_WIDTH}px`,
           "--list-width": `${paneLayout.listWidth}px`,
         } as CSSProperties
@@ -1255,14 +1452,29 @@ export default function App() {
     >
       <MenuBar groups={menuGroups} />
       <NoteTabBar
-        tabs={tabs}
+        tabs={tabs.map((tab) => ({
+          id: tab.id,
+          title: tab.title,
+          pinned: tab.pinned,
+          dirty: tab.id === activeTabId && saveState !== "saved",
+        }))}
         activeTabId={activeTabId}
         canGoBack={navPast.length > 0}
         canGoForward={navFuture.length > 0}
+        canReopenClosedTab={closedTabs.length > 0}
         onBack={goBack}
         onForward={goForward}
         onSelect={(id) => void noteSession.switchToTab(id)}
-        onClose={noteSession.closeTab}
+        onClose={closeTab}
+        onCloseOthers={(id) => {
+          closeOtherTabIds(noteSession.get().tabs.map((tab) => tab.id), id).forEach(closeTab);
+        }}
+        onCloseToTheRight={(id) => {
+          closeTabsToTheRight(noteSession.get().tabs.map((tab) => tab.id), id).forEach(closeTab);
+        }}
+        onCloseAll={() => closeAllUnpinnedTabIds(noteSession.get().tabs).forEach(closeTab)}
+        onPin={(id) => noteSession.setTabs((current) => pinTabById(current, id))}
+        onReopenClosed={reopenClosedTab}
         onNewTab={noteSession.openNewTab}
         onReorder={(fromId, toId) => noteSession.reorderTabs(fromId, toId)}
       />
@@ -1284,7 +1496,7 @@ export default function App() {
             title="Search"
             onClick={() => openGlobalSearch()}
           >
-            <Icon.Search size={18} />
+            <Icon.Search size={SIDEBAR_NAV_ICON_SIZE} />
           </button>
           <button
             type="button"
@@ -1292,7 +1504,7 @@ export default function App() {
             title="New note"
             onClick={() => void createNote()}
           >
-            <Icon.Plus size={18} />
+            <Icon.Plus size={SIDEBAR_NAV_ICON_SIZE} />
           </button>
           <div className="menu-anchor">
             <button
@@ -1301,7 +1513,7 @@ export default function App() {
               title="More actions"
               onClick={() => setShowNewMenu((v) => !v)}
             >
-              <Icon.More size={18} />
+              <Icon.More size={SIDEBAR_NAV_ICON_SIZE} />
             </button>
             {showNewMenu && (
               <div className="menu-popover sidebar-more-menu" role="menu">
@@ -1372,142 +1584,187 @@ export default function App() {
         </div>
 
         <nav className="sidebar-nav scroll-pane">
-          <button
-            className={filter.type === "all" ? "nav-item active" : "nav-item"}
-            title="Notes"
-            onClick={() => {
-              closeSidebarFlyout();
-              noteSession.setFilter({ type: "all" });
-            }}
-          >
-            <Icon.Notes size={16} />
-            <span className="nav-label">Notes</span>
-            <span className="nav-count">{counts.notes}</span>
-          </button>
-          {prefs.show_shortcuts && (
-            <button
-              className={
-                (filter.type === "shortcuts" || sidebarFlyout === "shortcuts"
-                  ? "nav-item active"
-                  : "nav-item")
-              }
-              title="Shortcuts"
-              aria-haspopup="dialog"
-              aria-expanded={sidebarFlyout === "shortcuts"}
-              onMouseEnter={() => previewSidebarFlyout("shortcuts")}
-              onMouseLeave={scheduleSidebarFlyoutClose}
-              onFocus={() => previewSidebarFlyout("shortcuts")}
-              onBlur={scheduleSidebarFlyoutClose}
-              onClick={() => openSidebarFlyout("shortcuts")}
-            >
-              <Icon.Shortcuts size={16} />
-              <span className="nav-label">Shortcuts</span>
-              <span className="nav-count">{shortcutNotes.length}</span>
-            </button>
-          )}
-          {prefs.show_reminders && (
-            <button
-              className={filter.type === "reminders" ? "nav-item active" : "nav-item"}
-              title="Reminders"
-              onClick={() => {
-                closeSidebarFlyout();
-                noteSession.setFilter({ type: "reminders" });
-              }}
-            >
-              <Icon.Reminder size={16} />
-              <span className="nav-label">Reminders</span>
-              <span className="nav-count">{counts.reminders}</span>
-            </button>
-          )}
-
-          {prefs.show_notebooks && (
-            <button
-              className={
-                (filter.type === "notebook" || sidebarFlyout === "notebooks"
-                  ? "nav-item active"
-                  : "nav-item")
-              }
-              title="Notebooks"
-              aria-haspopup="dialog"
-              aria-expanded={sidebarFlyout === "notebooks"}
-              onMouseEnter={() => previewSidebarFlyout("notebooks")}
-              onMouseLeave={scheduleSidebarFlyoutClose}
-              onBlur={scheduleSidebarFlyoutClose}
-              onFocus={() => previewSidebarFlyout("notebooks")}
-              onClick={() => openSidebarFlyout("notebooks")}
-            >
-              <Icon.Notebooks size={16} />
-              <span className="nav-label">Notebooks</span>
-              <span className="nav-count">{notebooks.length}</span>
-            </button>
-          )}
-
-          {prefs.show_tags && (
-            <button
-              className={
-                (filter.type === "tag" || sidebarFlyout === "tags"
-                  ? "nav-item active"
-                  : "nav-item")
-              }
-              title="Tags"
-              aria-haspopup="dialog"
-              aria-expanded={sidebarFlyout === "tags"}
-              onMouseEnter={() => previewSidebarFlyout("tags")}
-              onBlur={scheduleSidebarFlyoutClose}
-              onMouseLeave={scheduleSidebarFlyoutClose}
-              onFocus={() => previewSidebarFlyout("tags")}
-              onClick={() => openSidebarFlyout("tags")}
-            >
-              <Icon.Tags size={16} />
-              <span className="nav-label">Tags</span>
-              <span className="nav-count">{tags.length}</span>
-            </button>
-          )}
-
-          {prefs.show_templates && (
-            <button
-              className={filter.type === "templates" ? "nav-item active" : "nav-item"}
-              title="Templates"
-              onClick={() => {
-                closeSidebarFlyout();
-                noteSession.setFilter({ type: "templates" });
-              }}
-            >
-              <Icon.Templates size={16} />
-              <span className="nav-label">Templates</span>
-              <span className="nav-count">{counts.templates}</span>
-            </button>
-          )}
-
-          {prefs.show_files && (
-            <button
-              className={filter.type === "files" ? "nav-item active" : "nav-item"}
-              title="Files"
-              onClick={() => {
-                closeSidebarFlyout();
-                noteSession.setFilter({ type: "files" });
-              }}
-            >
-              <Icon.Files size={16} />
-              <span className="nav-label">Files</span>
-              <span className="nav-count">{counts.files}</span>
-            </button>
-          )}
-
-          {prefs.show_trash && (
-            <button
-              className={filter.type === "trash" ? "nav-item active" : "nav-item"}
-              title="Trash"
-              onClick={() => {
-                closeSidebarFlyout();
-                noteSession.setFilter({ type: "trash" });
-              }}
-            >
-              <Icon.Trash size={16} />
-              <span className="nav-label">Trash</span>
-              <span className="nav-count">{counts.trash}</span>
-            </button>
-          )}
+          {sidebarSections.map((section) => {
+            if (section === "notes") {
+              return (
+                <button
+                  key="notes"
+                  className={filter.type === "all" ? "nav-item active" : "nav-item"}
+                  title={navIconTitle("Notes", counts?.notes)}
+                  onClick={() => showAllNotes()}
+                >
+                  <Icon.Notes size={SIDEBAR_NAV_ICON_SIZE} />
+                  <span className="nav-label">Notes</span>
+                  <span className="nav-count">{navCountLabel(counts?.notes)}</span>
+                </button>
+              );
+            }
+            if (section === "shortcuts") {
+              return prefs.show_shortcuts ? (
+                <button
+                  key="shortcuts"
+                  className={
+                    filter.type === "shortcuts" || sidebarFlyout === "shortcuts"
+                      ? "nav-item active"
+                      : "nav-item"
+                  }
+                  title={navIconTitle("Shortcuts", shortcutNotes.length)}
+                  aria-haspopup="dialog"
+                  aria-expanded={sidebarFlyout === "shortcuts"}
+                  onMouseEnter={() => previewSidebarFlyout("shortcuts")}
+                  onMouseLeave={scheduleSidebarFlyoutClose}
+                  onFocus={() => previewSidebarFlyout("shortcuts")}
+                  onBlur={scheduleSidebarFlyoutClose}
+                  onClick={() => {
+                    openSidebarFlyout("shortcuts");
+                    noteSession.setFilter({ type: "shortcuts" });
+                    revealNoteList();
+                  }}
+                >
+                  <Icon.Shortcuts size={SIDEBAR_NAV_ICON_SIZE} />
+                  <span className="nav-label">Shortcuts</span>
+                  <span className="nav-count">
+                    {navCountLabel(stickyNavCount(shortcutNotes.length, lastShortcutsCountRef.current))}
+                  </span>
+                </button>
+              ) : null;
+            }
+            if (section === "reminders") {
+              return prefs.show_reminders ? (
+                <button
+                  key="reminders"
+                  className={filter.type === "reminders" ? "nav-item active" : "nav-item"}
+                  title={navIconTitle("Reminders", counts?.reminders)}
+                  onClick={() => showListFilter({ type: "reminders" })}
+                >
+                  <Icon.Reminder size={SIDEBAR_NAV_ICON_SIZE} />
+                  <span className="nav-label">Reminders</span>
+                  <span className="nav-count">{navCountLabel(counts?.reminders)}</span>
+                </button>
+              ) : null;
+            }
+            if (section === "notebooks") {
+              return prefs.show_notebooks ? (
+                <button
+                  key="notebooks"
+                  className={
+                    filter.type === "notebook" || sidebarFlyout === "notebooks"
+                      ? "nav-item active"
+                      : "nav-item"
+                  }
+                  title={navIconTitle("Notebooks", notebooks.length)}
+                  aria-haspopup="dialog"
+                  aria-expanded={sidebarFlyout === "notebooks"}
+                  onMouseEnter={() => previewSidebarFlyout("notebooks")}
+                  onMouseLeave={scheduleSidebarFlyoutClose}
+                  onFocus={() => previewSidebarFlyout("notebooks")}
+                  onBlur={scheduleSidebarFlyoutClose}
+                  onClick={() => openSidebarFlyout("notebooks")}
+                >
+                  <Icon.Notebooks size={SIDEBAR_NAV_ICON_SIZE} />
+                  <span className="nav-label">Notebooks</span>
+                  <span className="nav-count">
+                    {navCountLabel(stickyNavCount(notebooks.length, lastNotebooksCountRef.current))}
+                  </span>
+                </button>
+              ) : null;
+            }
+            if (section === "tags") {
+              return prefs.show_tags ? (
+                <button
+                  key="tags"
+                  className={
+                    filter.type === "tag" || sidebarFlyout === "tags"
+                      ? "nav-item active"
+                      : "nav-item"
+                  }
+                  title={navIconTitle("Tags", tags.length)}
+                  aria-haspopup="dialog"
+                  aria-expanded={sidebarFlyout === "tags"}
+                  onMouseEnter={() => previewSidebarFlyout("tags")}
+                  onMouseLeave={scheduleSidebarFlyoutClose}
+                  onFocus={() => previewSidebarFlyout("tags")}
+                  onBlur={scheduleSidebarFlyoutClose}
+                  onClick={() => openSidebarFlyout("tags")}
+                >
+                  <Icon.Tags size={SIDEBAR_NAV_ICON_SIZE} />
+                  <span className="nav-label">Tags</span>
+                  <span className="nav-count">
+                    {navCountLabel(stickyNavCount(tags.length, lastTagsCountRef.current))}
+                  </span>
+                </button>
+              ) : null;
+            }
+            if (section === "templates") {
+              return prefs.show_templates ? (
+                <button
+                  key="templates"
+                  className={filter.type === "templates" ? "nav-item active" : "nav-item"}
+                  title={navIconTitle("Templates", counts?.templates)}
+                  onClick={() => showListFilter({ type: "templates" })}
+                >
+                  <Icon.Templates size={SIDEBAR_NAV_ICON_SIZE} />
+                  <span className="nav-label">Templates</span>
+                  <span className="nav-count">{navCountLabel(counts?.templates)}</span>
+                </button>
+              ) : null;
+            }
+            if (section === "archived") {
+              return (
+                <button
+                  key="archived"
+                  className={filter.type === "archived" ? "nav-item active" : "nav-item"}
+                  title="Archived"
+                  onClick={() => showListFilter({ type: "archived" })}
+                >
+                  <Icon.Archive size={SIDEBAR_NAV_ICON_SIZE} />
+                  <span className="nav-label">Archived</span>
+                </button>
+              );
+            }
+            if (section === "saved") {
+              return savedSearches.length > 0 ? (
+                <div key="saved" className="saved-search-nav" aria-label="Saved searches">
+                  {savedSearches.slice(0, 8).map((search) => (
+                    <button
+                      key={search.id}
+                      className={
+                        filter.type === "search" && filter.query === search.query
+                          ? "nav-item active"
+                          : "nav-item"
+                      }
+                      title={search.name}
+                      onClick={() => {
+                        closeSidebarFlyout();
+                        setSearchInput(search.query);
+                        noteSession.setFilter({ type: "search", query: search.query });
+                        setSearchOpen(true);
+                        revealNoteList();
+                      }}
+                    >
+                      <Icon.Search size={SIDEBAR_NAV_ICON_SIZE} />
+                      <span className="nav-label">{search.name}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null;
+            }
+            if (section === "trash") {
+              return prefs.show_trash ? (
+                <button
+                  key="trash"
+                  className={filter.type === "trash" ? "nav-item active" : "nav-item"}
+                  title={navIconTitle("Trash", counts?.trash)}
+                  onClick={() => showListFilter({ type: "trash" })}
+                >
+                  <Icon.Trash size={SIDEBAR_NAV_ICON_SIZE} />
+                  <span className="nav-label">Trash</span>
+                  <span className="nav-count">{navCountLabel(counts?.trash)}</span>
+                </button>
+              ) : null;
+            }
+            return null;
+          })}
         </nav>
         {sidebarFlyout && (
           <div
@@ -1661,6 +1918,7 @@ export default function App() {
                                 id: nb.id,
                                 name: nb.name,
                               });
+                              revealNoteList();
                             }}
                             onDragOver={(event) =>
                               allowNoteDrop(event, `notebook:${nb.id}`)
@@ -1695,6 +1953,8 @@ export default function App() {
                       onSelect={() => {
                         closeSidebarFlyout();
                         noteSession.setFilter({ type: "notebook", id: nb.id, name: nb.name });
+                        noteSession.setFilter({ type: "notebook", id: nb.id, name: nb.name });
+                        revealNoteList();
                       }}
                       onDragOver={(event) =>
                         allowNoteDrop(event, `notebook:${nb.id}`)
@@ -1740,6 +2000,8 @@ export default function App() {
                       onClick={() => {
                         closeSidebarFlyout();
                         noteSession.setFilter({ type: "tag", id: tag.id, name: tag.name });
+                        noteSession.setFilter({ type: "tag", id: tag.id, name: tag.name });
+                        revealNoteList();
                       }}
                       onDragOver={(event) => allowNoteDrop(event, `tag:${tag.id}`)}
                       onDragLeave={() => setDropTarget(null)}
@@ -1756,22 +2018,81 @@ export default function App() {
                       }}
                     >
                       <span className="nav-label">#{tag.name}</span>
-                      <span className="nav-count">{tag.note_count ?? 0}</span>
+                      <span className="nav-count">{navCountLabel(tag.note_count)}</span>
                     </button>
                   ))
                 ))}
             </div>
           </div>
         )}
-        <div className="sidebar-footer">
-          <button
-            type="button"
-            className="icon-btn"
-            title="Settings"
-            onClick={() => openSettings()}
-          >
-            <Icon.Gear size={16} />
-          </button>
+        <div className="sidebar-account">
+          <div className="account-menu-wrap" onMouseDown={(event) => event.stopPropagation()}>
+            <button
+              type="button"
+              className={accountMenu ? "account-chip active" : "account-chip"}
+              onClick={() => setAccountMenu((open) => !open)}
+              title={account.display_name}
+            >
+              <span
+                className="avatar"
+                style={{ background: avatarColor(account.display_name) }}
+              >
+                {account.display_name.slice(0, 1).toUpperCase()}
+              </span>
+              <span className="account-copy">
+                <span className="account-name">{account.display_name}</span>
+                <span className="account-email">{account.email || "Local account"}</span>
+              </span>
+            </button>
+            {accountMenu && (
+              <div className="account-popover" role="menu">
+                <div className="account-popover-head">
+                  <span
+                    className="avatar"
+                    style={{ background: avatarColor(account.display_name) }}
+                  >
+                    {account.display_name.slice(0, 1).toUpperCase()}
+                  </span>
+                  <span className="account-copy">
+                    <span className="account-name">{account.display_name}</span>
+                    <span className="account-email">{account.email || "Local account"}</span>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setAccountMenu(false);
+                    openSettings("account");
+                  }}
+                >
+                  Account
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setAccountMenu(false);
+                    openSettings();
+                  }}
+                >
+                  Settings
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setAccountMenu(false);
+                    const theme = prefs.theme === "dark" ? "light" : "dark";
+                    setPrefs((current) => ({ ...current, theme }));
+                    void api.updateSettings({ theme });
+                  }}
+                >
+                  {prefs.theme === "dark" ? "Use light theme" : "Use dark theme"}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
         <input
           ref={importRef}
@@ -1840,14 +2161,7 @@ export default function App() {
           <div>
             <h2>{viewTitle}</h2>
             <span className="count" title="Notes in this view">
-              {notesLoaded ? (
-                <>
-                  {visibleNotes.length}
-                  {visibleNotes.length !== notes.length ? ` of ${notes.length}` : ""}
-                </>
-              ) : (
-                <>&nbsp;</>
-              )}
+              {listCount}
             </span>
           </div>
           <div className="panel-tools">
@@ -1889,7 +2203,32 @@ export default function App() {
               <option value="updated">Updated</option>
               <option value="created">Created</option>
               <option value="title">Title</option>
+              <option value="reminder">Reminder</option>
             </select>
+            <button
+              type="button"
+              className={prefs.sort_descending ? "icon-btn active" : "icon-btn"}
+              title={prefs.sort_descending ? "Newest first" : "Reverse sort"}
+              onClick={() => {
+                const sort_descending = !prefs.sort_descending;
+                setPrefs((p) => ({ ...p, sort_descending }));
+                api.updateSettings({ sort_descending }).catch(console.error);
+              }}
+            >
+              <Icon.Sort size={14} />
+            </button>
+            <button
+              type="button"
+              className={prefs.list_density === "compact" ? "icon-btn active" : "icon-btn"}
+              title={prefs.list_density === "compact" ? "Comfortable density" : "Compact density"}
+              onClick={() => {
+                const list_density = prefs.list_density === "compact" ? "comfortable" : "compact";
+                setPrefs((p) => ({ ...p, list_density }));
+                api.updateSettings({ list_density }).catch(console.error);
+              }}
+            >
+              <Icon.Compact size={14} />
+            </button>
             <div className="view-toggle" role="group" aria-label="Note list view">
               <button
                 type="button"
@@ -1936,6 +2275,34 @@ export default function App() {
             </button>
             <button
               type="button"
+              className={listFacets.includes("untagged") ? "active" : ""}
+              onClick={() => setListFacets(toggleListFacet(listFacets, "untagged"))}
+            >
+              Untagged
+            </button>
+            <button
+              type="button"
+              className={listFacets.includes("image") ? "active" : ""}
+              onClick={() => setListFacets(toggleListFacet(listFacets, "image"))}
+            >
+              Has image
+            </button>
+            <button
+              type="button"
+              className={listFacets.includes("url") ? "active" : ""}
+              onClick={() => setListFacets(toggleListFacet(listFacets, "url"))}
+            >
+              Has URL
+            </button>
+            <button
+              type="button"
+              className={listFacets.includes("checklist") ? "active" : ""}
+              onClick={() => setListFacets(toggleListFacet(listFacets, "checklist"))}
+            >
+              Has checklist
+            </button>
+            <button
+              type="button"
               className={listDateRange === "today" ? "active" : ""}
               onClick={() => setListDateRange(listDateRange === "today" ? "any" : "today")}
             >
@@ -1955,7 +2322,46 @@ export default function App() {
             >
               This month
             </button>
+            {hasActiveListFilters(listFacets, listDateRange) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setListFacets([]);
+                  setListDateRange("any");
+                }}
+              >
+                Clear filters
+              </button>
+            )}
           </div>
+        )}
+        {filter.type === "reminders" && (
+          <>
+            <ReminderCalendar
+              year={calendarMonth.year}
+              month={calendarMonth.month}
+              weekStartsOn={prefs.week_starts_on}
+              selectedDay={calendarDay}
+              markedDays={notes
+                .filter((note) => note.reminder_at)
+                .map((note) => isoDayKey(new Date(note.reminder_at as string)))}
+              onChangeMonth={(year, month) => setCalendarMonth({ year, month })}
+              onSelectDay={setCalendarDay}
+            />
+            <div className="list-facets" role="group" aria-label="Reminder options">
+              <button
+                type="button"
+                className={prefs.show_completed_reminders === false ? "active" : ""}
+                onClick={() => {
+                  const show_completed_reminders = prefs.show_completed_reminders === false;
+                  setPrefs((p) => ({ ...p, show_completed_reminders }));
+                  api.updateSettings({ show_completed_reminders }).catch(console.error);
+                }}
+              >
+                Hide completed
+              </button>
+            </div>
+          </>
         )}
         {importStatus && <div className="import-status">{importStatus}</div>}
         {selectedNoteIds.size > 1 && (
@@ -1969,7 +2375,7 @@ export default function App() {
                   </button>
                   <button
                     className="ghost-btn small danger-text"
-                    onClick={() => void deleteSelectedNotes()}
+                    onClick={() => void deleteSelectedNotesWithUndo()}
                   >
                     Delete forever
                   </button>
@@ -1996,7 +2402,7 @@ export default function App() {
                   </button>
                   <button
                     className="ghost-btn small danger-text"
-                    onClick={() => void deleteSelectedNotes()}
+                    onClick={() => void deleteSelectedNotesWithUndo()}
                   >
                     Move to Trash
                   </button>
@@ -2016,8 +2422,24 @@ export default function App() {
         >
           {groupedNotes.map((group) => (
             <div className="note-list-group" key={group.key}>
-              {group.label ? <div className="list-group-label">{group.label}</div> : null}
-              {group.notes.map((note) => (
+              {group.label ? (
+                <button
+                  type="button"
+                  className="list-group-label"
+                  onClick={() =>
+                    persistCollapsedListGroups(toggleCollapsedId(collapsedListGroups, group.key))
+                  }
+                >
+                  <span className={collapsedListGroups.includes(group.key) ? "group-chevron is-collapsed" : "group-chevron"}>
+                    ▾
+                  </span>
+                  {group.label}
+                  <span className="count">{group.notes.length}</span>
+                </button>
+              ) : null}
+              {collapsedListGroups.includes(group.key)
+                ? null
+                : group.notes.map((note) => (
             <button
               key={note.id}
               className={
@@ -2065,7 +2487,9 @@ export default function App() {
                 {note.title || "Untitled"}
               </div>
               <div className="note-card-meta">
-                {formatDate(note.updated_at, prefs.date_format)}
+                <span title={formatDate(note.updated_at, prefs.date_format)}>
+                  {formatRelativeTime(note.updated_at)}
+                </span>
                 {note.notebook_name ? ` · ${note.notebook_name}` : ""}
               </div>
               {(note.reminder_at ||
@@ -2136,14 +2560,14 @@ export default function App() {
               ))}
             </div>
           ))}
-          {notesLoaded && notes.length === 0 && (
+          {listLoaded && notes.length === 0 && !(knownCount && knownCount > 0) && (
             <EmptyListState
               filter={filter}
               onCreate={() => void createNote()}
               onBrowseTemplates={() => setShowGallery(true)}
             />
           )}
-          {notesLoaded && notes.length > 0 && visibleNotes.length === 0 && (
+          {listLoaded && notes.length > 0 && visibleNotes.length === 0 && (
             <div className="empty-state compact">No notes match these filters.</div>
           )}
         </div>
@@ -2197,7 +2621,12 @@ export default function App() {
           </button>
         </div>
         {activeNote ? (
-          <div className="editor-body">
+          <div
+            className={
+              "editor-body" +
+              (noteColors[activeNote.id] ? ` note-color-${noteColors[activeNote.id]}` : "")
+            }
+          >
           <div className="editor-main">
             {activeNote.is_template && (
               <div className="template-banner">
@@ -2236,6 +2665,38 @@ export default function App() {
                   >
                     <Icon.Pin size={16} />
                   </button>
+                  <button
+                    type="button"
+                    className={lockedNoteIds.includes(activeNote.id) ? "icon-btn active" : "icon-btn"}
+                    title={lockedNoteIds.includes(activeNote.id) ? "Unlock note" : "Lock note"}
+                    onClick={() => {
+                      const next = toggleCollapsedId(lockedNoteIds, activeNote.id);
+                      setLockedNoteIds(next);
+                      localStorage.setItem(LOCKED_NOTES_KEY, JSON.stringify(next));
+                    }}
+                  >
+                    <Icon.Lock size={16} />
+                  </button>
+                  <div className="note-color-swatches" role="group" aria-label="Note color">
+                    {NOTE_COLORS.map((color) => (
+                      <button
+                        key={color.id || "none"}
+                        type="button"
+                        className={
+                          (noteColors[activeNote.id] || "") === color.id
+                            ? "note-color-dot is-active"
+                            : "note-color-dot"
+                        }
+                        style={{ background: color.swatch }}
+                        title={color.label}
+                        onClick={() => {
+                          const next = applyNoteColor(noteColors, activeNote.id, color.id);
+                          setNoteColors(next);
+                          localStorage.setItem(NOTE_COLORS_KEY, JSON.stringify(next));
+                        }}
+                      />
+                    ))}
+                  </div>
                   <button
                     type="button"
                     className={isShortcut ? "icon-btn active" : "icon-btn"}
@@ -2332,6 +2793,30 @@ export default function App() {
                           }}
                         >
                           Email note…
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            void sendToOmniClone("note");
+                          }}
+                        >
+                          Send to OmniClone
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            void sendToOmniClone("checklists");
+                          }}
+                        >
+                          Send Checkboxes to OmniClone
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            void copyActiveNoteLink();
+                          }}
+                        >
+                          Copy note link
                         </button>
                         {!activeNote.is_template && (
                           <button
@@ -2494,7 +2979,19 @@ export default function App() {
               </div>
               <div className="editor-header-meta">
                 <label className="notebook-crumb">
-                  <Icon.Notebooks size={14} />
+                  <button
+                    type="button"
+                    className="notebook-crumb-open"
+                    title="Show notes in this notebook"
+                    onClick={() => {
+                      const notebook = notebooks.find((item) => item.id === activeNote.notebook_id);
+                      if (!notebook) return;
+                      closeSidebarFlyout();
+                      noteSession.setFilter({ type: "notebook", id: notebook.id, name: notebook.name });
+                    }}
+                  >
+                    <Icon.Notebooks size={14} />
+                  </button>
                   <select
                     value={activeNote.notebook_id}
                     aria-label="Notebook"
@@ -2541,9 +3038,12 @@ export default function App() {
               noteId={activeNote.id}
               content={activeNote.content}
               spellCheck={prefs.spell_check}
+              spellLanguage={prefs.spell_language || "en-US"}
               fontFamily={prefs.font_family}
               fontSize={prefs.font_size}
               noteWidth={prefs.note_width}
+              lineHeight={editorChrome.lineHeight}
+              readOnly={lockedNoteIds.includes(activeNote.id)}
               pdfView={prefs.pdf_view || "expanded"}
               editorRef={editorHandleRef}
               toolbarHidden={editorChrome.toolbarHidden}
@@ -2557,6 +3057,7 @@ export default function App() {
               zoom={editorChrome.zoom}
               outlineOpen={editorChrome.outlineOpen}
               onOpenNoteLink={(id) => void loadNote(id)}
+              onSelectionWords={setSelectionWords}
               onChange={(html) =>
                 noteSession.setActiveNote({ ...activeNote, content: html })
               }
@@ -2589,11 +3090,19 @@ export default function App() {
                 await saveNote({ tag_ids: [...activeNote.tag_ids, tag.id] });
               }}
             />
+            {!editorChrome.statusBarHidden && (
             <div className="editor-status">
               <span>
                 {countWords(activeNote.content_plain)} word
                 {countWords(activeNote.content_plain) === 1 ? "" : "s"}
               </span>
+              {selectionWords > 0 && (
+                <span>{selectionWords} selected</span>
+              )}
+              {readingTimeLabel(countWords(activeNote.content_plain)) && (
+                <span>{readingTimeLabel(countWords(activeNote.content_plain))}</span>
+              )}
+              <span>{countCharacters(activeNote.content_plain)} characters</span>
               <span>{editorChrome.zoom}%</span>
               {activeNote.reminder_at && (
                 <span
@@ -2611,6 +3120,7 @@ export default function App() {
               )}
               <span className="save-state">{saveState}</span>
             </div>
+            )}
           </div>
           {showInfo && (
             <NoteInfoPanel
@@ -2745,6 +3255,18 @@ export default function App() {
               noteSession.renameFilterTarget("notebook", renameTarget.id, name);
             } else if (renameTarget.kind === "stack") {
               await api.updateStack(renameTarget.id, { name });
+            } else if (renameTarget.kind === "note") {
+              await api.updateNote(renameTarget.id, { title: name });
+              if (activeNote?.id === renameTarget.id) {
+                noteSession.setActiveNote({ ...activeNote, title: name });
+              }
+              noteSession.setTabs((current) =>
+                current.map((tab) =>
+                  tab.noteId === renameTarget.id
+                    ? { ...tab, title: noteTabLabel(name, true) }
+                    : tab
+                )
+              );
             } else {
               await api.updateTag(renameTarget.id, { name });
               noteSession.renameFilterTarget("tag", renameTarget.id, name);
@@ -2823,6 +3345,11 @@ export default function App() {
             noteSession.setActiveNote(null);
             await noteStore.afterNoteChange();
           }}
+          sidebarSections={sidebarSections}
+          onMoveSidebarSection={(sections) => {
+            setSidebarSections(sections);
+            localStorage.setItem(SIDEBAR_SECTIONS_KEY, JSON.stringify(sections));
+          }}
         />
       )}
 
@@ -2858,6 +3385,7 @@ export default function App() {
           notes={jumpNotes.length ? jumpNotes : notes}
           notebooks={notebooks}
           tags={tags}
+          mode={jumpMode}
           onClose={() => setShowJump(false)}
           onSelect={(target) => {
             setShowJump(false);
@@ -2888,6 +3416,9 @@ export default function App() {
           onClearScope={() => setSearchScope(null)}
           onSaveSearch={saveCurrentSearch}
           onDeleteSearch={(id) => persistSavedSearches(deleteSavedSearch(savedSearches, id))}
+          onRenameSearch={(id, name) =>
+            persistSavedSearches(renameSavedSearch(savedSearches, id, name))
+          }
           onClose={closeSearch}
           onSearch={runSearch}
           onSelect={(target) => {
@@ -2926,6 +3457,37 @@ export default function App() {
             setPendingConfirm(null);
           }}
         />
+      )}
+
+      {trashToast && (
+        <div className="trash-toast" role="status">
+          <span>{trashToast.message}</span>
+          <button
+            type="button"
+            className="ghost-btn small"
+            onClick={async () => {
+              for (const id of trashToast.ids) {
+                await api.restoreNote(id);
+              }
+              setTrashToast(null);
+              await refreshNotes();
+            }}
+          >
+            Undo
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            title="Dismiss"
+            onClick={() => setTrashToast(null)}
+          >
+            <Icon.Close size={14} />
+          </button>
+        </div>
+      )}
+
+      {showShortcuts && (
+        <ShortcutOverlay open={showShortcuts} onClose={() => setShowShortcuts(false)} />
       )}
 
       {contextMenu && (

@@ -1,10 +1,14 @@
 import { DragEvent } from "react";
 import { Icon } from "./Icons";
 import { NOTE_TAB_DRAG_TYPE } from "../ui/tabs";
+import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
+import { useState } from "react";
 
 export type NoteTabItem = {
   id: string;
   title: string;
+  pinned?: boolean;
+  dirty?: boolean;
 };
 
 export function NoteTabBar({
@@ -12,24 +16,38 @@ export function NoteTabBar({
   activeTabId,
   canGoBack,
   canGoForward,
+  canReopenClosedTab,
   onBack,
   onForward,
   onSelect,
   onClose,
+  onCloseOthers,
+  onCloseToTheRight,
+  onCloseAll,
+  onPin,
   onNewTab,
   onReorder,
+  onReopenClosed,
 }: {
   tabs: NoteTabItem[];
   activeTabId: string;
   canGoBack: boolean;
   canGoForward: boolean;
+  canReopenClosedTab?: boolean;
   onBack: () => void;
   onForward: () => void;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
+  onCloseOthers?: (id: string) => void;
+  onCloseToTheRight?: (id: string) => void;
+  onCloseAll?: () => void;
+  onPin?: (id: string) => void;
   onNewTab: () => void;
   onReorder: (fromId: string, toId: string) => void;
+  onReopenClosed?: () => void;
 }) {
+  const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+
   const onDragStart = (event: DragEvent<HTMLDivElement>, id: string) => {
     event.dataTransfer.setData(NOTE_TAB_DRAG_TYPE, id);
     event.dataTransfer.effectAllowed = "move";
@@ -47,6 +65,37 @@ export function NoteTabBar({
     event.preventDefault();
     onReorder(fromId, toId);
   };
+
+  const menuItems: ContextMenuEntry[] = menu
+    ? [
+        { label: "Close Tab", onSelect: () => onClose(menu.id) },
+        {
+          label: "Close Other Tabs",
+          disabled: tabs.length < 2,
+          onSelect: () => onCloseOthers?.(menu.id),
+        },
+        {
+          label: "Close Tabs to the Right",
+          disabled: tabs.findIndex((tab) => tab.id === menu.id) >= tabs.length - 1,
+          onSelect: () => onCloseToTheRight?.(menu.id),
+        },
+        {
+          label: "Close All Tabs",
+          disabled: tabs.length < 2 && Boolean(tabs[0]?.pinned),
+          onSelect: () => onCloseAll?.(),
+        },
+        { type: "separator" },
+        {
+          label: tabs.find((tab) => tab.id === menu.id)?.pinned ? "Unpin Tab" : "Pin Tab",
+          onSelect: () => onPin?.(menu.id),
+        },
+        {
+          label: "Reopen Closed Tab",
+          disabled: !canReopenClosedTab,
+          onSelect: () => onReopenClosed?.(),
+        },
+      ]
+    : [];
 
   return (
     <div className="note-tab-bar" onMouseDown={(event) => event.stopPropagation()}>
@@ -80,13 +129,21 @@ export function NoteTabBar({
               key={tab.id}
               role="tab"
               aria-selected={active}
-              className={active ? "note-tab is-active" : "note-tab"}
+              className={
+                (active ? "note-tab is-active" : "note-tab") +
+                (tab.pinned ? " is-pinned" : "") +
+                (tab.dirty ? " is-dirty" : "")
+              }
               title={tab.title}
               draggable
               onDragStart={(event) => onDragStart(event, tab.id)}
               onDragOver={onDragOver}
               onDrop={(event) => onDrop(event, tab.id)}
               onClick={() => onSelect(tab.id)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setMenu({ x: event.clientX, y: event.clientY, id: tab.id });
+              }}
               onAuxClick={(event) => {
                 if (event.button === 1) {
                   event.preventDefault();
@@ -94,6 +151,8 @@ export function NoteTabBar({
                 }
               }}
             >
+              {tab.pinned ? <Icon.Pin size={11} /> : null}
+              {tab.dirty ? <span className="note-tab-dirty" aria-label="Unsaved" /> : null}
               <span className="note-tab-title">{tab.title}</span>
               <button
                 type="button"
@@ -120,6 +179,9 @@ export function NoteTabBar({
       >
         <Icon.Plus size={16} />
       </button>
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />
+      )}
     </div>
   );
 }

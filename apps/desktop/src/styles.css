@@ -193,16 +193,8 @@ select:focus-visible {
   display: none;
 }
 
-.app-shell.sidebar-rail {
-  grid-template-columns: var(--sidebar-rail-width, 56px) 5px var(--list-width, 320px) 5px minmax(0, 1fr);
-}
-
 .app-shell.list-collapsed {
   grid-template-columns: var(--sidebar-width, 248px) 5px 0 0 minmax(0, 1fr);
-}
-
-.app-shell.sidebar-rail.list-collapsed {
-  grid-template-columns: var(--sidebar-rail-width, 56px) 5px 0 0 minmax(0, 1fr);
 }
 
 .app-shell.list-collapsed .note-list-panel {
@@ -237,7 +229,8 @@ select:focus-visible {
 
 .app-shell.focus-mode,
 .app-shell.focus-mode.sidebar-rail,
-.app-shell.focus-mode.sidebar-rail.list-collapsed {
+.app-shell.focus-mode.sidebar-rail.list-collapsed,
+.app-shell.focus-mode.sidebar-rail.sidebar-collapsed {
   grid-template-columns: minmax(0, 1fr);
 }
 
@@ -272,7 +265,8 @@ select:focus-visible {
   display: flex;
   align-items: stretch;
   min-width: 0;
-  padding: 0 4px;
+  height: 22px;
+  padding: 0 2px;
   background: var(--panel-bg);
   border-bottom: 1px solid var(--border);
   user-select: none;
@@ -409,12 +403,13 @@ select:focus-visible {
 }
 
 .app-menu-trigger {
-  height: 31px;
-  padding: 0 9px;
+  height: 22px;
+  padding: 0 7px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 0;
   background: transparent;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 22px;
 }
 
 .app-menu-trigger:hover,
@@ -424,30 +419,30 @@ select:focus-visible {
 
 .app-menu-dropdown {
   position: absolute;
-  top: 29px;
+  top: 22px;
   left: 0;
-  width: 250px;
-  padding: 5px;
+  width: 268px;
+  padding: 4px;
   background: var(--panel-bg);
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 6px;
   box-shadow: var(--shadow);
   animation: context-menu-in 80ms ease-out;
 }
 
 .app-menu-dropdown button {
   width: 100%;
-  min-height: 30px;
+  min-height: 22px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  padding: 5px 8px;
+  gap: 28px;
+  padding: 2px 8px 2px 10px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 3px;
   background: transparent;
   text-align: left;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .app-menu-dropdown button:hover:not(:disabled),
@@ -478,7 +473,7 @@ select:focus-visible {
 
 .app-menu-separator {
   height: 1px;
-  margin: 4px;
+  margin: 3px 8px;
   background: var(--border);
 }
 
@@ -494,12 +489,12 @@ select:focus-visible {
   display: none;
   position: absolute;
   left: calc(100% - 4px);
-  top: -6px;
-  width: 210px;
-  padding: 5px;
+  top: -4px;
+  width: 220px;
+  padding: 4px;
   background: var(--panel-bg);
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 6px;
   box-shadow: var(--shadow);
   z-index: 40;
 }
@@ -519,16 +514,36 @@ select:focus-visible {
 }
 
 /*
- * Icon rail: like Evernote's collapsed sidebar, the rail keeps its width. It
- * never widens under the pointer; hovering shows the row tooltip and clicking a
- * section opens its panel beside the rail.
+ * Evernote’s left sidebar is a 56px icon rail. Labels and counts live in
+ * tooltips and in the notebooks/tags/shortcuts flyout beside the rail.
+ * The rail never expands; Hide Sidebar is the way to tuck it away.
  */
+.app-shell.sidebar-rail {
+  grid-template-columns: var(--sidebar-rail-width, 56px) 0 var(--list-width, 320px) 5px minmax(0, 1fr);
+}
+
+.app-shell.sidebar-rail.sidebar-collapsed {
+  grid-template-columns: 0 0 var(--list-width, 320px) 5px minmax(0, 1fr);
+}
+
+.app-shell.sidebar-rail.list-collapsed {
+  grid-template-columns: var(--sidebar-rail-width, 56px) 0 0 0 minmax(0, 1fr);
+}
+
+.app-shell.sidebar-rail.sidebar-collapsed.list-collapsed {
+  grid-template-columns: 0 0 0 0 minmax(0, 1fr);
+}
+
 .app-shell.sidebar-rail .sidebar {
   width: var(--sidebar-rail-width, 56px);
   z-index: 13;
 }
 
 /* Scoped to the rail's own nav so the flyout beside it keeps its labels. */
+.app-shell.sidebar-rail .sidebar-splitter {
+  display: none;
+}
+
 .app-shell.sidebar-rail .sidebar-nav .nav-label,
 .app-shell.sidebar-rail .sidebar-nav .nav-count,
 .app-shell.sidebar-rail .sidebar-nav .empty-state.compact {
@@ -537,12 +552,18 @@ select:focus-visible {
 
 .app-shell.sidebar-rail .sidebar-toolbar {
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 0;
+  gap: 6px;
+  padding: 10px 0 6px;
+}
+
+.app-shell.sidebar-rail .sidebar-toolbar .menu-popover.right {
+  left: calc(100% + 8px);
+  right: auto;
+  top: 0;
 }
 
 .app-shell.sidebar-rail .sidebar-nav {
-  padding: 4px 8px 12px;
+  padding: 6px 0 12px;
   overflow-y: auto;
   scrollbar-gutter: auto;
   scrollbar-width: none;
@@ -555,13 +576,40 @@ select:focus-visible {
 .app-shell.sidebar-rail .sidebar-nav .nav-item {
   justify-content: center;
   gap: 0;
-  padding: 8px 0;
+  padding: 10px 0;
 }
 
 .sidebar-footer {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.app-shell.sidebar-rail .sidebar-account {
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 0 10px;
+}
+
+.app-shell.sidebar-rail .sidebar-account .account-chip {
+  flex: none;
+  width: 100%;
+  justify-content: center;
+  gap: 0;
+  padding: 4px 0;
+}
+
+.app-shell.sidebar-rail .account-popover {
+  left: calc(100% + 8px);
+  bottom: 0;
+}
+
+.sidebar-account {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
   margin-top: auto;
   padding: 8px 0 10px;
   border-top: 1px solid var(--border);
@@ -628,8 +676,8 @@ select:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  padding: 10px 12px 8px;
+  gap: 4px;
+  padding: 10px 10px 8px;
   position: relative;
 }
 
@@ -638,8 +686,8 @@ select:focus-visible {
 }
 
 .sidebar-new-note {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border: none;
   border-radius: 50%;
   background: var(--green);
@@ -654,13 +702,13 @@ select:focus-visible {
 }
 
 .sidebar-toolbar .icon-btn {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
 }
 
 .menu-popover {
   position: absolute;
-  top: 46px;
+  top: 40px;
   left: 12px;
   min-width: 180px;
   background: var(--panel-bg);
@@ -970,13 +1018,15 @@ select:focus-visible {
   text-align: left;
   border: none;
   background: transparent;
-  padding: 7px 10px;
+  padding: 8px 10px;
   border-radius: 6px;
   color: var(--text);
 }
 
 .nav-item > svg {
   flex-shrink: 0;
+  width: 20px;
+  height: 20px;
 }
 
 .nav-label {
@@ -1424,12 +1474,37 @@ select:focus-visible {
 }
 
 .list-group-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
   padding: 10px 18px 6px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.list-group-label .count {
+  margin-left: auto;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.group-chevron {
+  display: inline-block;
+  font-size: 10px;
+  transition: transform 0.12s ease;
+}
+
+.group-chevron.is-collapsed {
+  transform: rotate(-90deg);
 }
 
 .note-card-snippet {
@@ -1771,6 +1846,27 @@ select:focus-visible {
   width: 1px;
   background: var(--border);
   margin: 4px 6px;
+  align-self: stretch;
+  flex-shrink: 0;
+}
+
+.toolbar-list-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  flex-shrink: 0;
+  padding: 1px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-bg);
+}
+
+.toolbar-list-group:not(:has(.toolbar-item:not(.is-overflowed))) {
+  display: none;
+}
+
+.toolbar-list-group .toolbar-btn {
+  border-radius: 6px;
 }
 
 .toolbar-text {
@@ -1887,6 +1983,10 @@ select:focus-visible {
 }
 
 .note-outline-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -1994,7 +2094,7 @@ select:focus-visible {
   overflow: visible;
   padding: 0 20px;
   outline: none;
-  line-height: 1.6;
+  line-height: var(--editor-line-height, 1.6);
 }
 
 .note-editor-content p.is-editor-empty:first-child::before,
@@ -2032,6 +2132,7 @@ select:focus-visible {
 
 .note-editor-content pre,
 .ProseMirror pre {
+  position: relative;
   background: var(--code-bg);
   border-radius: 8px;
   padding: 12px 14px;
@@ -2039,6 +2140,41 @@ select:focus-visible {
   font-family: var(--editor-mono);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.code-copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  color: var(--text-muted);
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.ProseMirror pre:hover .code-copy-btn,
+.code-copy-btn:focus {
+  opacity: 1;
+}
+
+.note-figure {
+  margin: 12px 0;
+}
+
+.note-figure img {
+  max-width: 100%;
+  height: auto;
+}
+
+.note-figure figcaption {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 .note-editor-content pre code,
@@ -2489,11 +2625,26 @@ select:focus-visible {
 
 .ProseMirror ul[data-type="taskList"] input[type="checkbox"],
 .note-editor-content input[data-inline-checkbox] {
-  width: 15px;
-  height: 15px;
+  appearance: none;
+  width: 16px;
+  height: 16px;
   margin: 0;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 4px;
+  background: var(--panel-bg);
   accent-color: var(--green);
   cursor: pointer;
+  flex-shrink: 0;
+}
+
+.ProseMirror ul[data-type="taskList"] input[type="checkbox"]:checked,
+.note-editor-content input[data-inline-checkbox]:checked {
+  background: var(--green);
+  border-color: var(--green);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M3.5 8.5l3 3 6-6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 12px;
 }
 
 .note-editor-content input[data-inline-checkbox] {
@@ -3243,6 +3394,35 @@ kbd {
   min-width: 72px;
 }
 
+.find-in-note .ghost-btn.small.active {
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.trash-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 10px 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  z-index: 50;
+  font-size: 13px;
+}
+
+.saved-search-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 6px;
+}
+
 .note-tag-bar {
   display: flex;
   align-items: center;
@@ -3321,6 +3501,230 @@ kbd {
 .editor-status .save-state {
   margin-left: auto;
   text-transform: capitalize;
+}
+
+.ProseMirror::spelling-error {
+  text-decoration: wavy underline 2px #e03131;
+}
+
+.note-image-wrap {
+  display: block;
+  margin: 8px 0;
+  position: relative;
+}
+
+.note-image-wrap[data-align="center"] {
+  text-align: center;
+}
+
+.note-image-wrap[data-align="right"] {
+  text-align: right;
+}
+
+.note-image-frame {
+  display: inline-block;
+  position: relative;
+  max-width: 100%;
+}
+
+.note-image-wrap img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.note-image-wrap.is-selected .note-image-frame {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+.image-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: var(--green);
+  border: 2px solid #fff;
+  border-radius: 2px;
+  cursor: nwse-resize;
+}
+
+.image-handle.se {
+  right: -6px;
+  bottom: -6px;
+}
+
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.image-lightbox img {
+  max-width: 92vw;
+  max-height: 88vh;
+  border-radius: 8px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+}
+
+.image-lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+}
+
+.shortcut-overlay {
+  width: min(560px, 92vw);
+  max-height: 80vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.shortcut-overlay-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 8px;
+}
+
+.shortcut-overlay-head h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 16px;
+}
+
+.shortcut-overlay-table {
+  overflow: auto;
+  padding: 0 16px 16px;
+}
+
+.reminder-calendar {
+  padding: 8px 12px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.reminder-calendar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.reminder-calendar-weekdays,
+.reminder-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  text-align: center;
+}
+
+.reminder-calendar-weekdays {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-bottom: 4px;
+}
+
+.reminder-calendar-day {
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  padding: 6px 0;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.reminder-calendar-day.is-outside {
+  color: var(--text-muted);
+  opacity: 0.55;
+}
+
+.reminder-calendar-day.is-today {
+  box-shadow: inset 0 0 0 1px var(--green);
+}
+
+.reminder-calendar-day.has-reminder::after {
+  content: "";
+  display: block;
+  width: 4px;
+  height: 4px;
+  margin: 2px auto 0;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.reminder-calendar-day.is-selected {
+  background: color-mix(in srgb, var(--green) 18%, transparent);
+}
+
+.note-tab-dirty {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  flex: 0 0 auto;
+}
+
+.notebook-crumb-open {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  display: inline-flex;
+}
+
+.note-color-swatches {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 0 6px;
+}
+
+.note-color-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  padding: 0;
+}
+
+.note-color-dot.is-active {
+  outline: 2px solid var(--green);
+  outline-offset: 1px;
+}
+
+.editor-body.note-color-red { box-shadow: inset 4px 0 0 #f97066; }
+.editor-body.note-color-orange { box-shadow: inset 4px 0 0 #f79009; }
+.editor-body.note-color-yellow { box-shadow: inset 4px 0 0 #f4c430; }
+.editor-body.note-color-green { box-shadow: inset 4px 0 0 #00a82d; }
+.editor-body.note-color-blue { box-shadow: inset 4px 0 0 #2e90fa; }
+.editor-body.note-color-purple { box-shadow: inset 4px 0 0 #7a5af8; }
+
+.sidebar-order {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 220px;
+}
+
+.sidebar-order-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.path-row .path-value {
+  flex: 1;
 }
 
 .reminder-overdue-text {
@@ -3473,7 +3877,7 @@ kbd {
 
 @media (max-width: 960px) {
   .app-shell {
-    grid-template-columns: var(--sidebar-width, 220px) 5px var(--list-width, 260px) 5px minmax(0, 1fr);
+    grid-template-columns: var(--sidebar-rail-width, 56px) 0 var(--list-width, 260px) 5px minmax(0, 1fr);
   }
 }
 

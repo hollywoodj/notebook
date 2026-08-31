@@ -1,26 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { jumpToMatches, type JumpTarget } from "../ui/search";
+import { jumpToMatches, type JumpKind, type JumpTarget } from "../ui/search";
 import { Icon } from "./Icons";
 
 export function JumpToDialog({
   notes,
   notebooks,
   tags,
+  mode = "all",
   onClose,
   onSelect,
 }: {
   notes: { id: string; title: string; notebook_name: string }[];
   notebooks: { id: string; name: string }[];
   tags: { id: string; name: string }[];
+  mode?: "all" | "notebook" | "tag";
   onClose: () => void;
   onSelect: (target: JumpTarget) => void;
 }) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const kinds: JumpKind[] | undefined =
+    mode === "notebook" ? ["notebook"] : mode === "tag" ? ["tag"] : undefined;
   const results = useMemo(
-    () => jumpToMatches(query, notes, notebooks, tags),
-    [query, notes, notebooks, tags]
+    () => jumpToMatches(query, notes, notebooks, tags, 12, kinds),
+    [query, notes, notebooks, tags, kinds]
   );
 
   useEffect(() => {
@@ -57,7 +61,9 @@ export function JumpToDialog({
       <div
         className="jump-dialog"
         role="dialog"
-        aria-label="Jump to"
+        aria-label={
+          mode === "notebook" ? "Go to notebook" : mode === "tag" ? "Go to tag" : "Jump to"
+        }
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="jump-search">
@@ -65,7 +71,13 @@ export function JumpToDialog({
           <input
             ref={inputRef}
             value={query}
-            placeholder="Jump to a note, notebook, or tag"
+            placeholder={
+              mode === "notebook"
+                ? "Go to a notebook"
+                : mode === "tag"
+                  ? "Go to a tag"
+                  : "Jump to a note, notebook, or tag"
+            }
             onChange={(event) => setQuery(event.target.value)}
           />
         </div>

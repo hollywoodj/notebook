@@ -40,7 +40,12 @@ function flyoutState(): Promise<FlyoutState> {
   });
 }
 
-const rail = (label: string) => page.locator(`.sidebar-nav button[title="${label}"]`);
+/** The rail buttons carry a count in their title (`Notebooks (12)`), so match
+ * on the label span instead - it is the stable part. */
+const rail = (label: string) =>
+  page.locator(".sidebar-nav button", {
+    has: page.locator(".nav-label", { hasText: new RegExp(`^${label}$`) }),
+  });
 
 async function openViewMenu(): Promise<void> {
   await page.locator(".app-menu-trigger", { hasText: "View" }).click();

@@ -1,4 +1,4 @@
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
 import Link from "@tiptap/extension-link";
@@ -15,6 +15,7 @@ import { Color } from "@tiptap/extension-color";
 import { TextStyle } from "@tiptap/extension-text-style";
 import type { Editor } from "@tiptap/core";
 import type { JSONContent } from "@tiptap/core";
+import { mergeAttributes } from "@tiptap/core";
 import {
   ReactNode,
   useEffect,
@@ -22,6 +23,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type PointerEvent as ReactPointerEvent,
   type Ref,
 } from "react";
 import { api, Attachment, attachmentUrl } from "../api";
@@ -31,11 +33,16 @@ import {
   EDITOR_FONTS,
   EDITOR_FONT_SIZES,
   HIGHLIGHT_COLORS,
+  IMAGE_SIZE_PRESETS,
   TEXT_COLORS,
   attachmentsLabel,
   formattingToolbarVisible,
+  clampImageWidth,
+  insertDateStamp,
+  insertTimeStamp,
+  nextFontSize,
 } from "../ui/editorChrome";
-import { escapeHtml } from "../ui/noteContent";
+import { countWords, escapeHtml, outlineToHtml } from "../ui/noteContent";
 import { findMatchOffsets, nextMatchIndex } from "../ui/search";
 import { visibleToolbarCount } from "../ui/panes";
 import type { EditorCommand, EditorHandle } from "../editorHandle";
@@ -62,9 +69,12 @@ interface Props {
   onChange: (html: string) => void;
   onAttach: (file: File) => Promise<Attachment>;
   spellCheck: boolean;
+  spellLanguage?: string;
   fontFamily: "default" | "serif" | "mono";
   fontSize: number;
   noteWidth: "readable" | "full";
+  lineHeight?: number;
+  readOnly?: boolean;
   pdfView?: "expanded" | "title";
   placeholder?: string;
   onUseAsTitle?: (filename: string) => void;
@@ -75,6 +85,7 @@ interface Props {
   zoom?: number;
   outlineOpen?: boolean;
   onOpenNoteLink?: (noteId: string) => void;
+  onSelectionWords?: (count: number) => void;
 }
 
 function formatSize(bytes: number) {
@@ -110,6 +121,127 @@ function openLinkDialog(editor: Editor) {
   return { href, text };
 }
 
+function ResizableImageView({ node, updateAttributes, selected }: NodeViewProps) {
+  const width = node.attrs.width as string | null;
+  const align = String(node.attrs.align || "left");
+  const caption = node.attrs.title as string | null;
+  const onResize = (event: ReactPointerEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const img = event.currentTarget.parentElement?.querySelector("img") as HTMLImageElement | null;
+    const startWidth = img?.getBoundingClientRect().width || 320;
+    const onMove = (ev: PointerEvent) => {
+      updateAttributes({ width: `${clampImageWidth(startWidth + ev.clientX - startX)}px` });
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+  return (
+    <NodeViewWrapper
+      as="figure"
+      className={"note-image-wrap" + (selected ? " is-selected" : "")}
+      data-align={align}
+    >
+      <div className="note-image-frame">
+        <img
+          src={node.attrs.src}
+          alt={node.attrs.alt || ""}
+          title={caption || ""}
+          style={width ? { width } : undefined}
+          onDoubleClick={() =>
+            window.dispatchEvent(
+              new CustomEvent("notebook:image-lightbox", { detail: { src: node.attrs.src } })
+            )
+          }
+        />
+        {selected ? (
+          <button
+            type="button"
+            className="image-handle se"
+            aria-label="Resize image"
+            onPointerDown={onResize}
+          />
+        ) : null}
+      </div>
+      {caption ? <figcaption>{caption}</figcaption> : null}
+    </NodeViewWrapper>
+  );
+}
+
+const CaptionImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      width: {
+        default: null,
+        parseHTML: (element) =>
+          element.getAttribute("width") || (element as HTMLElement).style?.width || null,
+        renderHTML: (attributes) =>
+          attributes.width ? { width: attributes.width, style: `width: ${attributes.width}` } : {},
+      },
+      title: {
+        default: null,
+        parseHTML: (element) => element.getAttribute("title"),
+        renderHTML: (attributes) => (attributes.title ? { title: attributes.title } : {}),
+      },
+      align: {
+        default: "left",
+        parseHTML: (element) =>
+          element.getAttribute("data-align") ||
+          (element as HTMLElement).style?.textAlign ||
+          "left",
+        renderHTML: (attributes) =>
+          attributes.align && attributes.align !== "left"
+            ? { "data-align": attributes.align }
+            : {},
+      },
+    };
+  },
+  parseHTML() {
+    return [
+      {
+        tag: "figure.note-figure, figure.note-image-wrap",
+        getAttrs: (node) => {
+          const el = node as HTMLElement;
+          const img = el.querySelector("img");
+          if (!img) return false;
+          return {
+            src: img.getAttribute("src"),
+            alt: img.getAttribute("alt"),
+            title: el.querySelector("figcaption")?.textContent || img.getAttribute("title"),
+            width: img.getAttribute("width") || (img as HTMLElement).style?.width,
+            align: el.getAttribute("data-align") || "left",
+          };
+        },
+      },
+      { tag: "img[src]" },
+    ];
+  },
+  renderHTML({ HTMLAttributes }) {
+    const caption = HTMLAttributes.title;
+    const align = HTMLAttributes.align || HTMLAttributes["data-align"] || "left";
+    const imgAttrs = mergeAttributes(this.options.HTMLAttributes, HTMLAttributes);
+    delete imgAttrs.align;
+    if (!caption) {
+      return ["img", imgAttrs];
+    }
+    return [
+      "figure",
+      { class: "note-figure", "data-align": align },
+      ["img", imgAttrs],
+      ["figcaption", {}, String(caption)],
+    ];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(ResizableImageView);
+  },
+});
+
 function textOffsetToPos(
   doc: {
     descendants: (
@@ -137,9 +269,12 @@ export function NoteEditor({
   onChange,
   onAttach,
   spellCheck,
+  spellLanguage = "en-US",
   fontFamily,
   fontSize,
   noteWidth,
+  lineHeight = 1.5,
+  readOnly = false,
   pdfView = "expanded",
   placeholder = "Start writing, or pick a template…",
   onUseAsTitle,
@@ -150,6 +285,7 @@ export function NoteEditor({
   zoom = 100,
   outlineOpen = false,
   onOpenNoteLink,
+  onSelectionWords,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const queueFilesRef = useRef<(files: File[], position?: number) => void>(() => {});
@@ -167,11 +303,14 @@ export function NoteEditor({
   const [findCount, setFindCount] = useState(0);
   const [replaceQuery, setReplaceQuery] = useState("");
   const [showReplace, setShowReplace] = useState(false);
+  const [findCaseSensitive, setFindCaseSensitive] = useState(false);
+  const [findWholeWord, setFindWholeWord] = useState(false);
   const [showColors, setShowColors] = useState(false);
   const [showTextColors, setShowTextColors] = useState(false);
   const [showOverflow, setShowOverflow] = useState(false);
   const [overflowIds, setOverflowIds] = useState<string[]>([]);
   const [editorMenu, setEditorMenu] = useState<{ x: number; y: number } | null>(null);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [linkDialog, setLinkDialog] = useState<{ href: string; text: string } | null>(null);
   const indentRef = useRef<(shift: boolean) => boolean>(() => false);
 
@@ -198,7 +337,7 @@ export function NoteEditor({
       DraggableTaskItem.configure({ nested: true }),
       InlineCheckbox,
       Placeholder.configure({ placeholder }),
-      Image.configure({ allowBase64: true }),
+      CaptionImage.configure({ allowBase64: true }),
       FileAttachment,
       Table.configure({ resizable: true }),
       TableRow,
@@ -215,7 +354,13 @@ export function NoteEditor({
     ],
     content,
     autofocus: false,
+    editable: !readOnly,
     onUpdate: ({ editor }) => onChange(editor.getHTML()),
+    onSelectionUpdate: ({ editor }) => {
+      const { from, to } = editor.state.selection;
+      const text = from === to ? "" : editor.state.doc.textBetween(from, to, " ");
+      onSelectionWords?.(countWords(text));
+    },
     onFocus: () => setEditorFocused(true),
     onBlur: ({ editor: current, event }) => {
       const related = (event as FocusEvent | undefined)?.relatedTarget as Node | null;
@@ -230,10 +375,11 @@ export function NoteEditor({
       });
     },
     editorProps: {
-      attributes: {
-        class: "note-editor-content",
-        spellcheck: spellCheck ? "true" : "false",
-      },
+        attributes: {
+          class: "note-editor-content",
+          spellcheck: spellCheck ? "true" : "false",
+          lang: spellLanguage,
+        },
       handleKeyDown: (_view, event) => {
         if (event.key !== "Tab") return false;
         return indentRef.current(event.shiftKey);
@@ -290,7 +436,11 @@ export function NoteEditor({
 
   useEffect(() => {
     if (editor && content !== editor.getHTML()) {
-      editor.commands.setContent(content, false);
+      try {
+        editor.commands.setContent(content, false);
+      } catch (err) {
+        console.error(err);
+      }
     }
   }, [content, editor]);
 
@@ -302,10 +452,15 @@ export function NoteEditor({
           ...editor.options.editorProps.attributes,
           class: "note-editor-content",
           spellcheck: spellCheck ? "true" : "false",
+          lang: spellLanguage,
         },
       },
     });
-  }, [spellCheck, editor]);
+  }, [spellCheck, spellLanguage, editor]);
+
+  useEffect(() => {
+    editor?.setEditable(!readOnly);
+  }, [editor, readOnly]);
 
   useEffect(() => {
     if (!editor || restoredFilesRef.current) return;
@@ -326,6 +481,46 @@ export function NoteEditor({
     nodes.push({ type: "paragraph" });
     editor.chain().insertContentAt(editor.state.doc.content.size, nodes).run();
   }, [attachments, editor]);
+
+  useEffect(() => {
+    if (!editor) return;
+    const root = editor.view.dom as HTMLElement;
+    const decorate = () => {
+      root.querySelectorAll("pre").forEach((pre) => {
+        if (pre.querySelector(".code-copy-btn")) return;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "code-copy-btn";
+        button.textContent = "Copy";
+        button.addEventListener("mousedown", (event) => event.preventDefault());
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const text = pre.querySelector("code")?.textContent || pre.textContent || "";
+          void navigator.clipboard.writeText(text.replace(/\s*Copy\s*$/, "")).then(() => {
+            button.textContent = "Copied";
+            window.setTimeout(() => {
+              button.textContent = "Copy";
+            }, 1200);
+          });
+        });
+        pre.appendChild(button);
+      });
+    };
+    decorate();
+    const observer = new MutationObserver(decorate);
+    observer.observe(root, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [editor, content]);
+
+  useEffect(() => {
+    const onLightbox = (event: Event) => {
+      const src = (event as CustomEvent<{ src?: string }>).detail?.src;
+      if (src) setLightboxSrc(src);
+    };
+    window.addEventListener("notebook:image-lightbox", onLightbox);
+    return () => window.removeEventListener("notebook:image-lightbox", onLightbox);
+  }, []);
 
   useEffect(() => {
     if (!editor) return;
@@ -352,7 +547,10 @@ export function NoteEditor({
   useEffect(() => {
     if (!editor || !showFind) return;
     const text = editor.state.doc.textBetween(0, editor.state.doc.content.size, "", "");
-    const offsets = findMatchOffsets(text, findQuery);
+    const offsets = findMatchOffsets(text, findQuery, {
+      caseSensitive: findCaseSensitive,
+      wholeWord: findWholeWord,
+    });
     setFindCount(offsets.length);
     if (!offsets.length) {
       setFindIndex(0);
@@ -364,7 +562,7 @@ export function NoteEditor({
     const to = from + findQuery.trim().length;
     editor.commands.setTextSelection({ from, to });
     editor.commands.scrollIntoView();
-  }, [editor, findQuery, findIndex, showFind]);
+  }, [editor, findQuery, findIndex, showFind, findCaseSensitive, findWholeWord]);
 
   const replaceCurrent = () => {
     if (!editor || !findQuery.trim()) return;
@@ -436,7 +634,7 @@ export function NoteEditor({
         chain.setHorizontalRule().run();
         break;
       case "insertDate":
-        chain.insertContent(new Date().toLocaleString()).run();
+        chain.insertContent(insertDateStamp()).run();
         break;
       case "insertTable":
         chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
@@ -536,6 +734,84 @@ export function NoteEditor({
       case "replace":
         if (command.all) replaceAll();
         else replaceCurrent();
+        break;
+
+      // Ported from main's editor bus onto candidate 7's typed handle.
+      case "findNext":
+        setShowFind(true);
+        setFindIndex((current) => nextMatchIndex(findCount, current, 1));
+        break;
+      case "findPrev":
+        setShowFind(true);
+        setFindIndex((current) => nextMatchIndex(findCount, current, -1));
+        break;
+      case "fontSizeStep": {
+        const current = String(editor.getAttributes("textStyle").fontSize || "");
+        chain.setFontSize(nextFontSize(current, command.direction)).run();
+        break;
+      }
+      case "imageAlign":
+        if (editor.isActive("image")) {
+          chain.updateAttributes("image", { align: command.align }).run();
+        }
+        break;
+      case "imageCaption":
+        if (editor.isActive("image")) {
+          chain.updateAttributes("image", { title: command.title || null }).run();
+        }
+        break;
+      case "imageSize":
+        if (editor.isActive("image")) {
+          chain.updateAttributes("image", { width: command.width || null }).run();
+        }
+        break;
+      case "insertDateTime":
+        chain.insertContent(new Date().toLocaleString()).run();
+        break;
+      case "insertTime":
+        chain.insertContent(insertTimeStamp()).run();
+        break;
+      case "insertToc": {
+        const headings: { level: number; text: string }[] = [];
+        editor.state.doc.descendants((node) => {
+          if (node.type.name === "heading") {
+            headings.push({
+              level: Number(node.attrs.level || 1),
+              text: node.textContent || "Untitled heading",
+            });
+          }
+        });
+        const html = outlineToHtml(headings);
+        if (html) chain.insertContentAt(1, html).run();
+        break;
+      }
+      case "pastePlain": {
+        void navigator.clipboard.readText().then((text) => {
+          if (!text) return;
+          editor
+            .chain()
+            .focus()
+            .insertContent(escapeHtml(text).replace(/\n/g, "<br>"))
+            .run();
+        });
+        break;
+      }
+      case "tasks": {
+        const checked = command.action === "checkAll";
+        const { tr } = editor.state;
+        editor.state.doc.descendants((node, pos) => {
+          if (node.type.name === "taskItem") {
+            tr.setNodeMarkup(pos, undefined, { ...node.attrs, checked });
+          }
+        });
+        if (tr.docChanged) editor.view.dispatch(tr);
+        break;
+      }
+      case "unlink":
+        chain.unsetLink().run();
+        break;
+      case "unsetColor":
+        chain.unsetColor().run();
         break;
     }
   };
@@ -720,16 +996,15 @@ export function NoteEditor({
     { id: "strike", label: "Strikethrough", action: () => editor.chain().focus().toggleStrike().run() },
     { id: "highlight", label: "Highlight", action: () => editor.chain().focus().toggleHighlight().run() },
     { id: "color", label: "Text color", action: () => setShowTextColors(true) },
+    { id: "bullets", label: "Bulleted list", action: () => editor.chain().focus().toggleBulletList().run() },
+    { id: "numbers", label: "Numbered list", action: () => editor.chain().focus().toggleOrderedList().run() },
+    { id: "checklist", label: "Checklist", action: () => editor.chain().focus().toggleTaskList().run() },
     { id: "align-left", label: "Align left", action: () => editor.chain().focus().setTextAlign("left").run() },
     { id: "align-center", label: "Align center", action: () => editor.chain().focus().setTextAlign("center").run() },
     { id: "align-right", label: "Align right", action: () => editor.chain().focus().setTextAlign("right").run() },
     { id: "justify", label: "Justify", action: () => editor.chain().focus().setTextAlign("justify").run() },
     { id: "outdent", label: "Decrease indent", action: () => applyIndent(editor, -1) },
     { id: "indent", label: "Increase indent", action: () => applyIndent(editor, 1) },
-    { id: "bullets", label: "Bulleted list", action: () => editor.chain().focus().toggleBulletList().run() },
-    { id: "numbers", label: "Numbered list", action: () => editor.chain().focus().toggleOrderedList().run() },
-    { id: "checklist", label: "Checklist", action: () => editor.chain().focus().toggleTaskList().run() },
-    { id: "checkbox", label: "Checkbox", action: () => editor.chain().focus().insertInlineCheckbox(false).run() },
     { id: "quote", label: "Quote", action: () => editor.chain().focus().toggleBlockquote().run() },
     { id: "code", label: "Code block", action: () => editor.chain().focus().toggleCodeBlock().run() },
     { id: "inline-code", label: "Inline code", action: () => editor.chain().focus().toggleCode().run() },
@@ -747,6 +1022,14 @@ export function NoteEditor({
     { label: "Cut", shortcut: "Ctrl/⌘ X", onSelect: () => document.execCommand("cut") },
     { label: "Copy", shortcut: "Ctrl/⌘ C", onSelect: () => document.execCommand("copy") },
     { label: "Paste", shortcut: "Ctrl/⌘ V", onSelect: () => document.execCommand("paste") },
+    {
+      label: "Paste and Match Style",
+      onSelect: () =>
+        void navigator.clipboard.readText().then((text) => {
+          if (!text) return;
+          editor.chain().focus().insertContent(escapeHtml(text).replace(/\n/g, "<br>")).run();
+        }),
+    },
     { type: "separator" },
     { label: "Bold", onSelect: () => editor.chain().focus().toggleBold().run() },
     { label: "Italic", onSelect: () => editor.chain().focus().toggleItalic().run() },
@@ -755,10 +1038,6 @@ export function NoteEditor({
     { label: "Bulleted list", onSelect: () => editor.chain().focus().toggleBulletList().run() },
     { label: "Numbered list", onSelect: () => editor.chain().focus().toggleOrderedList().run() },
     { label: "Checklist", onSelect: () => editor.chain().focus().toggleTaskList().run() },
-    {
-      label: "Checkbox",
-      onSelect: () => editor.chain().focus().insertInlineCheckbox(false).run(),
-    },
     { type: "separator" },
     { label: "Align left", onSelect: () => editor.chain().focus().setTextAlign("left").run() },
     { label: "Align center", onSelect: () => editor.chain().focus().setTextAlign("center").run() },
@@ -776,8 +1055,99 @@ export function NoteEditor({
             onSelect: () =>
               void navigator.clipboard.writeText(String(editor.getAttributes("link").href || "")),
           },
+          {
+            label: "Remove link",
+            onSelect: () => editor.chain().focus().unsetLink().run(),
+          },
         ]
       : []),
+    ...(editor.isActive("image")
+      ? [
+          {
+            label: "Image size",
+            children: IMAGE_SIZE_PRESETS.map((preset) => ({
+              label: preset.label,
+              onSelect: () =>
+                editor.chain().focus().updateAttributes("image", { width: preset.width || null }).run(),
+            })),
+          },
+          {
+            label: "Add caption…",
+            onSelect: () => {
+              const current = String(editor.getAttributes("image").title || "");
+              const next = window.prompt("Image caption", current);
+              if (next === null) return;
+              editor.chain().focus().updateAttributes("image", { title: next.trim() || null }).run();
+            },
+          },
+          {
+            label: "Align image",
+            children: [
+              {
+                label: "Left",
+                onSelect: () =>
+                  editor.chain().focus().updateAttributes("image", { align: "left" }).run(),
+              },
+              {
+                label: "Center",
+                onSelect: () =>
+                  editor.chain().focus().updateAttributes("image", { align: "center" }).run(),
+              },
+              {
+                label: "Right",
+                onSelect: () =>
+                  editor.chain().focus().updateAttributes("image", { align: "right" }).run(),
+              },
+            ],
+          },
+          {
+            label: "View image",
+            onSelect: () => setLightboxSrc(String(editor.getAttributes("image").src || "")),
+          },
+          {
+            label: "Copy image address",
+            onSelect: () =>
+              void navigator.clipboard.writeText(String(editor.getAttributes("image").src || "")),
+          },
+          {
+            label: "Save image as…",
+            onSelect: () => {
+              const src = String(editor.getAttributes("image").src || "");
+              if (!src) return;
+              const link = document.createElement("a");
+              link.href = src;
+              link.download = "image";
+              link.target = "_blank";
+              link.rel = "noopener";
+              link.click();
+            },
+          },
+        ]
+      : []),
+    {
+      label: "Check all tasks",
+      onSelect: () => {
+        const { tr } = editor.state;
+        editor.state.doc.descendants((node, pos) => {
+          if (node.type.name === "taskItem") {
+            tr.setNodeMarkup(pos, undefined, { ...node.attrs, checked: true });
+          }
+        });
+        if (tr.docChanged) editor.view.dispatch(tr);
+      },
+    },
+    {
+      label: "Uncheck all tasks",
+      onSelect: () => {
+        const { tr } = editor.state;
+        editor.state.doc.descendants((node, pos) => {
+          if (node.type.name === "taskItem") {
+            tr.setNodeMarkup(pos, undefined, { ...node.attrs, checked: false });
+          }
+        });
+        if (tr.docChanged) editor.view.dispatch(tr);
+      },
+    },
     {
       label: "Link…",
       onSelect: () => setLinkDialog(openLinkDialog(editor)),
@@ -857,6 +1227,30 @@ export function NoteEditor({
               }
             }}
           />
+          <button
+            type="button"
+            className={findCaseSensitive ? "ghost-btn small active" : "ghost-btn small"}
+            title="Match case"
+            aria-pressed={findCaseSensitive}
+            onClick={() => {
+              setFindCaseSensitive((on) => !on);
+              setFindIndex(0);
+            }}
+          >
+            Aa
+          </button>
+          <button
+            type="button"
+            className={findWholeWord ? "ghost-btn small active" : "ghost-btn small"}
+            title="Whole word"
+            aria-pressed={findWholeWord}
+            onClick={() => {
+              setFindWholeWord((on) => !on);
+              setFindIndex(0);
+            }}
+          >
+            W
+          </button>
           {showReplace && (
             <input
               value={replaceQuery}
@@ -968,6 +1362,26 @@ export function NoteEditor({
               </option>
             ))}
           </select>
+        )}
+        {wrap(
+          "font-smaller",
+          btn(
+            "Decrease font size",
+            () =>
+              editor.chain().focus().setFontSize(nextFontSize(currentFontSize, -1)).run(),
+            false,
+            <span className="toolbar-text">A−</span>
+          )
+        )}
+        {wrap(
+          "font-larger",
+          btn(
+            "Increase font size",
+            () =>
+              editor.chain().focus().setFontSize(nextFontSize(currentFontSize, 1)).run(),
+            false,
+            <span className="toolbar-text">A+</span>
+          )
         )}
         <span className="toolbar-sep" />
         {wrap("h1", btn(
@@ -1083,6 +1497,27 @@ export function NoteEditor({
         </div>
         )}
         <span className="toolbar-sep" />
+        <span className="toolbar-list-group" role="group" aria-label="Lists">
+          {wrap("bullets", btn(
+            "Bulleted list",
+            () => editor.chain().focus().toggleBulletList().run(),
+            editor.isActive("bulletList"),
+            <Icon.List size={16} />
+          ))}
+          {wrap("numbers", btn(
+            "Numbered list",
+            () => editor.chain().focus().toggleOrderedList().run(),
+            editor.isActive("orderedList"),
+            <Icon.Ordered size={16} />
+          ))}
+          {wrap("checklist", btn(
+            "Checklist",
+            () => editor.chain().focus().toggleTaskList().run(),
+            editor.isActive("taskList"),
+            <Icon.Checklist size={16} />
+          ))}
+        </span>
+        <span className="toolbar-sep" />
         {wrap("align-left", btn(
           "Align left",
           () => editor.chain().focus().setTextAlign("left").run(),
@@ -1120,30 +1555,6 @@ export function NoteEditor({
           <Icon.Indent size={16} />
         ))}
         <span className="toolbar-sep" />
-        {wrap("bullets", btn(
-          "Bulleted list",
-          () => editor.chain().focus().toggleBulletList().run(),
-          editor.isActive("bulletList"),
-          <Icon.List size={16} />
-        ))}
-        {wrap("numbers", btn(
-          "Numbered list",
-          () => editor.chain().focus().toggleOrderedList().run(),
-          editor.isActive("orderedList"),
-          <Icon.Ordered size={16} />
-        ))}
-        {wrap("checklist", btn(
-          "Checklist",
-          () => editor.chain().focus().toggleTaskList().run(),
-          editor.isActive("taskList"),
-          <Icon.Checklist size={16} />
-        ))}
-        {wrap("checkbox", btn(
-          "Checkbox",
-          () => editor.chain().focus().insertInlineCheckbox(false).run(),
-          false,
-          <Icon.Check size={16} />
-        ))}
         {wrap("quote", btn(
           "Quote",
           () => editor.chain().focus().toggleBlockquote().run(),
@@ -1345,14 +1756,40 @@ export function NoteEditor({
       >
         <div
           className={`editor-page ${fontClass} ${noteWidth === "readable" ? "readable" : "full"}`}
-          style={{ fontSize: `${fontSize}px`, zoom: zoom / 100 }}
+          style={{
+            fontSize: `${fontSize}px`,
+            zoom: zoom / 100,
+            ["--editor-line-height" as string]: String(lineHeight),
+          }}
         >
           <EditorContent editor={editor} />
         </div>
       </div>
       {outlineOpen && (
         <aside className="note-outline" aria-label="Note outline">
-          <div className="note-outline-title">Outline</div>
+          <div className="note-outline-title">
+            Outline
+            <button
+              type="button"
+              className="ghost-btn small"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                const headings: { level: number; text: string }[] = [];
+                editor.state.doc.descendants((node) => {
+                  if (node.type.name === "heading") {
+                    headings.push({
+                      level: Number(node.attrs.level || 1),
+                      text: node.textContent || "Untitled heading",
+                    });
+                  }
+                });
+                const html = outlineToHtml(headings);
+                if (html) editor.chain().focus().insertContentAt(1, html).run();
+              }}
+            >
+              Insert
+            </button>
+          </div>
           {(() => {
             const headings: { level: number; text: string; pos: number }[] = [];
             editor.state.doc.descendants((node, pos) => {
@@ -1408,6 +1845,14 @@ export function NoteEditor({
             setLinkDialog(null);
           }}
         />
+      )}
+      {lightboxSrc && (
+        <div className="image-lightbox" onMouseDown={() => setLightboxSrc(null)}>
+          <img src={lightboxSrc} alt="" onMouseDown={(event) => event.stopPropagation()} />
+          <button type="button" className="image-lightbox-close" onClick={() => setLightboxSrc(null)}>
+            Close
+          </button>
+        </div>
       )}
     </div>
   );

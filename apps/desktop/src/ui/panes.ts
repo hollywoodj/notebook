@@ -12,7 +12,6 @@ export interface PaneLayout {
   listWidth: number;
   sidebarCollapsed: boolean;
   listCollapsed: boolean;
-  sidebarRail: boolean;
 }
 
 export function clampPaneWidth(value: number, min: number, max: number): number {
@@ -26,7 +25,6 @@ export function defaultPaneLayout(): PaneLayout {
     listWidth: DEFAULT_LIST_WIDTH,
     sidebarCollapsed: false,
     listCollapsed: false,
-    sidebarRail: true,
   };
 }
 
@@ -44,9 +42,6 @@ export function parsePaneLayout(raw: string | null): PaneLayout {
       listWidth: clampPaneWidth(Number(parsed.listWidth), LIST_MIN, LIST_MAX),
       sidebarCollapsed: Boolean(parsed.sidebarCollapsed),
       listCollapsed: Boolean(parsed.listCollapsed),
-      // The sidebar is intentionally a fixed icon rail. Older saved layouts
-      // may contain `sidebarRail: false`; normalize those on load.
-      sidebarRail: true,
     };
   } catch {
     return fallback;
@@ -81,10 +76,6 @@ export function revealNoteBrowser(layout: PaneLayout): PaneLayout {
   };
 }
 
-/** The sidebar shows the icon rail only when it is in rail mode and not fully hidden. */
-export function isSidebarRail(layout: PaneLayout): boolean {
-  return !layout.sidebarCollapsed;
-}
 
 export const TOOLBAR_OVERFLOW_WIDTH = 34;
 
@@ -106,4 +97,13 @@ export function visibleToolbarCount(
     count += 1;
   }
   return count;
+}
+
+/** Dragging the sidebar edge both resizes it and brings a hidden one back. */
+export function resizeSidebarTo(layout: PaneLayout, edge: number): PaneLayout {
+  return {
+    ...layout,
+    sidebarCollapsed: false,
+    sidebarWidth: clampPaneWidth(edge, SIDEBAR_MIN, SIDEBAR_MAX),
+  };
 }

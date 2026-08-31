@@ -8,7 +8,7 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
-    "test": "node --experimental-strip-types --test src/noteSelection.test.ts src/fileAttachment.test.ts src/ui/panes.test.ts src/ui/tabs.test.ts src/ui/noteList.test.ts src/ui/search.test.ts src/ui/reminders.test.ts src/ui/noteContent.test.ts src/ui/share.test.ts src/ui/editorChrome.test.ts src/ui/sidebar.test.ts src/ui/navigation.test.ts src/filesView.test.ts src/App.hooks.test.ts src/appMenus.test.ts src/noteActions.test.ts src/noteStore.test.ts src/noteSession.test.ts src/sidebarFlyout.test.ts src/editorHandle.test.ts src/commands.test.ts src/components/inlineCheckbox.test.ts",
+    "test": "node --experimental-strip-types --test src/noteSelection.test.ts src/fileAttachment.test.ts src/ui/panes.test.ts src/ui/tabs.test.ts src/ui/noteList.test.ts src/ui/search.test.ts src/ui/reminders.test.ts src/ui/noteContent.test.ts src/ui/share.test.ts src/ui/editorChrome.test.ts src/ui/sidebar.test.ts src/ui/navigation.test.ts src/filesView.test.ts src/App.hooks.test.ts src/appMenus.test.ts src/noteActions.test.ts src/omniFocus.test.ts src/htmlEntities.test.ts src/noteStore.test.ts src/noteSession.test.ts src/sidebarFlyout.test.ts src/editorHandle.test.ts src/commands.test.ts src/components/inlineCheckbox.test.ts",
     "test:e2e": "node --experimental-strip-types --test e2e/sidebarFlyout.e2e.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.e2e.json",
     "build": "tsc && vite build",
@@ -89,6 +89,12 @@
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico"
     },
+    "protocols": [
+      {
+        "name": "Notebook",
+        "schemes": ["notebook"]
+      }
+    ],
     "mac": {
       "target": [
         "dmg"

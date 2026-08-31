@@ -28,6 +28,26 @@ import type { EditorCommand } from "./editorHandle.ts";
 import type { SettingsSection } from "./components/SettingsModal.tsx";
 
 export type CommandContext = {
+  sendToOmniClone: (mode?: "note" | "checklists") => void;
+  copyNoteTitle: (title?: string) => void;
+  tags: { id: string; name: string }[];
+  addTagToSelected: (tagId: string) => void;
+  openJump: (mode?: "all" | "notebook" | "tag") => void;
+  reopenClosedTab: () => void;
+  canReopenClosedTab: boolean;
+  recentNotes: { id: string; title: string }[];
+  closeAllTabs: () => void;
+  pinActiveTab: () => void;
+  isActiveTabPinned: boolean;
+  openSelectedInTabs: () => void;
+  toggleNoteLocked: () => void;
+  isNoteLocked: boolean;
+  setNoteColor: (color: string) => void;
+  noteColor: string;
+  openShortcutsOverlay: () => void;
+  collapseAllListGroups: () => void;
+  expandAllListGroups: () => void;
+  canCollapseListGroups: boolean;
   filter: ViewFilter;
   selectedNoteIds: Set<string>;
   selectedNotes: NoteSummary[];
@@ -76,13 +96,14 @@ export type CommandContext = {
   persistEditorChrome: (chrome: EditorChrome) => void;
   revealSidebarFlyout: (kind: SidebarFlyoutKind) => void;
   closeSidebarFlyout: () => void;
+  revealNoteList: () => void;
   restoreSelectedNotes: () => void;
   deleteSelectedNotes: () => void;
   shortcutSelectedNotes: (add: boolean) => void;
   pinSelectedNotes: (pinned: boolean) => void;
   duplicateSelectedNotes: () => void;
   mergeSelectedNotes: () => void;
-  exportSelectedNotes: (format: "html" | "enex" | "markdown") => void;
+  exportSelectedNotes: (format: "html" | "enex" | "markdown" | "pdf") => void;
   archiveSelectedNotes: (archived: boolean) => void;
   copyActiveNoteAs: (format: "rich" | "plain" | "markdown") => void;
   exportNotebook: (notebookId: string, name: string) => void;
@@ -279,6 +300,7 @@ export const COMMANDS: Command[] = [
     run: (ctx) => {
       ctx.closeSidebarFlyout();
       ctx.setFilter({ type: "all" });
+      ctx.revealNoteList();
     },
   },
   {
@@ -295,6 +317,7 @@ export const COMMANDS: Command[] = [
     run: (ctx) => {
       ctx.closeSidebarFlyout();
       ctx.setFilter({ type: "reminders" });
+      ctx.revealNoteList();
     },
   },
   {
@@ -303,6 +326,7 @@ export const COMMANDS: Command[] = [
     run: (ctx) => {
       ctx.closeSidebarFlyout();
       ctx.setFilter({ type: "files" });
+      ctx.revealNoteList();
     },
   },
   {

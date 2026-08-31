@@ -9,6 +9,7 @@ export type ContextTarget =
   | { kind: "sidebar"; x: number; y: number };
 
 export type RenameTarget =
+  | { kind: "note"; id: string; name: string }
   | { kind: "notebook"; id: string; name: string }
   | { kind: "stack"; id: string; name: string }
   | { kind: "tag"; id: string; name: string };
@@ -18,6 +19,7 @@ export type NoteTab = {
   noteId: string | null;
   title: string;
   filter: ViewFilter;
+  pinned?: boolean;
 };
 
 export type PendingConfirm = {

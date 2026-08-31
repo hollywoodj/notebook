@@ -183,6 +183,9 @@ pub fn default_preferences() -> serde_json::Value {
         "list_view": "snippets",
         "list_density": "comfortable",
         "sort_by": "updated",
+        "sort_descending": false,
+        "spell_language": "en-US",
+        "show_completed_reminders": true,
         "new_note_behavior": "blank",
         "auto_save_ms": 600,
         "show_shortcuts": true,
@@ -194,6 +197,9 @@ pub fn default_preferences() -> serde_json::Value {
         "show_import": true,
         "show_reminders": true,
         "default_notebook_id": null,
-        "pdf_view": "expanded"
+        "pdf_view": "expanded",
+        "omniclone_enabled": true,
+        "omniclone_scheme": "omniclone",
+        "omniclone_send_due": true
     })
 }

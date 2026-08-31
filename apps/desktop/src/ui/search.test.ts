@@ -1,22 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  deleteSavedSearch,
-  findMatchOffsets,
-  jumpToMatches,
-  nextMatchIndex,
-  noteMatchesDateRange,
-  noteMatchesFacets,
-  noteMatchesSearchOperators,
-  paletteMatches,
-  parseRecentSearches,
-  parseSavedSearches,
-  parseSearchQuery,
-  rememberSearch,
-  snippetParts,
-  toggleListFacet,
-  upsertSavedSearch,
-} from "./search.ts";
+import { deleteSavedSearch, findMatchOffsets, jumpToMatches, nextMatchIndex, noteMatchesDateRange, noteMatchesFacets, noteMatchesSearchOperators, paletteMatches, parseRecentSearches, parseSavedSearches, parseSearchQuery, rememberSearch, snippetParts, toggleListFacet, upsertSavedSearch } from "./search.ts";
 
 describe("findMatchOffsets", () => {
   it("finds non-overlapping case-insensitive matches", () => {
@@ -143,5 +127,12 @@ describe("paletteMatches", () => {
     ];
     assert.equal(paletteMatches("sear", actions)[0].id, "search");
     assert.equal(paletteMatches("", actions).length, 2);
+  });
+});
+
+describe("find in note", () => {
+  it("honors match case and whole word", () => {
+    assert.deepEqual(findMatchOffsets("Note note NOTE", "Note", { caseSensitive: true }), [0]);
+    assert.deepEqual(findMatchOffsets("notebook note noted", "note", { wholeWord: true }), [9]);
   });
 });

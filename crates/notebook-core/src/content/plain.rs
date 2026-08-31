@@ -56,10 +56,14 @@ pub fn strip_html(html: &str) -> String {
             _ => {}
         }
     }
-    let normalized = out.split_whitespace().collect::<Vec<_>>().join(" ");
-    quick_xml::escape::unescape(&normalized)
-        .map(|text| text.into_owned())
-        .unwrap_or(normalized)
+    // Decode before collapsing whitespace, not after: `&nbsp;` decodes to
+    // U+00A0, which IS whitespace, so decoding second leaves it sitting in the
+    // text. Not `quick_xml::escape::unescape` either - that returns Err for an
+    // entity it does not know, and the old fallback then returned the string
+    // with NOTHING decoded, so one `&nbsp;` left every `&amp;` in the note
+    // untouched in the search index.
+    let decoded = super::decode_xml_entities(&out);
+    decoded.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]
@@ -77,6 +81,19 @@ mod tests {
         assert_eq!(
             strip_html("<p>Ever<b>note</b> &amp; Notebook</p>"),
             "Evernote & Notebook"
+        );
+
+        // quick_xml's unescape fails the whole string on an entity it does not
+        // know, and the old fallback then decoded nothing at all. Evernote HTML
+        // is full of `&nbsp;`, so this case is the common one, not the edge.
+        assert_eq!(
+            strip_html("<p>Tasks&nbsp;&amp;&nbsp;notes</p>"),
+            "Tasks & notes"
+        );
+        assert_eq!(strip_html("<p>50&#37; done &#x2713;</p>"), "50% done \u{2713}");
+        assert_eq!(
+            strip_html("<p>Bare &amp and &unknown; stay</p>"),
+            "Bare &amp and &unknown; stay"
         );
     }
 }

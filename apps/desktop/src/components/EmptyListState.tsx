@@ -32,6 +32,8 @@ export function EmptyListState({
       <Icon.Tags size={36} />
     ) : filter.type === "search" ? (
       <Icon.Search size={36} />
+    ) : filter.type === "archived" ? (
+      <Icon.Archive size={36} />
     ) : (
       <Icon.Notes size={36} />
     );

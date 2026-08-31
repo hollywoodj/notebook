@@ -70,6 +70,7 @@ function stubContext(overrides: Partial<CommandContext> = {}): CommandContext {
     persistEditorChrome: noop,
     revealSidebarFlyout: noop,
     closeSidebarFlyout: noop,
+    revealNoteList: noop,
     restoreSelectedNotes: noop,
     deleteSelectedNotes: noop,
     shortcutSelectedNotes: noop,

@@ -25,6 +25,8 @@ export interface EditorChrome {
   attachmentsExpanded: boolean;
   zoom: number;
   outlineOpen: boolean;
+  statusBarHidden: boolean;
+  lineHeight: LineHeight;
 }
 
 export function defaultEditorChrome(): EditorChrome {
@@ -33,6 +35,8 @@ export function defaultEditorChrome(): EditorChrome {
     attachmentsExpanded: false,
     zoom: DEFAULT_ZOOM,
     outlineOpen: false,
+    statusBarHidden: false,
+    lineHeight: 1.5,
   };
 }
 
@@ -63,6 +67,8 @@ export function parseEditorChrome(raw: string | null): EditorChrome {
       attachmentsExpanded: Boolean(parsed.attachmentsExpanded),
       zoom: clampZoom(Number(parsed.zoom ?? DEFAULT_ZOOM)),
       outlineOpen: Boolean(parsed.outlineOpen),
+      statusBarHidden: Boolean(parsed.statusBarHidden),
+      lineHeight: parseLineHeight(parsed.lineHeight),
     };
   } catch {
     return fallback;
@@ -102,3 +108,74 @@ export const CODE_LANGUAGES = [
   { id: "css", label: "CSS" },
   { id: "shell", label: "Shell" },
 ] as const;
+
+
+export const IMAGE_SIZE_PRESETS = [
+  { id: "small", label: "Small", width: "25%" },
+  { id: "medium", label: "Medium", width: "50%" },
+  { id: "large", label: "Large", width: "75%" },
+  { id: "original", label: "Original", width: "" },
+] as const;
+
+export function clampImageWidth(width: number): number {
+  if (!Number.isFinite(width)) return 320;
+  return Math.min(1200, Math.max(80, Math.round(width)));
+}
+
+export const LINE_HEIGHTS = [1, 1.15, 1.5, 2] as const;
+
+export type LineHeight = (typeof LINE_HEIGHTS)[number];
+
+export function parseLineHeight(value: unknown): LineHeight {
+  const numeric = Number(value);
+  return (LINE_HEIGHTS as readonly number[]).includes(numeric)
+    ? (numeric as LineHeight)
+    : 1.5;
+}
+
+export function nextLineHeight(current: LineHeight, direction: 1 | -1): LineHeight {
+  const index = LINE_HEIGHTS.indexOf(current);
+  const next = Math.min(LINE_HEIGHTS.length - 1, Math.max(0, index + direction));
+  return LINE_HEIGHTS[next];
+}
+
+export function nextFontSize(current: string | undefined, direction: 1 | -1): string {
+  const sizes = [...EDITOR_FONT_SIZES];
+  const parsed = Number.parseInt(String(current || ""), 10);
+  const fallback = 16;
+  const value = Number.isFinite(parsed) ? parsed : fallback;
+  let index = sizes.findIndex((size) => size >= value);
+  if (index < 0) index = sizes.length - 1;
+  if (sizes[index] !== value && direction < 0) index = Math.max(0, index - 1);
+  const next = sizes[Math.min(sizes.length - 1, Math.max(0, index + direction))];
+  return `${next}px`;
+}
+
+export const SPELLCHECK_LANGUAGES = [
+  { id: "en-US", label: "English (US)" },
+  { id: "en-GB", label: "English (UK)" },
+  { id: "de-DE", label: "German" },
+  { id: "fr-FR", label: "French" },
+  { id: "es-ES", label: "Spanish" },
+  { id: "it-IT", label: "Italian" },
+  { id: "pt-BR", label: "Portuguese (Brazil)" },
+  { id: "nl-NL", label: "Dutch" },
+  { id: "pl-PL", label: "Polish" },
+  { id: "ru-RU", label: "Russian" },
+  { id: "ja-JP", label: "Japanese" },
+  { id: "zh-CN", label: "Chinese (Simplified)" },
+  { id: "ko-KR", label: "Korean" },
+] as const;
+
+export function insertDateStamp(now = new Date()): string {
+  return now.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+export function insertTimeStamp(now = new Date()): string {
+  return now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}

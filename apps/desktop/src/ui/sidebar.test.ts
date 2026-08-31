@@ -1,17 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  collapseAllIds,
-  hasVisibleSidebarNotebooks,
-  matchesSidebarFilter,
-  notebooksMatchingFilter,
-  parseCollapsedStacks,
-  sidebarFilterLabel,
-  sidebarFlyoutAfterClick,
-  sidebarFlyoutAfterHover,
-  sidebarFlyoutTitle,
-  toggleCollapsedId,
-} from "./sidebar.ts";
+import { collapseAllIds, hasVisibleSidebarNotebooks, matchesSidebarFilter, notebooksMatchingFilter, parseCollapsedStacks, sidebarFilterLabel, sidebarFlyoutAfterClick, sidebarFlyoutAfterHover, sidebarFlyoutTitle, toggleCollapsedId } from "./sidebar.ts";
 
 describe("sidebar flyouts", () => {
   it("previews on hover without replacing a pinned panel", () => {

@@ -350,4 +350,33 @@ export const Icon = {
       <path d="M5 19h14" />
     </I>
   ),
+  Archive: (p: IconProps) => (
+    <I {...p}>
+      <path d="M4 7h16l-1 12H5L4 7z" />
+      <path d="M3 7V5h18v2" />
+      <path d="M10 12h4" />
+    </I>
+  ),
+  Compact: (p: IconProps) => (
+    <I {...p}>
+      <path d="M5 7h14M5 12h14M5 17h14" />
+    </I>
+  ),
+  Sort: (p: IconProps) => (
+    <I {...p}>
+      <path d="M8 6v12M8 18l-3-3M8 18l3-3M16 18V6M16 6l-3 3M16 6l3 3" />
+    </I>
+  ),
+  Lock: (p: IconProps) => (
+    <I {...p}>
+      <rect x="6" y="11" width="12" height="9" rx="1.5" />
+      <path d="M9 11V8a3 3 0 0 1 6 0v3" />
+    </I>
+  ),
+  Calendar: (p: IconProps) => (
+    <I {...p}>
+      <rect x="4" y="5" width="16" height="15" rx="1.5" />
+      <path d="M8 3v4M16 3v4M4 10h16" />
+    </I>
+  ),
 };

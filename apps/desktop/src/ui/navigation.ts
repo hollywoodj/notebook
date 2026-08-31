@@ -78,3 +78,65 @@ export function parseLastSession(raw: string | null): LastSession | null {
     return null;
   }
 }
+
+export const RECENT_NOTES_KEY = "notebook.recentNotes";
+
+export type RecentNote = { id: string; title: string };
+
+export function parseRecentNotes(raw: string | null): RecentNote[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && typeof item.id === "string")
+      .map((item) => ({
+        id: String(item.id),
+        title: String(item.title || "Untitled"),
+      }))
+      .slice(0, 12);
+  } catch {
+    return [];
+  }
+}
+
+export function rememberRecentNote(
+  list: RecentNote[],
+  note: RecentNote,
+  limit = 12
+): RecentNote[] {
+  if (!note.id) return list;
+  return [
+    { id: note.id, title: note.title.trim() || "Untitled" },
+    ...list.filter((item) => item.id !== note.id),
+  ].slice(0, limit);
+}
+
+export function viewFilterKey(
+  filter: { type: string; id?: string; query?: string },
+  searchScopeId?: string | null
+): string {
+  const scope = searchScopeId ? `@${searchScopeId}` : "";
+  if (filter.type === "notebook" || filter.type === "tag") {
+    return `${filter.type}:${filter.id || ""}${scope}`;
+  }
+  if (filter.type === "search") {
+    return `search:${filter.query || ""}${scope}`;
+  }
+  return `${filter.type}${scope}`;
+}
+
+export function viewTitleForFilter(
+  filter: { type: string; name?: string; query?: string }
+): string {
+  if (filter.type === "all") return "Notes";
+  if (filter.type === "notebook") return filter.name || "Notebook";
+  if (filter.type === "tag") return `#${filter.name || "tag"}`;
+  if (filter.type === "shortcuts") return "Shortcuts";
+  if (filter.type === "reminders") return "Reminders";
+  if (filter.type === "templates") return "Templates";
+  if (filter.type === "trash") return "Trash";
+  if (filter.type === "archived") return "Archived";
+  if (filter.type === "search") return `Search: ${filter.query || ""}`;
+  return "Notes";
+}

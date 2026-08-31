@@ -86,3 +86,92 @@ export function toggleCollapsedId(ids: string[], id: string): string[] {
 export function collapseAllIds(allIds: string[]): string[] {
   return [...new Set(allIds.filter(Boolean))];
 }
+
+export const SIDEBAR_NAV_ICON_SIZE = 20;
+
+export function navIconTitle(label: string, count?: number | null): string {
+  return typeof count === "number" && Number.isFinite(count)
+    ? `${label} (${Math.round(count)})`
+    : label;
+}
+
+export type SidebarSectionId = (typeof DEFAULT_SIDEBAR_SECTIONS)[number];
+
+export const DEFAULT_SIDEBAR_SECTIONS = [
+  "notes",
+  "shortcuts",
+  "reminders",
+  "notebooks",
+  "tags",
+  "templates",
+  "archived",
+  "saved",
+  "trash",
+] as const;
+
+export const SIDEBAR_SECTIONS_KEY = "notebook.sidebarSections";
+
+export function parseSidebarSections(raw: string | null): SidebarSectionId[] {
+  const fallback = [...DEFAULT_SIDEBAR_SECTIONS];
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return fallback;
+    const allowed = new Set<string>(DEFAULT_SIDEBAR_SECTIONS);
+    const seen = new Set<string>();
+    const ordered: SidebarSectionId[] = [];
+    for (const item of parsed) {
+      if (typeof item === "string" && allowed.has(item) && !seen.has(item)) {
+        ordered.push(item as SidebarSectionId);
+        seen.add(item);
+      }
+    }
+    for (const item of DEFAULT_SIDEBAR_SECTIONS) {
+      if (!seen.has(item)) ordered.push(item);
+    }
+    return ordered;
+  } catch {
+    return fallback;
+  }
+}
+
+export function moveSidebarSection(
+  sections: SidebarSectionId[],
+  id: SidebarSectionId,
+  direction: -1 | 1
+): SidebarSectionId[] {
+  const index = sections.indexOf(id);
+  if (index < 0) return sections;
+  const nextIndex = index + direction;
+  if (nextIndex < 0 || nextIndex >= sections.length) return sections;
+  const next = [...sections];
+  const [item] = next.splice(index, 1);
+  next.splice(nextIndex, 0, item);
+  return next;
+}
+
+export function sidebarSectionLabel(id: SidebarSectionId): string {
+  const labels: Record<SidebarSectionId, string> = {
+    notes: "Notes",
+    shortcuts: "Shortcuts",
+    reminders: "Reminders",
+    notebooks: "Notebooks",
+    tags: "Tags",
+    templates: "Templates",
+    archived: "Archived",
+    saved: "Saved searches",
+    trash: "Trash",
+  };
+  return labels[id];
+}
+
+const AVATAR_COLORS = ["#00a82d", "#2b6cb0", "#d64545", "#d9822b", "#6b46c1", "#0f9d8e"];
+
+export function avatarColor(name: string): string {
+  const source = name.trim() || "?";
+  let hash = 0;
+  for (let i = 0; i < source.length; i++) {
+    hash = (hash * 31 + source.charCodeAt(i)) | 0;
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}

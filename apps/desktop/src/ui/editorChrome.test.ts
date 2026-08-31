@@ -1,12 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  attachmentsLabel,
-  formattingToolbarVisible,
-  nextZoom,
-  parseEditorChrome,
-  windowTitleForNote,
-} from "./editorChrome.ts";
+import { attachmentsLabel, formattingToolbarVisible, insertDateStamp, insertTimeStamp, nextFontSize, nextLineHeight, nextZoom, parseEditorChrome, parseLineHeight, windowTitleForNote } from "./editorChrome.ts";
+import { parseRecentNotes, rememberRecentNote } from "./navigation.ts";
+import { parsePaneLayout } from "./panes.ts";
 
 describe("editor chrome", () => {
   it("clamps zoom to Evernote-like 50–200% steps", () => {
@@ -50,5 +46,25 @@ describe("windowTitleForNote", () => {
     assert.equal(windowTitleForNote(null), "Notebook");
     assert.equal(windowTitleForNote(""), "Untitled – Notebook");
     assert.equal(windowTitleForNote(" Meeting notes "), "Meeting notes – Notebook");
+  });
+});
+
+describe("parsePaneLayout", () => {
+  it("steps font sizes and stamps date/time", () => {
+    assert.equal(nextFontSize("16px", 1), "18px");
+    assert.equal(nextFontSize("16px", -1), "14px");
+    assert.equal(nextFontSize(undefined, 1), "18px");
+    assert.match(insertDateStamp(new Date("2026-08-19T15:04:00")), /2026/);
+    assert.match(insertTimeStamp(new Date("2026-08-19T15:04:00")), /4/);
+  });
+
+  it("steps line height and remembers recent notes", () => {
+    assert.equal(parseLineHeight(1.15), 1.15);
+    assert.equal(parseLineHeight(9), 1.5);
+    assert.equal(nextLineHeight(1.5, 1), 2);
+    assert.equal(nextLineHeight(1, -1), 1);
+    const recent = rememberRecentNote([{ id: "a", title: "A" }], { id: "b", title: "B" });
+    assert.deepEqual(recent.map((item) => item.id), ["b", "a"]);
+    assert.equal(parseRecentNotes(JSON.stringify(recent))[0].id, "b");
   });
 });
