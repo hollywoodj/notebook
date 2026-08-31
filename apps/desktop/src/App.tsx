@@ -48,6 +48,8 @@ import { noteStore } from "./noteStore";
 import { useNoteStore } from "./useNoteStore";
 import { noteSession } from "./noteSession";
 import { useNoteSession } from "./useNoteSession";
+import { sidebarFlyout as sidebarFlyoutStore } from "./sidebarFlyout";
+import { useSidebarFlyout } from "./useSidebarFlyout";
 import { buildContextMenu, buildMenuBar, type AppMenuContext } from "./appMenus";
 import { matchCommand, paletteActions, runCommandById } from "./commands";
 import { isPdfFile, titleFromFilename } from "./components/fileAttachment";
@@ -100,14 +102,11 @@ import {
   collapseAllIds,
   hasVisibleSidebarNotebooks,
   matchesSidebarFilter,
-  sidebarFlyoutAfterClick,
-  sidebarFlyoutAfterHover,
   notebooksMatchingFilter,
   parseCollapsedStacks,
   sidebarFilterLabel,
   sidebarFlyoutTitle,
   toggleCollapsedId,
-  type SidebarFlyout,
   type SidebarFlyoutKind,
 } from "./ui/sidebar";
 import {
@@ -200,8 +199,6 @@ export default function App() {
   const [jumpNotes, setJumpNotes] = useState<NoteSummary[]>([]);
   const [notebookPicker, setNotebookPicker] = useState<"move" | "copy" | null>(null);
   const [showReminderMenu, setShowReminderMenu] = useState(false);
-  const [sidebarFilter, setSidebarFilter] = useState("");
-  const [sidebarFilterOpen, setSidebarFilterOpen] = useState(false);
   const [editorChrome, setEditorChrome] = useState(() =>
     parseEditorChrome(
       typeof localStorage === "undefined" ? null : localStorage.getItem(EDITOR_CHROME_KEY)
@@ -228,8 +225,12 @@ export default function App() {
     () => new Set(shortcutNotes.map((n) => n.id)),
     [shortcutNotes]
   );
-  const [sidebarFlyout, setSidebarFlyout] = useState<SidebarFlyout>(null);
-  const [sidebarFlyoutPinned, setSidebarFlyoutPinned] = useState(false);
+  const {
+    flyout: sidebarFlyout,
+    pinned: sidebarFlyoutPinned,
+    filter: sidebarFilter,
+    filterOpen: sidebarFilterOpen,
+  } = useSidebarFlyout(sidebarFlyoutStore);
   const [showInfo, setShowInfo] = useState(false);
   const editorHandleRef = useRef<EditorHandle | null>(null);
   const { runEditorCommand, openFind, openReplace } = useMemo(
@@ -262,7 +263,6 @@ export default function App() {
   const skipNoteClickRef = useRef(false);
   const sessionReadyRef = useRef(false);
   const hoverTimerRef = useRef<number | null>(null);
-  const sidebarFlyoutCloseTimerRef = useRef<number | null>(null);
 
   const openSettings = (section: SettingsSection = "application") => {
     setSettingsSection(section);
@@ -358,79 +358,44 @@ export default function App() {
     }
   };
 
+  /* The flyout state machine itself lives in `sidebarFlyout.ts`, where it is
+   * unit-tested against a fake clock. These wrappers exist only to pair a
+   * transition with the DOM work the store deliberately does not own. */
+
   /** A hidden sidebar has nowhere to hang the panel, so bring it back first. */
   const revealSidebarFlyout = (kind: SidebarFlyoutKind) => {
     if (paneLayout.sidebarCollapsed) {
       persistPaneLayout({ ...paneLayout, sidebarCollapsed: false });
     }
-    setSidebarFlyout(kind);
-    setSidebarFlyoutPinned(true);
+    sidebarFlyoutStore.reveal(kind);
   };
 
+  const cancelSidebarFlyoutClose = () => sidebarFlyoutStore.cancelClose();
 
-  const cancelSidebarFlyoutClose = () => {
-    if (sidebarFlyoutCloseTimerRef.current === null) return;
-    window.clearTimeout(sidebarFlyoutCloseTimerRef.current);
-    sidebarFlyoutCloseTimerRef.current = null;
-  };
-
-  const closeSidebarFlyout = () => {
-    cancelSidebarFlyoutClose();
-    setSidebarFlyout(null);
-    setSidebarFlyoutPinned(false);
-    setSidebarFilter("");
-    setSidebarFilterOpen(false);
-  };
+  const closeSidebarFlyout = () => sidebarFlyoutStore.close();
 
   /** Hover previews a section; a click pins it until navigation, Escape, or another click. */
-  const previewSidebarFlyout = (kind: SidebarFlyoutKind) => {
-    cancelSidebarFlyoutClose();
-    const next = sidebarFlyoutAfterHover(sidebarFlyout, sidebarFlyoutPinned, kind);
-    if (next.flyout !== sidebarFlyout) {
-      setSidebarFilter("");
-      setSidebarFilterOpen(false);
-    }
-    setSidebarFlyout(next.flyout);
-    setSidebarFlyoutPinned(next.pinned);
-  };
+  const previewSidebarFlyout = (kind: SidebarFlyoutKind) =>
+    sidebarFlyoutStore.preview(kind);
 
-  const scheduleSidebarFlyoutClose = () => {
-    cancelSidebarFlyoutClose();
-    if (sidebarFlyoutPinned) return;
-    sidebarFlyoutCloseTimerRef.current = window.setTimeout(() => {
-      setSidebarFlyout(null);
-      setSidebarFilter("");
-      setSidebarFilterOpen(false);
-      sidebarFlyoutCloseTimerRef.current = null;
-    }, 180);
-  };
-  const openSidebarFilter = (kind: "notebooks" | "tags" = "notebooks") => {
-    setSidebarFilterOpen(true);
-    revealSidebarFlyout(kind);
+  const scheduleSidebarFlyoutClose = () => sidebarFlyoutStore.scheduleClose();
+
+  /** Opening a different section starts it unfiltered, so the panel matches its label. */
+  const openSidebarFlyout = (kind: SidebarFlyoutKind) => sidebarFlyoutStore.open(kind);
+
+  const focusSidebarFilter = () => {
     window.setTimeout(() => sidebarFilterRef.current?.focus(), 0);
   };
 
-  /** Opening a different section starts it unfiltered, so the panel matches its label. */
-  const openSidebarFlyout = (kind: SidebarFlyoutKind) => {
-    cancelSidebarFlyoutClose();
-    const next = sidebarFlyoutAfterClick(sidebarFlyout, sidebarFlyoutPinned, kind);
-    if (!next.flyout) {
-      closeSidebarFlyout();
-      return;
+  const openSidebarFilter = (kind: "notebooks" | "tags" = "notebooks") => {
+    if (paneLayout.sidebarCollapsed) {
+      persistPaneLayout({ ...paneLayout, sidebarCollapsed: false });
     }
-    setSidebarFlyout(next.flyout);
-    setSidebarFlyoutPinned(next.pinned);
-    if (next.flyout !== sidebarFlyout) {
-      setSidebarFilter("");
-      setSidebarFilterOpen(false);
-    }
+    sidebarFlyoutStore.openFilter(kind);
+    focusSidebarFilter();
   };
 
-  useEffect(() => () => {
-    if (sidebarFlyoutCloseTimerRef.current !== null) {
-      window.clearTimeout(sidebarFlyoutCloseTimerRef.current);
-    }
-  }, []);
+  useEffect(() => () => sidebarFlyoutStore.dispose(), []);
 
   const loadNote = useCallback(
     (id: string, tabId?: string) => noteSession.loadNoteInto(id, tabId),
@@ -1063,7 +1028,6 @@ export default function App() {
     openReplace,
     setFocusMode,
     setFilter: noteSession.setFilter,
-    setSidebarFlyout,
     setSelectedNoteIds: noteSession.setSelectedNoteIds,
     setShowReminderMenu,
     setPrefs,
@@ -1563,13 +1527,7 @@ export default function App() {
                     className="icon-btn"
                     title={sidebarFilterLabel(sidebarFlyout)}
                     onClick={() => {
-                      if (sidebarFilterOpen || sidebarFilter.trim()) {
-                        setSidebarFilter("");
-                        setSidebarFilterOpen(false);
-                      } else {
-                        setSidebarFilterOpen(true);
-                        window.setTimeout(() => sidebarFilterRef.current?.focus(), 0);
-                      }
+                      if (sidebarFlyoutStore.toggleFilter()) focusSidebarFilter();
                     }}
                   >
                     <Icon.Search size={14} />
@@ -1611,12 +1569,9 @@ export default function App() {
                   <input
                     ref={sidebarFilterRef}
                     value={sidebarFilter}
-                    onChange={(e) => setSidebarFilter(e.target.value)}
+                    onChange={(e) => sidebarFlyoutStore.setFilter(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Escape") {
-                        setSidebarFilter("");
-                        setSidebarFilterOpen(false);
-                      }
+                      if (e.key === "Escape") sidebarFlyoutStore.closeFilter();
                     }}
                     placeholder={sidebarFilterLabel(sidebarFlyout)}
                     aria-label={sidebarFilterLabel(sidebarFlyout)}
@@ -1625,10 +1580,7 @@ export default function App() {
                     type="button"
                     className="icon-btn"
                     title="Close filter"
-                    onClick={() => {
-                      setSidebarFilter("");
-                      setSidebarFilterOpen(false);
-                    }}
+                    onClick={() => sidebarFlyoutStore.closeFilter()}
                   >
                     <Icon.Close size={14} />
                   </button>

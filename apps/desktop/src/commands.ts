@@ -22,7 +22,7 @@ import {
   toggleNoteExpanded,
   toggleNoteListHidden,
 } from "./ui/panes.ts";
-import { type SidebarFlyout, type SidebarFlyoutKind } from "./ui/sidebar.ts";
+import { type SidebarFlyoutKind } from "./ui/sidebar.ts";
 import { type SnoozePreset } from "./ui/reminders.ts";
 import type { EditorCommand } from "./editorHandle.ts";
 import type { SettingsSection } from "./components/SettingsModal.tsx";
@@ -68,7 +68,6 @@ export type CommandContext = {
   openReplace: () => void;
   setFocusMode: Dispatch<SetStateAction<boolean>>;
   setFilter: (filter: ViewFilter) => void;
-  setSidebarFlyout: (flyout: SidebarFlyout) => void;
   setSelectedNoteIds: (ids: Set<string>) => void;
   setShowReminderMenu: (open: boolean) => void;
   setPrefs: Dispatch<SetStateAction<Preferences>>;

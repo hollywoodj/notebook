@@ -56,7 +56,6 @@ function stubMenu(overrides: Partial<AppMenuContext> = {}): AppMenuContext {
     openReplace: noop,
     setFocusMode: noop,
     setFilter: noop,
-    setSidebarFlyout: noop,
     setSelectedNoteIds: noop,
     setShowReminderMenu: noop,
     setPrefs: noop,

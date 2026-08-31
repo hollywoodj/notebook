@@ -509,7 +509,7 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         { label: "Notebooks", onSelect: () => ctx.revealSidebarFlyout("notebooks") },
         { label: "Tags", onSelect: () => ctx.revealSidebarFlyout("tags") },
         commandItem("view.reminders", ctx),
-        { label: "Templates", onSelect: () => { ctx.setSidebarFlyout(null); ctx.setFilter({ type: "templates" }); } },
+        { label: "Templates", onSelect: () => { ctx.closeSidebarFlyout(); ctx.setFilter({ type: "templates" }); } },
         commandItem("view.files", ctx),
         { type: "separator" },
         commandItem("nav.back", ctx),

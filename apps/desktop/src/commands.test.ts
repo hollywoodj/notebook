@@ -62,7 +62,6 @@ function stubContext(overrides: Partial<CommandContext> = {}): CommandContext {
     openReplace: noop,
     setFocusMode: noop,
     setFilter: noop,
-    setSidebarFlyout: noop,
     setSelectedNoteIds: noop,
     setShowReminderMenu: noop,
     setPrefs: noop,
