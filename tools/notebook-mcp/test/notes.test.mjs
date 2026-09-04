@@ -259,10 +259,10 @@ test("review entries stay newest-first as add_report's unshift pattern maintains
 // Project-name defaulting
 // ---------------------------------------------------------------------------
 
-test("resolveRequiredProject defaults to cwd basename, and refuses the Dev root", () => {
+test("resolveRequiredProject defaults to cwd basename, resolving the Dev root to the reserved \"Dev\" project", () => {
   assert.equal(resolveRequiredProject("Explicit", "C:/Users/James/Dev/Apps/notebook"), "Explicit");
   assert.equal(resolveRequiredProject(undefined, "C:/Users/James/Dev/Apps/notebook"), "notebook");
-  assert.throws(() => resolveRequiredProject(undefined, "C:/Users/James/Dev"), ToolInputError);
+  assert.equal(resolveRequiredProject(undefined, "C:/Users/James/Dev"), "Dev");
 });
 
 test("requireProjectArg never defaults - it errors on a missing/blank project", () => {

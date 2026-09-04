@@ -90,6 +90,68 @@ test("parseTaskListItems / renderTaskList round-trip", () => {
   assert.deepEqual(parsed, items);
 });
 
+// ---------------------------------------------------------------------------
+// GFM tables
+// ---------------------------------------------------------------------------
+
+test("markdown table -> TipTap-shaped HTML -> markdown round-trips headers, rows, and inline formatting", () => {
+  const md = `| Project | What | Last touched |
+| --- | --- | ---: |
+| notebook | **Notes** app | 2026-09-04 |
+| BBC | Casting \`show\` | 2026-08-18 |`;
+
+  const html = markdownToHtml(md);
+  // Exact TipTap shape: <table><tbody><tr><th><p>..</p></th>...<tr><td><p>..</p></td>...
+  assert.match(html, /^<table><tbody>/);
+  assert.match(html, /<\/tbody><\/table>$/);
+  assert.match(html, /<tr><th><p>Project<\/p><\/th><th><p>What<\/p><\/th><th><p>Last touched<\/p><\/th><\/tr>/);
+  assert.match(html, /<td><p><strong>Notes<\/strong> app<\/p><\/td>/);
+  assert.match(html, /<td><p>Casting <code>show<\/code><\/p><\/td>/);
+  // alignment row must never become a data row
+  assert.doesNotMatch(html, /---/);
+
+  const back = htmlToMarkdown(html);
+  assert.match(back, /^\| Project \| What \| Last touched \|$/m);
+  assert.match(back, /^\| --- \| --- \| --- \|$/m);
+  assert.match(back, /\*\*Notes\*\* app/);
+  assert.match(back, /Casting `show`/);
+  assert.match(back, /notebook/);
+  assert.match(back, /BBC/);
+});
+
+test("table cells handle escaped pipes and never break table syntax round-trip", () => {
+  const md = `| A | B |
+| --- | --- |
+| pipe \\| here | plain |`;
+  const html = markdownToHtml(md);
+  assert.match(html, /<td><p>pipe \| here<\/p><\/td>/);
+  const back = htmlToMarkdown(html);
+  assert.match(back, /pipe \\\| here/);
+});
+
+test("a ragged table (mismatched row widths) degrades to a readable padded table instead of throwing", () => {
+  const md = `| A | B | C |
+| --- | --- | --- |
+| short |
+| exact | row | here |
+| too | many | cells | overflow |`;
+  assert.doesNotThrow(() => markdownToHtml(md));
+  const html = markdownToHtml(md);
+  const back = htmlToMarkdown(html);
+  assert.doesNotThrow(() => htmlToMarkdown(html));
+  // every row padded/normalized to the widest row seen (4 columns)
+  for (const line of back.split("\n")) {
+    if (!line.startsWith("|")) continue;
+    assert.equal((line.match(/\|/g) || []).length, 5); // 4 cells -> 5 pipes
+  }
+});
+
+test("htmlToMarkdown never throws on a malformed table (no <tr> rows) - degrades to plain text", () => {
+  assert.doesNotThrow(() => htmlToMarkdown("<table><p>not really a table</p></table>"));
+  const back = htmlToMarkdown("<table><p>not really a table</p></table>");
+  assert.match(back, /not really a table/);
+});
+
 test("HTML entity decoding", () => {
   const html = "<p>Tom &amp; Jerry say &quot;hi&nbsp;there&quot; &lt;3 &gt; &#39;ok&#39;</p>";
   const md = htmlToMarkdown(html);

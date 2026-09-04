@@ -126,11 +126,14 @@ REST API (`NOTEBOOK_API`, default `http://127.0.0.1:8799`) when reachable,
 or direct SQLite (Node's built-in `node:sqlite`, no new dependency) when the
 app/API is closed - so it keeps working offline. Every write lands in that
 note's normal revision history on either transport. The notebook holds a
-`Dev Log` catch-all note plus one opt-in note per enabled project (bugs,
-future improvements, and architecture reviews all live together per
-project). See `tools/notebook-mcp/README.md` for the 11 tools, the note
-model, the transport/DB-path resolution, and how to register it with
-`claude mcp add`.
+`Dev Log` catch-all note, one opt-in note per enabled project (bugs, future
+improvements, and architecture reviews all live together per project), and a
+global `Dev - Overview` note that one-way mirrors James's Dev root markdown
+files (NOW/GOALS/STACK/PROJECTS/PORTS/DECISIONS/SKILLS/GLOSSARY/SETUP/
+CLAUDE.md) into a generated Reference zone alongside a hand-maintained Ideas
+list, so they're readable from the notes app. See `tools/notebook-mcp/README.md`
+for the 13 tools, the note model, the transport/DB-path resolution, and how
+to register it with `claude mcp add`.
 
 ### Run the desktop app (dev)
 

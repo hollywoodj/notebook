@@ -76,7 +76,7 @@ function findBalancedBlock(html, pos, tag) {
   return null; // unclosed - malformed input, bail
 }
 
-const BLOCK_TAGS = ["h1", "h2", "h3", "h4", "ul", "ol", "pre", "p"];
+const BLOCK_TAGS = ["h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "pre", "p", "table"];
 
 function nextBlockOpen(html, pos) {
   let best = null;
@@ -169,6 +169,51 @@ function listToMarkdown(ulInner, ordered, indent) {
   return lines.join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// GFM tables (HTML -> Markdown)
+// ---------------------------------------------------------------------------
+
+/** Text content of one <td>/<th> cell: joins multiple <p> paragraphs (a cell's
+ * content model allows block+) with a space; falls back to stripping tags
+ * directly when there's no <p> wrapper. */
+function cellInnerToMarkdown(inner) {
+  const paragraphs = findAllBalancedBlocks(inner, "p");
+  if (paragraphs.length) return paragraphs.map((p) => inlineToMarkdown(p.inner)).join(" ");
+  return inlineToMarkdown(inner);
+}
+
+/** Pipe- and newline-escape a cell's Markdown text so it can't break table syntax. */
+function escapeTableCellText(text) {
+  return text.replace(/\r?\n/g, " ").replace(/\|/g, "\\|");
+}
+
+/** <td>/<th> cells of one <tr>, in document order (regardless of thead/tbody wrapping). */
+function extractRowCells(trInner) {
+  const tds = findAllBalancedBlocks(trInner, "td").map((b) => ({ ...b, header: false }));
+  const ths = findAllBalancedBlocks(trInner, "th").map((b) => ({ ...b, header: true }));
+  return [...tds, ...ths]
+    .sort((a, b) => a.start - b.start)
+    .map((c) => ({ text: escapeTableCellText(cellInnerToMarkdown(c.inner)), header: c.header }));
+}
+
+/** A <table> (inner HTML - whatever's between <table> and </table>, thead/tbody/colgroup
+ * and all) to a GFM pipe table. Ragged rows are padded (never truncated) to the widest
+ * row seen, so a malformed/ragged table degrades to readable text instead of throwing. */
+function tableToMarkdown(tableInner) {
+  const trs = findAllBalancedBlocks(tableInner, "tr");
+  if (!trs.length) return "";
+  const rows = trs.map((tr) => extractRowCells(tr.inner));
+  const columnCount = Math.max(1, ...rows.map((r) => r.length));
+  const padded = rows.map((r) => {
+    const cells = r.map((c) => c.text);
+    while (cells.length < columnCount) cells.push("");
+    return cells;
+  });
+  const lines = [`| ${padded[0].join(" | ")} |`, `| ${Array(columnCount).fill("---").join(" | ")} |`];
+  for (let i = 1; i < padded.length; i++) lines.push(`| ${padded[i].join(" | ")} |`);
+  return lines.join("\n");
+}
+
 export function htmlToMarkdown(html) {
   if (!html) return "";
   const out = [];
@@ -188,7 +233,9 @@ export function htmlToMarkdown(html) {
       case "h1":
       case "h2":
       case "h3":
-      case "h4": {
+      case "h4":
+      case "h5":
+      case "h6": {
         const level = Number(next.tag[1]);
         out.push(`${"#".repeat(level)} ${inlineToMarkdown(block.inner)}`);
         break;
@@ -212,6 +259,19 @@ export function htmlToMarkdown(html) {
       }
       case "ol": {
         out.push(listToMarkdown(block.inner, true, ""));
+        break;
+      }
+      case "table": {
+        // Never let a malformed table abort the whole conversion - degrade to
+        // plain text (tags stripped) instead of throwing.
+        let text;
+        try {
+          text = tableToMarkdown(block.inner);
+        } catch {
+          text = "";
+        }
+        if (!text) text = inlineToMarkdown(block.inner);
+        if (text) out.push(text);
         break;
       }
       default:
@@ -310,6 +370,67 @@ function isOrderedLine(line) {
   return /^\s*\d+\.\s+/.test(line);
 }
 
+// ---------------------------------------------------------------------------
+// GFM tables (Markdown -> HTML)
+// ---------------------------------------------------------------------------
+
+/** Split one pipe-table row into trimmed cell strings, honoring `\|` as a
+ * literal pipe rather than a delimiter and tolerating optional outer pipes. */
+function splitTableRow(line) {
+  let s = line.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
+  const cells = [];
+  let cur = "";
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "\\" && s[i + 1] === "|") {
+      cur += "|";
+      i++;
+      continue;
+    }
+    if (s[i] === "|") {
+      cells.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += s[i];
+  }
+  cells.push(cur);
+  return cells.map((c) => c.trim());
+}
+
+/** True if `line` is a GFM alignment row (`| --- | :---: | ---: |`, etc). */
+function isTableSeparatorLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed || !trimmed.includes("-")) return false;
+  const cells = splitTableRow(trimmed);
+  if (!cells.length) return false;
+  return cells.every((c) => /^:?-{1,}:?$/.test(c));
+}
+
+/** Header line + separator line + data lines -> a real `<table>`. Ragged rows
+ * (and a ragged header) are padded to the widest row, never truncated, so a
+ * malformed/ragged table degrades to a readable table instead of throwing. */
+function tableLinesToHtml(headerLine, dataLines) {
+  const headerCells = splitTableRow(headerLine);
+  const dataRows = dataLines.map(splitTableRow);
+  const columnCount = Math.max(1, headerCells.length, ...dataRows.map((r) => r.length));
+
+  const pad = (cells) => {
+    const out = cells.slice(0, columnCount);
+    while (out.length < columnCount) out.push("");
+    return out;
+  };
+
+  const headerHtml = pad(headerCells)
+    .map((c) => `<th><p>${inlineToHtml(c)}</p></th>`)
+    .join("");
+  const bodyHtml = dataRows
+    .map((row) => `<tr>${pad(row).map((c) => `<td><p>${inlineToHtml(c)}</p></td>`).join("")}</tr>`)
+    .join("");
+  return `<table><tbody><tr>${headerHtml}</tr>${bodyHtml}</tbody></table>`;
+}
+
 function taskLinesToHtml(lines) {
   const items = lines.map((line) => {
     const m = /^\s*[-*]\s+\[( |x|X)\]\s+(.*)$/.exec(line);
@@ -370,7 +491,7 @@ export function markdownToHtml(md) {
     }
 
     // headings
-    const headingMatch = /^(#{1,4})\s+(.*)$/.exec(line);
+    const headingMatch = /^(#{1,6})\s+(.*)$/.exec(line);
     if (headingMatch) {
       const level = headingMatch[1].length;
       out.push(`<h${level}>${inlineToHtml(headingMatch[2].trim())}</h${level}>`);
@@ -411,6 +532,19 @@ export function markdownToHtml(md) {
       continue;
     }
 
+    // GFM table: a header row immediately followed by a valid alignment row
+    if (line.includes("|") && i + 1 < lines.length && isTableSeparatorLine(lines[i + 1])) {
+      const headerLine = line;
+      i += 2; // skip header + separator
+      const dataLines = [];
+      while (i < lines.length && lines[i].trim() !== "" && lines[i].includes("|")) {
+        dataLines.push(lines[i]);
+        i++;
+      }
+      out.push(tableLinesToHtml(headerLine, dataLines));
+      continue;
+    }
+
     // paragraph (collect until blank line or a line starting a new block type)
     const paraLines = [line];
     i++;
@@ -419,7 +553,7 @@ export function markdownToHtml(md) {
       lines[i].trim() !== "" &&
       !/^```/.test(lines[i].trim()) &&
       !/^(---|\*\*\*)\s*$/.test(lines[i].trim()) &&
-      !/^#{1,4}\s+/.test(lines[i]) &&
+      !/^#{1,6}\s+/.test(lines[i]) &&
       !isTaskLine(lines[i]) &&
       !isBulletLine(lines[i]) &&
       !isOrderedLine(lines[i])

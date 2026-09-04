@@ -5,9 +5,11 @@ that lets Claude Code read and write notes in the Notebook app over stdio.
 
 No npm dependencies, no build step, no TypeScript. `server.mjs` hand-rolls the
 MCP JSON-RPC-over-stdio protocol using Node's built-in `fetch`; `format.mjs`
-hand-rolls the HTML<->Markdown conversion; `notes.mjs` hand-rolls the Dev
-Log / per-project note structural parsing; `sqlite.mjs` hand-rolls the offline
-SQLite path using Node's **built-in** `node:sqlite`. Node 24+ required.
+hand-rolls the HTML<->Markdown conversion (including GFM pipe tables);
+`notes.mjs` hand-rolls the Dev Log / per-project note structural parsing;
+`overview.mjs` hand-rolls the `Dev - Overview` global note's zone
+parsing/generation; `sqlite.mjs` hand-rolls the offline SQLite path using
+Node's **built-in** `node:sqlite`. Node 24+ required.
 
 ## Why it's scoped to one notebook
 
@@ -71,6 +73,7 @@ Nothing extra is added in HTTP mode.
 | `NOTEBOOK_MCP_NOTEBOOK_ID` | `3634580e-8510-409a-9f1d-efba851586da` (the "Dev" notebook) | The one notebook this server is allowed to touch. |
 | `NOTEBOOK_DB` | (unset) | SQLite database file path, checked first in offline DB-path resolution. |
 | `NOTEBOOK_MCP_FORCE_SQLITE` | (unset) | Set to `1` to force offline (SQLite) mode even when the API is reachable. |
+| `DEV_ROOT` | `C:\Users\James\Dev` | Where `read_overview`/`sync_overview` look for the ten mirrored Dev root markdown files. |
 
 `config.local.json` (next to `server.mjs`, gitignored - machine-specific)
 caches resolved ids and the last-known database path:
@@ -79,9 +82,16 @@ caches resolved ids and the last-known database path:
 {
   "dbPath": "C:\\Users\\James\\AppData\\Roaming\\notebook-desktop\\notebook.db",
   "devLogNoteId": "6b0910c3-...",
-  "projectNotes": { "Headquarters": "f3003ec4-..." }
+  "projectNotes": { "Headquarters": "f3003ec4-..." },
+  "overviewNoteId": "b82c3a28-...",
+  "overviewSync": { "NOW.md": { "mtimeMs": 1787242725923.03, "size": 1120 }, "...": "..." }
 }
 ```
+
+`overviewSync` records the `mtimeMs`/`size` seen for each of the ten Dev root
+files at the last successful sync of `Dev - Overview` - that's what makes the
+sync mtime-driven rather than re-reading and re-diffing full file contents on
+every call. A file absent from `overviewSync` is treated as missing (or new).
 
 Resolution is lazy and idempotent, and **id-cached with exact-title lookup
 as fallback** - so renaming a note in the app doesn't orphan the cache
@@ -156,25 +166,73 @@ Architecture Reviews entries are always **newest-first** (each new entry is
 unshifted). Sections and subsections are created on demand; a new project
 section is appended to the end of Dev Log.
 
-## The 11 tools
+## The global `Dev - Overview` note
 
-1. **`list_notes`** `{}` - lists notes in the scoped notebook (id, title, updated_at). Only ever `Dev Log` plus enabled projects' notes.
+`Dev` is a **reserved project name** meaning "the global note," not an
+ordinary project. It resolves to a single note titled exactly `Dev - Overview`
+in the scoped notebook, split into two zones:
+
+- **Ideas** (`<h2>Ideas</h2>` + a single flat task list) - a status board for
+  global/cross-project ideas and conventions to settle. Claude and James both
+  write here (via `update_backlog project:"Dev"`); it is **never** regenerated
+  or overwritten by sync.
+- **Reference** (`<h2>Reference</h2>` + an index table + one `<h3>` section per
+  file) - **generated**, one-way, from ten Dev root markdown files (`NOW.md`,
+  `GOALS.md`, `STACK.md`, `PROJECTS.md`, `PORTS.md`, `DECISIONS.md`,
+  `SKILLS.md`, `GLOSSARY.md`, `SETUP.md`, `CLAUDE.md` - not
+  `~/.claude/CLAUDE.md`, only the Dev root one). Edits inside this zone are
+  overwritten on the next sync; the files on disk are always the source of
+  truth, never the note. A missing file is listed as "missing" in the index
+  table with no section - never an error.
+
+Each mirrored file's own headings are demoted to nest under its `<h3>`: `#`
+becomes `<h4>`, `##` becomes `<h5>`, `###` becomes `<h6>`, and anything deeper
+stays at `<h6>`. A file's leading `# Title` heading is dropped (redundant with
+the `<h3>` section heading). Relative markdown links (`[PORTS.md](PORTS.md)`)
+flatten to plain label text so they never become broken hyperlinks in the
+note; absolute `http(s)://` links stay real links.
+
+**Sync is one-way (files -> note) and mtime-driven**, tracked per-file in
+`config.local.json`'s `overviewSync` (`mtimeMs`/`size` at last sync) plus
+`overviewNoteId`. `read_overview` stats all ten files first; if any differs
+from the recorded state (or the note is missing, or the Reference zone is
+absent), it regenerates the Reference zone before answering. Regeneration
+always replaces the entire Reference zone while leaving the Ideas zone
+byte-identical. `sync_overview` forces a regeneration regardless of mtimes.
+Source files live at `DEV_ROOT` (default `C:\Users\James\Dev`).
+
+Routing for the tools above: `read_backlog`/`update_backlog` with
+`project: "Dev"` (case-insensitive) target the Ideas list - `add_bugs` and
+`add_improvements` both just append to it, since Ideas is one flat list;
+`check`/`uncheck` work exactly as elsewhere. `add_report project:"Dev"` is
+refused (architecture reviews belong to a real project), and so are
+`enable_project`/`disable_project` (`Dev` has no Dev Log section to move).
+`Dev - Overview` itself is excluded everywhere a note is treated as a
+per-project note - `list_projects`, `list_notes`, and the no-`project`
+listings in `read_backlog`/`read_reports` never show it as a phantom project.
+
+## The 13 tools
+
+1. **`list_notes`** `{}` - lists notes in the scoped notebook (id, title, updated_at). Only ever `Dev Log`, `Dev - Overview`, plus enabled projects' notes.
 2. **`read_note`** `{ note_id?, title? }` - reads a note as Markdown. One of `note_id`/`title` required; title lookups only search the scoped notebook.
 3. **`write_note`** `{ note_id?, title?, content_markdown, mode?, create_if_missing? }` - creates or updates a note inside the scoped notebook. `mode` is `"replace" | "append" | "prepend"` (default `"append"`).
 4. **`search_notes`** `{ query, limit? }` - full-text search scoped to the notebook; returns title, snippet, id.
-5. **`read_backlog`** `{ project? }` - reads a project's Bugs / Future Improvements checklists (routed per above). Omit `project` to read every project known to Dev Log or holding its own note.
+5. **`read_backlog`** `{ project? }` - reads a project's Bugs / Future Improvements checklists (routed per above; `project: "Dev"` reads the Ideas list instead). Omit `project` to read every project known to Dev Log or holding its own note.
 6. **`update_backlog`** `{ project, add_bugs?, add_improvements?, check?, uncheck? }` - adds new unchecked items and/or ticks/unticks existing ones (by item number from `read_backlog`, or exact item text). All references are validated before anything is written.
 7. **`read_reports`** `{ project?, limit? }` - reads a project's most recent Architecture Reviews entries, newest first (default `limit: 3`). Omit `project` for the most recent entries across every project.
-8. **`add_report`** `{ project, body_markdown, subtitle? }` - prepends a new dated Architecture Reviews entry for a project.
-9. **`enable_project`** `{ project }` - gives a project its own note: **moves** (never copies) its Dev Log section into a new note titled with the project name, promoting heading levels. No-op if already enabled.
-10. **`disable_project`** `{ project }` - inverse: folds the note's content back into Dev Log as a `## project` section (demoting levels), then soft-deletes the now-empty project note. No-op if not currently enabled.
-11. **`list_projects`** `{}` - every project known to Dev Log or holding its own note, with its enabled state and item counts.
+8. **`add_report`** `{ project, body_markdown, subtitle? }` - prepends a new dated Architecture Reviews entry for a project (`project: "Dev"` is refused).
+9. **`enable_project`** `{ project }` - gives a project its own note: **moves** (never copies) its Dev Log section into a new note titled with the project name, promoting heading levels. No-op if already enabled; refuses `Dev`.
+10. **`disable_project`** `{ project }` - inverse: folds the note's content back into Dev Log as a `## project` section (demoting levels), then soft-deletes the now-empty project note. No-op if not currently enabled; refuses `Dev`.
+11. **`list_projects`** `{}` - every project known to Dev Log or holding its own note, with its enabled state and item counts. Never lists `Dev - Overview`.
+12. **`read_overview`** `{ section? }` - reads the global `Dev - Overview` note, auto-syncing first per the mtime rule above. No `section`: just the Ideas list, the Reference index table, and the list of available section names (never the full ~40-50KB mirror). `section: "STACK.md"` (or `"STACK"`, case-insensitive): just that file's mirrored content as Markdown. `section: "all"`: everything.
+13. **`sync_overview`** `{}` - forces a Reference-zone regeneration regardless of mtimes; reports which files' mirrored content changed.
 
 For `update_backlog` and `add_report`, `project` defaults to the basename of
-the server process's working directory; if that resolves to `Dev` (the Dev
-root, not a specific project) the call fails and asks for `project`
-explicitly. `enable_project`/`disable_project` always require `project`
-explicitly (no cwd default).
+the server process's working directory - which now resolves to `Dev` (the
+global note) at the Dev root itself, rather than refusing. `add_report`
+still refuses `project: "Dev"` explicitly, with a clearer reason.
+`enable_project`/`disable_project` always require `project` explicitly (no
+cwd default), and also refuse `Dev`.
 
 ## Concurrency
 
@@ -198,12 +256,15 @@ transports).
 ## Development
 
 ```
-node --test        # unit tests for format.mjs / notes.mjs (no live API or DB needed)
+node --test        # unit tests for format.mjs / notes.mjs / overview.mjs (no live API or DB needed)
 ```
 
-`format.mjs` holds the pure HTML<->Markdown conversion; `notes.mjs` holds the
-pure level-offset parsing/serialization for the Dev Log / per-project note
-structure, plus project-name defaulting; `sqlite.mjs` holds the offline
-SQLite transport (DB path resolution, `strip_html` mirror, note CRUD +
+`format.mjs` holds the pure HTML<->Markdown conversion (headings, lists, task
+lists, inline formatting, and GFM pipe tables); `notes.mjs` holds the pure
+level-offset parsing/serialization for the Dev Log / per-project note
+structure, plus project-name defaulting; `overview.mjs` holds the pure
+`Dev - Overview` logic (Ideas/Reference zone splitting, heading demotion,
+relative-link flattening, Reference-zone generation); `sqlite.mjs` holds the
+offline SQLite transport (DB path resolution, `strip_html` mirror, note CRUD +
 revisions + FTS search); `server.mjs` wires all of that to the resolved
-transport and the MCP stdio protocol.
+transport, the Dev root file statting, and the MCP stdio protocol.

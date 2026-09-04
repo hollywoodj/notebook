@@ -150,15 +150,15 @@ export function serializeDevLog({ intro, projects }) {
 // Project-name defaulting
 // ---------------------------------------------------------------------------
 
+/** `project` defaults to the cwd's folder name. `Dev` (the Dev root) is a
+ * reserved project name meaning the global `Dev - Overview` note - it's no
+ * longer refused here; routing tools (update_backlog/read_backlog) special-case
+ * it, and the ones that don't allow it (add_report, enable_project,
+ * disable_project) refuse it themselves with a clearer, tool-specific message. */
 export function resolveRequiredProject(explicit, cwd = process.cwd()) {
   if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
   const base = path.basename(cwd);
-  if (!base || base === "Dev") {
-    throw new ToolInputError(
-      "No project specified, and the server's working directory is the Dev root (not a specific project) - pass `project` explicitly."
-    );
-  }
-  return base;
+  return base || "Dev";
 }
 
 /** Like resolveRequiredProject, but never defaults from cwd - used by

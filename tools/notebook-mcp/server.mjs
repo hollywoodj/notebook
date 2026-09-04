@@ -10,11 +10,11 @@
 //
 // Nothing but JSON-RPC may ever reach stdout. All logging goes to stderr.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, statSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { htmlToMarkdown, markdownToHtml, escapeHtml } from "./format.mjs";
+import { htmlToMarkdown, markdownToHtml, escapeHtml, parseTaskListItems } from "./format.mjs";
 import { createSqliteStore, candidateDbPaths, resolveDbPath } from "./sqlite.mjs";
 import {
   ToolInputError,
@@ -28,6 +28,18 @@ import {
   resolveRequiredProject,
   requireProjectArg,
 } from "./notes.mjs";
+import {
+  OVERVIEW_NOTE_TITLE,
+  OVERVIEW_FILES,
+  isDevProject,
+  isProjectNoteTitle,
+  buildIdeasZoneHtml,
+  buildReferenceZoneHtml,
+  parseOverviewZones,
+  extractFileSectionHtml,
+  extractIndexTableHtml,
+  resolveSectionName,
+} from "./overview.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.join(__dirname, "config.local.json");
@@ -37,6 +49,7 @@ const NOTEBOOK_ID = process.env.NOTEBOOK_MCP_NOTEBOOK_ID || "3634580e-8510-409a-
 const REQUEST_TIMEOUT_MS = 10_000;
 const HEALTH_TIMEOUT_MS = 800;
 const DEV_LOG_TITLE = "Dev Log";
+const DEV_ROOT = process.env.DEV_ROOT || "C:\\Users\\James\\Dev";
 
 function log(...args) {
   console.error("[notebook-mcp]", ...args);
@@ -100,6 +113,24 @@ function cacheDevLogNoteId(noteId) {
     config.devLogNoteId = noteId;
     saveConfig(config);
   }
+}
+
+function cacheOverviewNoteId(noteId) {
+  const config = loadConfig();
+  if (config.overviewNoteId !== noteId) {
+    config.overviewNoteId = noteId;
+    saveConfig(config);
+  }
+}
+
+function saveOverviewSyncState(statResults) {
+  const config = loadConfig();
+  const sync = {};
+  for (const f of statResults) {
+    if (f.exists) sync[f.name] = { mtimeMs: f.mtimeMs, size: f.size };
+  }
+  config.overviewSync = sync;
+  saveConfig(config);
 }
 
 // ---------------------------------------------------------------------------
@@ -370,11 +401,195 @@ async function withProjectBlock(store, project, mutate) {
 }
 
 // ---------------------------------------------------------------------------
+// Dev - Overview: the global note (Ideas zone + generated Reference zone
+// mirroring the Dev root markdown files). Sync is one-way (files -> note)
+// and mtime-driven: read_overview only regenerates the Reference zone when
+// something's actually stale; sync_overview always does.
+// ---------------------------------------------------------------------------
+
+/** Stats + reads all ten Dev root files. A missing file is never an error -
+ * it's just `exists: false` and gets listed as "missing" in the index table. */
+function statAllDevRootFiles() {
+  return OVERVIEW_FILES.map((name) => {
+    const full = path.join(DEV_ROOT, name);
+    try {
+      const st = statSync(full);
+      const content = readFileSync(full, "utf8");
+      return { name, exists: true, mtimeMs: st.mtimeMs, size: st.size, content };
+    } catch {
+      return { name, exists: false, mtimeMs: null, size: null, content: "" };
+    }
+  });
+}
+
+/** Which of `statResults` differ (existence, mtime, or size) from the last
+ * recorded sync state - the trigger for an mtime-driven regeneration. */
+function diffSyncState(prevSync, statResults) {
+  const changed = [];
+  for (const f of statResults) {
+    const old = prevSync[f.name];
+    if (!!old !== f.exists) {
+      changed.push(f.name);
+      continue;
+    }
+    if (f.exists && (old.mtimeMs !== f.mtimeMs || old.size !== f.size)) changed.push(f.name);
+  }
+  return changed;
+}
+
+/** Dev - Overview, if it currently exists - never creates it. */
+async function findOverviewNote(store) {
+  const config = loadConfig();
+  if (config.overviewNoteId) {
+    const note = await store.getNote(config.overviewNoteId);
+    if (note && !note.deleted_at && note.notebook_id === NOTEBOOK_ID && note.title === OVERVIEW_NOTE_TITLE) {
+      return note;
+    }
+  }
+  const found = await store.findByExactTitle(OVERVIEW_NOTE_TITLE);
+  if (found) {
+    const note = await getNoteScoped(store, found.id);
+    if (!note.deleted_at) {
+      cacheOverviewNoteId(note.id);
+      return note;
+    }
+  }
+  return null;
+}
+
+/**
+ * Stats all ten Dev root files, and regenerates the Reference zone (creating
+ * Dev - Overview on first use if it doesn't exist yet) whenever `force` is
+ * set, the note doesn't exist yet, its Reference zone is absent, or any
+ * file's mtime/size differs from what was recorded at last sync. The Ideas
+ * zone is always carried over byte-identical. Returns the live note,
+ * `statResults`, the list of file names whose stat changed since last sync,
+ * and whether a write actually happened.
+ */
+async function ensureOverviewSynced(store, { force = false } = {}) {
+  const statResults = statAllDevRootFiles();
+  const config = loadConfig();
+  const existingNote = await findOverviewNote(store);
+  const zones = existingNote ? parseOverviewZones(existingNote.content) : null;
+  const hasReferenceZone = !!(zones && zones.hasReference);
+  const changed = diffSyncState(config.overviewSync || {}, statResults);
+  const shouldSync = force || !existingNote || !hasReferenceZone || changed.length > 0;
+
+  if (!shouldSync) {
+    return { note: existingNote, statResults, changed: [], synced: false };
+  }
+
+  const ideasZoneHtml = zones ? zones.ideasZoneHtml : buildIdeasZoneHtml([]);
+  const syncedAtIso = new Date().toISOString();
+  const referenceZoneHtml = buildReferenceZoneHtml(statResults, syncedAtIso);
+  const newContent = ideasZoneHtml + referenceZoneHtml;
+
+  const note = existingNote
+    ? await store.updateNote(existingNote.id, newContent)
+    : await store.createNote(OVERVIEW_NOTE_TITLE, newContent);
+  cacheOverviewNoteId(note.id);
+  saveOverviewSyncState(statResults);
+  return { note, statResults, changed, synced: true };
+}
+
+/** Read-modify-write against just the Ideas zone, leaving the Reference zone
+ * (whatever it currently is) untouched. Always syncs first (force:false) so
+ * the note - and its Reference zone - exists and is fresh before we touch
+ * Ideas, then re-fetches immediately before writing, per the project's usual
+ * fresh-read-modify-write convention. */
+async function withIdeasList(store, mutate) {
+  const { note: justSynced } = await ensureOverviewSynced(store, { force: false });
+  const fresh = await getNoteScoped(store, justSynced.id); // fresh GET, immediately before the write below
+  const zones = parseOverviewZones(fresh.content);
+  const items = parseTaskListItems(zones.ideasZoneHtml);
+  const result = mutate(items);
+  const newContent = buildIdeasZoneHtml(items) + zones.referenceZoneHtml;
+  await store.updateNote(fresh.id, newContent);
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Tool result helpers
 // ---------------------------------------------------------------------------
 
 function textResult(text) {
   return { content: [{ type: "text", text }] };
+}
+
+/** Resolves a check/uncheck ref (an item number from read_backlog's output, or
+ * exact item text) against a `combined` list of `{ it }}` entries (as produced
+ * by combinedItems, or a flat `items.map((it) => ({ it }))` for Dev's Ideas
+ * list). `label` only shapes the error message (e.g. `project "X"` or "Dev's
+ * Ideas list"). */
+function makeResolveItemRef(combined, label) {
+  return function resolveItemRef(ref) {
+    const asString = String(ref).trim();
+    if (/^\d+$/.test(asString)) {
+      const n = Number(asString);
+      if (n < 1 || n > combined.length) {
+        return { error: `item number ${ref} (${label} currently has ${combined.length} item(s))` };
+      }
+      return { entry: combined[n - 1] };
+    }
+    const match = combined.find((c) => c.it.text === asString);
+    if (!match) return { error: `item text "${ref}"` };
+    return { entry: match };
+  };
+}
+
+/** Applies validated check/uncheck/add-bugs/add-improvements against one
+ * `{ bugs, improvements }`-shaped block (or Dev's Ideas list, passed as
+ * `{ bugs: items, improvements: [] }` so both add_bugs/add_improvements land
+ * in the same flat array). Throws ToolInputError (no changes made) if any
+ * check/uncheck ref doesn't resolve. Returns a human-readable summary string. */
+function applyBacklogEdits(block, { addBugs, addImprovements, checkRefs, uncheckRefs }, label) {
+  const combined = combinedItems(block);
+  const resolveItemRef = makeResolveItemRef(combined, label);
+
+  const checkResolved = checkRefs.map((r) => ({ ref: r, res: resolveItemRef(r) }));
+  const uncheckResolved = uncheckRefs.map((r) => ({ ref: r, res: resolveItemRef(r) }));
+  const failures = [...checkResolved, ...uncheckResolved].filter((x) => x.res.error).map((x) => x.res.error);
+  if (failures.length) {
+    throw new ToolInputError(`update_backlog: no matching item for ${failures.join(", ")}. No changes were made.`);
+  }
+
+  for (const { res } of checkResolved) res.entry.it.checked = true;
+  for (const { res } of uncheckResolved) res.entry.it.checked = false;
+  for (const text of addBugs) block.bugs.push({ text, checked: false });
+  for (const text of addImprovements) block.improvements.push({ text, checked: false });
+
+  const parts = [];
+  if (addBugs.length) parts.push(`added ${addBugs.length} bug(s)`);
+  if (addImprovements.length) parts.push(`added ${addImprovements.length} improvement(s)`);
+  if (checkResolved.length) parts.push(`checked ${checkResolved.length} item(s)`);
+  if (uncheckResolved.length) parts.push(`unchecked ${uncheckResolved.length} item(s)`);
+  return parts.length ? parts.join(", ") : "no changes";
+}
+
+/** Dev's Ideas list is a single flat list - unlike an ordinary project's
+ * bugs/improvements split, add_bugs and add_improvements both just append to
+ * it. Same validate-before-mutate shape as applyBacklogEdits otherwise. */
+function applyIdeaEdits(items, { addBugs, addImprovements, checkRefs, uncheckRefs }) {
+  const combined = items.map((it) => ({ it }));
+  const resolveItemRef = makeResolveItemRef(combined, `Dev's Ideas list`);
+
+  const checkResolved = checkRefs.map((r) => ({ ref: r, res: resolveItemRef(r) }));
+  const uncheckResolved = uncheckRefs.map((r) => ({ ref: r, res: resolveItemRef(r) }));
+  const failures = [...checkResolved, ...uncheckResolved].filter((x) => x.res.error).map((x) => x.res.error);
+  if (failures.length) {
+    throw new ToolInputError(`update_backlog: no matching item for ${failures.join(", ")}. No changes were made.`);
+  }
+
+  for (const { res } of checkResolved) res.entry.it.checked = true;
+  for (const { res } of uncheckResolved) res.entry.it.checked = false;
+  const newTexts = [...addBugs, ...addImprovements];
+  for (const text of newTexts) items.push({ text, checked: false });
+
+  const parts = [];
+  if (newTexts.length) parts.push(`added ${newTexts.length} idea(s)`);
+  if (checkResolved.length) parts.push(`checked ${checkResolved.length} item(s)`);
+  if (uncheckResolved.length) parts.push(`unchecked ${uncheckResolved.length} item(s)`);
+  return parts.length ? parts.join(", ") : "no changes";
 }
 
 function blockCounts(block) {
@@ -469,7 +684,7 @@ async function listAllProjects(store) {
     }
   }
   for (const n of notes) {
-    if (n.title === DEV_LOG_TITLE) continue;
+    if (!isProjectNoteTitle(n.title, DEV_LOG_TITLE)) continue;
     const note = await getNoteScoped(store, n.id);
     rows.push({ name: n.title, enabled: true, block: parseProjectBlock(note.content, PROJECT_NOTE_OFFSET) });
   }
@@ -479,6 +694,13 @@ async function listAllProjects(store) {
 
 async function toolReadBacklog(args, store) {
   const projectFilter = typeof args.project === "string" && args.project.trim() ? args.project.trim() : null;
+
+  if (projectFilter && isDevProject(projectFilter)) {
+    const { note } = await ensureOverviewSynced(store, { force: false });
+    const zones = parseOverviewZones(note.content);
+    const items = parseTaskListItems(zones.ideasZoneHtml);
+    return textResult([`## Ideas`, formatNumberedItems(items, 1)].join("\n\n"));
+  }
 
   if (projectFilter) {
     const { block } = await getProjectBlock(store, projectFilter);
@@ -514,44 +736,16 @@ async function toolUpdateBacklog(args, store) {
   const addImprovements = Array.isArray(args.add_improvements) ? args.add_improvements.map(String) : [];
   const checkRefs = Array.isArray(args.check) ? args.check : [];
   const uncheckRefs = Array.isArray(args.uncheck) ? args.uncheck : [];
+  const edits = { addBugs, addImprovements, checkRefs, uncheckRefs };
 
-  const summary = await withProjectBlock(store, project, (block) => {
-    const combined = combinedItems(block);
+  if (isDevProject(project)) {
+    const summary = await withIdeasList(store, (items) => applyIdeaEdits(items, edits));
+    return textResult(`Updated "${OVERVIEW_NOTE_TITLE}" Ideas: ${summary}.`);
+  }
 
-    function resolveItemRef(ref) {
-      const asString = String(ref).trim();
-      if (/^\d+$/.test(asString)) {
-        const n = Number(asString);
-        if (n < 1 || n > combined.length) {
-          return { error: `item number ${ref} (project "${project}" currently has ${combined.length} item(s))` };
-        }
-        return { entry: combined[n - 1] };
-      }
-      const match = combined.find((c) => c.it.text === asString);
-      if (!match) return { error: `item text "${ref}"` };
-      return { entry: match };
-    }
-
-    const checkResolved = checkRefs.map((r) => ({ ref: r, res: resolveItemRef(r) }));
-    const uncheckResolved = uncheckRefs.map((r) => ({ ref: r, res: resolveItemRef(r) }));
-    const failures = [...checkResolved, ...uncheckResolved].filter((x) => x.res.error).map((x) => x.res.error);
-    if (failures.length) {
-      throw new ToolInputError(`update_backlog: no matching item for ${failures.join(", ")}. No changes were made.`);
-    }
-
-    for (const { res } of checkResolved) res.entry.it.checked = true;
-    for (const { res } of uncheckResolved) res.entry.it.checked = false;
-    for (const text of addBugs) block.bugs.push({ text, checked: false });
-    for (const text of addImprovements) block.improvements.push({ text, checked: false });
-
-    const parts = [];
-    if (addBugs.length) parts.push(`added ${addBugs.length} bug(s)`);
-    if (addImprovements.length) parts.push(`added ${addImprovements.length} improvement(s)`);
-    if (checkResolved.length) parts.push(`checked ${checkResolved.length} item(s)`);
-    if (uncheckResolved.length) parts.push(`unchecked ${uncheckResolved.length} item(s)`);
-    return parts.length ? parts.join(", ") : "no changes";
-  });
-
+  const summary = await withProjectBlock(store, project, (block) =>
+    applyBacklogEdits(block, edits, `project "${project}"`)
+  );
   return textResult(`Updated "${project}": ${summary}.`);
 }
 
@@ -588,6 +782,11 @@ async function toolReadReports(args, store) {
 
 async function toolAddReport(args, store) {
   const project = resolveRequiredProject(args.project);
+  if (isDevProject(project)) {
+    throw new ToolInputError(
+      `add_report: "Dev" is the global "${OVERVIEW_NOTE_TITLE}" note, not a project - architecture reviews belong to a real project. Pass an explicit project.`
+    );
+  }
   if (typeof args.body_markdown !== "string" || !args.body_markdown.trim()) {
     throw new ToolInputError("body_markdown is required.");
   }
@@ -604,6 +803,11 @@ async function toolAddReport(args, store) {
 
 async function toolEnableProject(args, store) {
   const project = requireProjectArg(args);
+  if (isDevProject(project)) {
+    throw new ToolInputError(
+      `enable_project: "Dev" is reserved for the global "${OVERVIEW_NOTE_TITLE}" note, not an ordinary project - it has no Dev Log section to move.`
+    );
+  }
   const already = await findOwnProjectNote(store, project);
   if (already) {
     return textResult(`"${project}" is already enabled - it has its own note [id: ${already.id}]. No changes made.`);
@@ -634,6 +838,11 @@ async function toolEnableProject(args, store) {
 
 async function toolDisableProject(args, store) {
   const project = requireProjectArg(args);
+  if (isDevProject(project)) {
+    throw new ToolInputError(
+      `disable_project: "Dev" is reserved for the global "${OVERVIEW_NOTE_TITLE}" note, not an ordinary project - it has no Dev Log section to fold back into.`
+    );
+  }
   const ownNote = await findOwnProjectNote(store, project);
   if (!ownNote) {
     return textResult(`"${project}" is not enabled (no dedicated note in the scoped notebook) - nothing to disable.`);
@@ -666,6 +875,63 @@ async function toolListProjects(_args, store) {
   return textResult(lines.join("\n"));
 }
 
+function overviewIndexMarkdown(referenceZoneHtml) {
+  const tableHtml = extractIndexTableHtml(referenceZoneHtml);
+  return tableHtml ? htmlToMarkdown(tableHtml) : "(no index table)";
+}
+
+async function toolReadOverview(args, store) {
+  const { note, statResults } = await ensureOverviewSynced(store, { force: false });
+  const zones = parseOverviewZones(note.content);
+  const ideas = parseTaskListItems(zones.ideasZoneHtml);
+  const sectionArg = typeof args.section === "string" && args.section.trim() ? args.section.trim() : null;
+
+  if (!sectionArg) {
+    const sectionNames = statResults.map((f) => (f.exists ? f.name : `${f.name} (missing)`)).join(", ");
+    return textResult(
+      [
+        `## Ideas`,
+        formatNumberedItems(ideas, 1),
+        `## Reference index`,
+        overviewIndexMarkdown(zones.referenceZoneHtml),
+        `Available sections: ${sectionNames}. Pass section: "<name>" for one file's mirrored content, or section: "all" for everything.`,
+      ].join("\n\n")
+    );
+  }
+
+  if (sectionArg.toLowerCase() === "all") {
+    const parts = [`## Ideas`, formatNumberedItems(ideas, 1), `## Reference index`, overviewIndexMarkdown(zones.referenceZoneHtml)];
+    for (const f of statResults) {
+      if (!f.exists) continue;
+      const sectionHtml = extractFileSectionHtml(zones.referenceZoneHtml, f.name);
+      parts.push(`### ${f.name}`, sectionHtml ? htmlToMarkdown(sectionHtml) : "(no mirrored content)");
+    }
+    return textResult(parts.join("\n\n"));
+  }
+
+  const resolved = resolveSectionName(sectionArg);
+  if (!resolved) {
+    throw new ToolInputError(
+      `read_overview: unknown section "${sectionArg}". Available sections: ${OVERVIEW_FILES.join(", ")}, or "all".`
+    );
+  }
+  const statEntry = statResults.find((f) => f.name === resolved);
+  if (!statEntry.exists) {
+    return textResult(`"${resolved}" is missing from ${DEV_ROOT} - nothing mirrored for it.`);
+  }
+  const sectionHtml = extractFileSectionHtml(zones.referenceZoneHtml, resolved);
+  if (!sectionHtml) {
+    return textResult(`"${resolved}" exists on disk but has no mirrored section yet - run sync_overview.`);
+  }
+  return textResult(htmlToMarkdown(sectionHtml));
+}
+
+async function toolSyncOverview(_args, store) {
+  const { note, changed } = await ensureOverviewSynced(store, { force: true });
+  const changedMsg = changed.length ? changed.join(", ") : "(none - every file was already up to date)";
+  return textResult(`Synced "${OVERVIEW_NOTE_TITLE}" [id: ${note.id}]. Changed: ${changedMsg}.`);
+}
+
 // ---------------------------------------------------------------------------
 // Tool registry
 // ---------------------------------------------------------------------------
@@ -673,7 +939,7 @@ async function toolListProjects(_args, store) {
 const TOOLS = {
   list_notes: {
     description:
-      "List all notes in the scoped notebook (id, title, last-updated). This notebook only ever holds a 'Dev Log' catch-all note plus one note per enabled project. Only notes inside this one hard-scoped notebook are visible - there is no way to list, browse, or move notes into other notebooks.",
+      "List all notes in the scoped notebook (id, title, last-updated). This notebook only ever holds a 'Dev Log' catch-all note, the global 'Dev - Overview' note, plus one note per enabled project. Only notes inside this one hard-scoped notebook are visible - there is no way to list, browse, or move notes into other notebooks.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     handler: toolListNotes,
   },
@@ -731,7 +997,7 @@ const TOOLS = {
   },
   read_backlog: {
     description:
-      "Read a project's Bugs / Future Improvements checklists. Routing: if the project has its own note (see enable_project), that note is read; otherwise its section in the 'Dev Log' catch-all note is read. Items are numbered (numbers line up with what update_backlog's check/uncheck expect). Pass project to read just that project; omit to read every project known to Dev Log or holding its own note. If the requested project has no section yet, says so plainly rather than erroring.",
+      "Read a project's Bugs / Future Improvements checklists. Routing: if the project has its own note (see enable_project), that note is read; otherwise its section in the 'Dev Log' catch-all note is read. project: \"Dev\" (case-insensitive) is reserved and reads the flat Ideas list in the global 'Dev - Overview' note instead. Items are numbered (numbers line up with what update_backlog's check/uncheck expect). Pass project to read just that project; omit to read every project known to Dev Log or holding its own note (this never includes 'Dev - Overview' itself). If the requested project has no section yet, says so plainly rather than erroring.",
     inputSchema: {
       type: "object",
       properties: { project: { type: "string", description: "Project name; omit to read every project." } },
@@ -741,7 +1007,7 @@ const TOOLS = {
   },
   update_backlog: {
     description:
-      "Add and/or check off items in one project's Bugs / Future Improvements checklists. Routing: writes to the project's own note if it has one (see enable_project), otherwise to its section in the 'Dev Log' catch-all note, creating that section (and Dev Log itself) on demand. add_bugs/add_improvements add new unchecked items. check/uncheck each take an item number (from read_backlog's output) or exact item text, and tick/untick existing items. All references are validated before anything is written - if any check/uncheck reference doesn't match, the whole call fails with no changes made. project defaults to the current project directory's name if omitted, and is required explicitly when that would resolve to the Dev root.",
+      "Add and/or check off items in one project's Bugs / Future Improvements checklists. Routing: writes to the project's own note if it has one (see enable_project), otherwise to its section in the 'Dev Log' catch-all note, creating that section (and Dev Log itself) on demand. project: \"Dev\" (case-insensitive) is reserved and targets the flat Ideas list in the global 'Dev - Overview' note instead - add_bugs/add_improvements both just append to it there. add_bugs/add_improvements add new unchecked items. check/uncheck each take an item number (from read_backlog's output) or exact item text, and tick/untick existing items. All references are validated before anything is written - if any check/uncheck reference doesn't match, the whole call fails with no changes made. project defaults to the current working directory's folder name if omitted (the Dev root resolves to \"Dev\").",
     inputSchema: {
       type: "object",
       properties: {
@@ -779,7 +1045,7 @@ const TOOLS = {
   },
   add_report: {
     description:
-      "Prepend a new dated Architecture Reviews entry for a project, written as Markdown (converted to rich HTML). Routing: writes to the project's own note if it has one (see enable_project), otherwise to its section in the 'Dev Log' catch-all note, creating that section (and Dev Log itself) on demand. Optional subtitle renders as an italic one-line summary under the heading. project defaults to the current working directory's folder name if omitted, and is required explicitly when that would resolve to the Dev root. Returns the exact date heading written.",
+      "Prepend a new dated Architecture Reviews entry for a project, written as Markdown (converted to rich HTML). Routing: writes to the project's own note if it has one (see enable_project), otherwise to its section in the 'Dev Log' catch-all note, creating that section (and Dev Log itself) on demand. project: \"Dev\" is refused - architecture reviews belong to a real project, not the global 'Dev - Overview' note. project defaults to the current working directory's folder name if omitted. Returns the exact date heading written.",
     inputSchema: {
       type: "object",
       properties: {
@@ -816,9 +1082,31 @@ const TOOLS = {
   },
   list_projects: {
     description:
-      "List every project known to the 'Dev Log' catch-all note or holding its own note in the scoped notebook, with its enabled state (own note vs. Dev Log section) and item counts (open/total bugs and improvements, review count).",
+      "List every project known to the 'Dev Log' catch-all note or holding its own note in the scoped notebook, with its enabled state (own note vs. Dev Log section) and item counts (open/total bugs and improvements, review count). Never lists 'Dev - Overview' - it's the global note, not a project.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     handler: toolListProjects,
+  },
+  read_overview: {
+    description:
+      "Read the global 'Dev - Overview' note: a status board for cross-project matters, holding a hand-maintained Ideas list plus a Reference zone that mirrors James's ten Dev root markdown files (NOW/GOALS/STACK/PROJECTS/PORTS/DECISIONS/SKILLS/GLOSSARY/SETUP/CLAUDE.md) one-way from disk. Auto-syncs first: if any source file's mtime/size has changed, the note doesn't exist yet, or its Reference zone is missing, the Reference zone is regenerated before answering (the Ideas zone is always left untouched). Omit `section` to get just the Ideas list, the Reference index table, and the list of available section names - NOT the full ~38KB mirror. Pass `section: \"STACK.md\"` (or \"STACK\", case-insensitive) for just that file's mirrored content as Markdown, or `section: \"all\"` for everything.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        section: {
+          type: "string",
+          description:
+            'Omit for a summary (Ideas + index + available section names). One of the ten mirrored filenames (with or without ".md", case-insensitive) for just that file, or "all" for everything.',
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: toolReadOverview,
+  },
+  sync_overview: {
+    description:
+      "Force-regenerate the Reference zone of 'Dev - Overview' from the ten Dev root markdown files right now, regardless of recorded mtimes (creating the note on first use). The Ideas zone is always left byte-identical. Reports which files' mirrored content changed since the last sync.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    handler: toolSyncOverview,
   },
 };
 
@@ -833,7 +1121,7 @@ const TOOL_DEFS = Object.entries(TOOLS).map(([name, t]) => ({
 // ---------------------------------------------------------------------------
 
 const SUPPORTED_PROTOCOL_VERSIONS = ["2024-11-05", "2025-03-26", "2025-06-18"];
-const SERVER_INFO = { name: "notebook-mcp", version: "0.2.0" };
+const SERVER_INFO = { name: "notebook-mcp", version: "0.3.0" };
 
 function send(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
