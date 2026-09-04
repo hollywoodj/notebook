@@ -2,119 +2,271 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { markdownToHtml } from "../format.mjs";
 import {
-  parseBacklogHtml,
-  serializeBacklogHtml,
-  combinedBacklogItems,
+  PROJECT_NOTE_OFFSET,
+  DEV_LOG_OFFSET,
+  parseProjectBlock,
+  serializeProjectBlock,
+  parseDevLog,
+  serializeDevLog,
+  combinedItems,
   formatNumberedItems,
-  parseReportEntries,
-  prependReportEntry,
   resolveRequiredProject,
+  requireProjectArg,
   ToolInputError,
-  REPORT_HEADING_SEP,
 } from "../notes.mjs";
 
-function backlogHtmlFor(projects) {
-  // Build backlog HTML the same way the server does, via markdownToHtml + notes.mjs serialize,
-  // by round-tripping through parse/serialize starting from a hand-built structure.
-  return serializeBacklogHtml({ intro: "<p>intro</p>", projects });
+function emptyBlock() {
+  return { bugs: [], improvements: [], reviews: [] };
 }
 
-test("parses a multi-project backlog note into sections with checked state", () => {
-  const html = backlogHtmlFor([
-    {
-      name: "Headquarters",
-      bugs: [
-        { text: "Crash on save", checked: false },
-        { text: "Typo in footer", checked: true },
-      ],
-      improvements: [{ text: "Add dark mode", checked: false }],
-    },
-    {
-      name: "Notebook",
-      bugs: [],
-      improvements: [{ text: "Faster search", checked: false }],
-    },
-  ]);
+// ---------------------------------------------------------------------------
+// Level-offset parse/serialize, both ways, both offsets
+// ---------------------------------------------------------------------------
 
-  const parsed = parseBacklogHtml(html);
-  assert.equal(parsed.intro, "<p>intro</p>");
-  assert.equal(parsed.projects.length, 2);
+test("serializeProjectBlock / parseProjectBlock round-trip at offset 0 (own note)", () => {
+  const block = {
+    bugs: [
+      { text: "Crash on save", checked: false },
+      { text: "Typo in footer", checked: true },
+    ],
+    improvements: [{ text: "Add dark mode", checked: false }],
+    reviews: [
+      { date: "2026-09-04", subtitle: "Second pass", bodyHtml: "<p>Looks good.</p>" },
+      { date: "2026-08-28", subtitle: null, bodyHtml: "<p>First pass.</p>" },
+    ],
+  };
+  const html = serializeProjectBlock(block, PROJECT_NOTE_OFFSET);
 
-  const hq = parsed.projects.find((p) => p.name === "Headquarters");
-  assert.ok(hq);
-  assert.equal(hq.bugs.length, 2);
-  assert.equal(hq.bugs[0].text, "Crash on save");
-  assert.equal(hq.bugs[0].checked, false);
-  assert.equal(hq.bugs[1].checked, true);
-  assert.equal(hq.improvements.length, 1);
-  assert.equal(hq.improvements[0].text, "Add dark mode");
+  // offset 0 -> h2 sections, h3 review dates
+  assert.match(html, /<h2>Bugs<\/h2>/);
+  assert.match(html, /<h2>Future Improvements<\/h2>/);
+  assert.match(html, /<h2>Architecture Reviews<\/h2>/);
+  assert.match(html, /<h3>2026-09-04<\/h3>/);
+  assert.match(html, /<h3>2026-08-28<\/h3>/);
 
-  const nb = parsed.projects.find((p) => p.name === "Notebook");
-  assert.ok(nb);
-  assert.equal(nb.bugs.length, 0);
-  assert.equal(nb.improvements[0].text, "Faster search");
+  const reparsed = parseProjectBlock(html, PROJECT_NOTE_OFFSET);
+  assert.deepEqual(reparsed, block);
+});
 
-  // numbering used by read_backlog / referenced by update_backlog's check/uncheck
-  const combined = combinedBacklogItems(hq);
+test("serializeProjectBlock / parseProjectBlock round-trip at offset 1 (Dev Log block)", () => {
+  const block = {
+    bugs: [{ text: "old bug", checked: false }],
+    improvements: [],
+    reviews: [{ date: "2026-09-01", subtitle: null, bodyHtml: "<p>Notes.</p>" }],
+  };
+  const html = serializeProjectBlock(block, DEV_LOG_OFFSET);
+
+  // offset 1 -> h3 sections, h4 review dates
+  assert.match(html, /<h3>Bugs<\/h3>/);
+  assert.match(html, /<h3>Future Improvements<\/h3>/);
+  assert.match(html, /<h3>Architecture Reviews<\/h3>/);
+  assert.match(html, /<h4>2026-09-01<\/h4>/);
+  assert.doesNotMatch(html, /<h2>/);
+
+  const reparsed = parseProjectBlock(html, DEV_LOG_OFFSET);
+  assert.deepEqual(reparsed, block);
+});
+
+test("parseProjectBlock tolerates an empty block (all three headings still emitted)", () => {
+  const html = serializeProjectBlock(emptyBlock(), PROJECT_NOTE_OFFSET);
+  assert.match(html, /<h2>Bugs<\/h2>/);
+  assert.match(html, /<h2>Future Improvements<\/h2>/);
+  assert.match(html, /<h2>Architecture Reviews<\/h2>/);
+  const reparsed = parseProjectBlock(html, PROJECT_NOTE_OFFSET);
+  assert.deepEqual(reparsed, emptyBlock());
+});
+
+// ---------------------------------------------------------------------------
+// Dev Log: many named offset-1 blocks
+// ---------------------------------------------------------------------------
+
+test("parseDevLog / serializeDevLog round-trip multiple projects, preserving intro", () => {
+  const intro = "<p>intro text</p>";
+  const devLog = {
+    intro,
+    projects: [
+      {
+        name: "Headquarters",
+        bugs: [{ text: "Crash on save", checked: false }],
+        improvements: [{ text: "Add dark mode", checked: false }],
+        reviews: [{ date: "2026-09-04", subtitle: null, bodyHtml: "<p>Body.</p>" }],
+      },
+      {
+        name: "BBC",
+        bugs: [],
+        improvements: [{ text: "Faster search", checked: false }],
+        reviews: [],
+      },
+    ],
+  };
+  const html = serializeDevLog(devLog);
+  assert.match(html, /<h2>Headquarters<\/h2>/);
+  assert.match(html, /<h2>BBC<\/h2>/);
+  assert.ok(html.startsWith(intro));
+
+  const reparsed = parseDevLog(html);
+  assert.equal(reparsed.intro, intro);
+  assert.deepEqual(reparsed, devLog);
+});
+
+test("combinedItems / formatNumberedItems number bugs then improvements", () => {
+  const block = {
+    bugs: [
+      { text: "Crash on save", checked: false },
+      { text: "Typo in footer", checked: true },
+    ],
+    improvements: [{ text: "Add dark mode", checked: false }],
+    reviews: [],
+  };
+  const combined = combinedItems(block);
   assert.equal(combined.length, 3);
   assert.equal(
-    formatNumberedItems(hq.bugs, 1) + "\n" + formatNumberedItems(hq.improvements, hq.bugs.length + 1),
+    formatNumberedItems(block.bugs, 1) + "\n" + formatNumberedItems(block.improvements, block.bugs.length + 1),
     "1. [ ] Crash on save\n2. [x] Typo in footer\n3. [ ] Add dark mode"
   );
 });
 
-test("adding an item to a project section that doesn't exist yet creates it, without touching other sections", () => {
-  const html = backlogHtmlFor([{ name: "ExistingProject", bugs: [{ text: "old bug", checked: false }], improvements: [] }]);
-  const parsed = parseBacklogHtml(html);
+// ---------------------------------------------------------------------------
+// enable_project / disable_project structural behavior (the pure move, as
+// server.mjs's toolEnableProject / toolDisableProject perform it)
+// ---------------------------------------------------------------------------
 
-  // Mirrors toolUpdateBacklog's logic: find-or-create the section, push a new unchecked item.
-  let section = parsed.projects.find((p) => p.name === "NewProject");
-  const isNew = !section;
-  if (!section) section = { name: "NewProject", bugs: [], improvements: [] };
-  section.bugs.push({ text: "brand new bug", checked: false });
-  if (isNew) parsed.projects.push(section);
+test("enabling a project moves its Dev Log section out - gone from Dev Log, present (promoted) in the new note", () => {
+  const devLog = parseDevLog(
+    serializeDevLog({
+      intro: "<p>intro</p>",
+      projects: [
+        {
+          name: "Headquarters",
+          bugs: [{ text: "Crash on save", checked: false }],
+          improvements: [{ text: "Add dark mode", checked: false }],
+          reviews: [{ date: "2026-09-04", subtitle: "Scope", bodyHtml: "<p>Body.</p>" }],
+        },
+        {
+          name: "BBC",
+          bugs: [],
+          improvements: [{ text: "Faster search", checked: false }],
+          reviews: [],
+        },
+      ],
+    })
+  );
 
-  const rewritten = serializeBacklogHtml(parsed);
-  const reparsed = parseBacklogHtml(rewritten);
+  // Simulate toolEnableProject("Headquarters"): extract the section, then
+  // build the standalone note's content at offset 0.
+  const idx = devLog.projects.findIndex((p) => p.name === "Headquarters");
+  assert.notEqual(idx, -1);
+  const [block] = devLog.projects.splice(idx, 1);
+  const ownNoteHtml = serializeProjectBlock(block, PROJECT_NOTE_OFFSET);
 
-  assert.equal(reparsed.projects.length, 2);
-  const existing = reparsed.projects.find((p) => p.name === "ExistingProject");
-  assert.equal(existing.bugs.length, 1);
-  assert.equal(existing.bugs[0].text, "old bug");
+  // Gone from Dev Log.
+  const remainingDevLogHtml = serializeDevLog(devLog);
+  assert.doesNotMatch(remainingDevLogHtml, /Headquarters/);
+  assert.match(remainingDevLogHtml, /BBC/);
+  const reparsedDevLog = parseDevLog(remainingDevLogHtml);
+  assert.equal(reparsedDevLog.projects.length, 1);
+  assert.equal(reparsedDevLog.projects[0].name, "BBC");
 
-  const created = reparsed.projects.find((p) => p.name === "NewProject");
-  assert.ok(created, "new project section should have been created");
-  assert.equal(created.bugs.length, 1);
-  assert.equal(created.bugs[0].text, "brand new bug");
-  assert.equal(created.bugs[0].checked, false);
-  assert.equal(created.improvements.length, 0);
+  // Present, promoted one heading level, in the new note.
+  assert.match(ownNoteHtml, /<h2>Bugs<\/h2>/);
+  assert.match(ownNoteHtml, /<h2>Architecture Reviews<\/h2>/);
+  assert.match(ownNoteHtml, /<h3>2026-09-04<\/h3>/); // review date promoted from h4 to h3
+  const reparsedOwn = parseProjectBlock(ownNoteHtml, PROJECT_NOTE_OFFSET);
+  assert.equal(reparsedOwn.bugs[0].text, "Crash on save");
+  assert.equal(reparsedOwn.improvements[0].text, "Add dark mode");
+  assert.equal(reparsedOwn.reviews[0].date, "2026-09-04");
+  assert.equal(reparsedOwn.reviews[0].subtitle, "Scope");
 });
 
-test("prepending a report entry puts the newest entry first and preserves older entries", () => {
-  const introHtml = "<p>Written by Claude Code. Newest entry at top.</p>";
-  let html = introHtml;
+test("disabling a project round-trips its content back into Dev Log, demoted, with nothing lost", () => {
+  const ownBlock = {
+    bugs: [{ text: "Crash on save", checked: false }],
+    improvements: [{ text: "Add dark mode", checked: true }],
+    reviews: [
+      { date: "2026-09-04", subtitle: "Scope", bodyHtml: "<p>Newest.</p>" },
+      { date: "2026-08-20", subtitle: null, bodyHtml: "<p>Older.</p>" },
+    ],
+  };
 
-  const entry1 = `<h2>2026-09-01${REPORT_HEADING_SEP}Headquarters</h2>${markdownToHtml("First review body.")}<hr>`;
-  html = prependReportEntry(html, entry1);
+  // Simulate toolDisableProject("Headquarters") folding it back into an
+  // existing Dev Log that already holds another project.
+  let devLog = parseDevLog(
+    serializeDevLog({
+      intro: "<p>intro</p>",
+      projects: [{ name: "BBC", bugs: [], improvements: [], reviews: [] }],
+    })
+  );
+  devLog.projects.push({ name: "Headquarters", ...ownBlock });
+  const html = serializeDevLog(devLog);
 
-  const entry2 = `<h2>2026-09-04${REPORT_HEADING_SEP}Headquarters</h2>${markdownToHtml("Second review body.")}<hr>`;
-  html = prependReportEntry(html, entry2);
+  assert.match(html, /<h2>Headquarters<\/h2>/);
+  assert.match(html, /<h3>Bugs<\/h3>/); // demoted from h2
+  assert.match(html, /<h4>2026-09-04<\/h4>/); // review date demoted from h3 to h4
 
-  const entries = parseReportEntries(html);
-  assert.equal(entries.length, 2);
-  assert.equal(entries[0].heading, `2026-09-04${REPORT_HEADING_SEP}Headquarters`);
-  assert.equal(entries[0].project, "Headquarters");
-  assert.match(entries[0].bodyHtml, /Second review body\./);
-  assert.equal(entries[1].heading, `2026-09-01${REPORT_HEADING_SEP}Headquarters`);
-  assert.match(entries[1].bodyHtml, /First review body\./);
+  const reparsed = parseDevLog(html);
+  const hq = reparsed.projects.find((p) => p.name === "Headquarters");
+  assert.ok(hq, "Headquarters section should exist in Dev Log after disabling");
+  assert.deepEqual(hq.bugs, ownBlock.bugs);
+  assert.deepEqual(hq.improvements, ownBlock.improvements);
+  assert.deepEqual(hq.reviews, ownBlock.reviews);
+  // BBC untouched.
+  assert.ok(reparsed.projects.find((p) => p.name === "BBC"));
+});
 
-  // intro text must still precede the first (newest) entry
-  assert.ok(html.indexOf(introHtml) < html.indexOf("2026-09-04"));
+test("enable then disable round-trips a project's content byte-for-byte through both offsets", () => {
+  const original = {
+    bugs: [{ text: "b1", checked: false }, { text: "b2", checked: true }],
+    improvements: [{ text: "i1", checked: false }],
+    reviews: [
+      { date: "2026-09-04", subtitle: "s", bodyHtml: "<p>body one</p>" },
+      { date: "2026-08-01", subtitle: null, bodyHtml: "<p>body two</p><hr>" },
+    ],
+  };
+  // enable: offset 1 -> offset 0
+  const enabledHtml = serializeProjectBlock(original, PROJECT_NOTE_OFFSET);
+  const enabledParsed = parseProjectBlock(enabledHtml, PROJECT_NOTE_OFFSET);
+  // disable: offset 0 -> offset 1
+  const disabledHtml = serializeProjectBlock(enabledParsed, DEV_LOG_OFFSET);
+  const disabledParsed = parseProjectBlock(disabledHtml, DEV_LOG_OFFSET);
+
+  assert.deepEqual(disabledParsed, original);
+});
+
+// ---------------------------------------------------------------------------
+// Architecture Reviews entries stay newest-first
+// ---------------------------------------------------------------------------
+
+test("review entries stay newest-first as add_report's unshift pattern maintains them", () => {
+  const block = emptyBlock();
+  // Mirrors toolAddReport: unshift each new entry.
+  block.reviews.unshift({ date: "2026-09-01", subtitle: null, bodyHtml: markdownToHtml("First review body.") });
+  block.reviews.unshift({ date: "2026-09-04", subtitle: null, bodyHtml: markdownToHtml("Second review body.") });
+
+  const html = serializeProjectBlock(block, PROJECT_NOTE_OFFSET);
+  const reparsed = parseProjectBlock(html, PROJECT_NOTE_OFFSET);
+
+  assert.equal(reparsed.reviews.length, 2);
+  assert.equal(reparsed.reviews[0].date, "2026-09-04");
+  assert.match(reparsed.reviews[0].bodyHtml, /Second review body\./);
+  assert.equal(reparsed.reviews[1].date, "2026-09-01");
+  assert.match(reparsed.reviews[1].bodyHtml, /First review body\./);
+
+  // heading order in the raw HTML is newest-first too
   assert.ok(html.indexOf("2026-09-04") < html.indexOf("2026-09-01"));
 });
+
+// ---------------------------------------------------------------------------
+// Project-name defaulting
+// ---------------------------------------------------------------------------
 
 test("resolveRequiredProject defaults to cwd basename, and refuses the Dev root", () => {
   assert.equal(resolveRequiredProject("Explicit", "C:/Users/James/Dev/Apps/notebook"), "Explicit");
   assert.equal(resolveRequiredProject(undefined, "C:/Users/James/Dev/Apps/notebook"), "notebook");
   assert.throws(() => resolveRequiredProject(undefined, "C:/Users/James/Dev"), ToolInputError);
+});
+
+test("requireProjectArg never defaults - it errors on a missing/blank project", () => {
+  assert.equal(requireProjectArg({ project: "Headquarters" }), "Headquarters");
+  assert.throws(() => requireProjectArg({}), ToolInputError);
+  assert.throws(() => requireProjectArg({ project: "   " }), ToolInputError);
 });

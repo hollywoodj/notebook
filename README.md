@@ -47,11 +47,19 @@ Built for **macOS and Windows** (Electron desktop), with a **REST API** and **CL
               └────────────────┘
 ```
 
-Data is stored locally in SQLite:
+Data is stored locally in SQLite. `notebook-api` run standalone (no
+`NOTEBOOK_DB` set) uses the OS app-data default:
 
 - **macOS:** `~/Library/Application Support/notebook/notebook.db`
 - **Windows:** `%APPDATA%/notebook/notebook.db`
 - **Linux:** `~/.local/share/notebook/notebook.db`
+
+The **desktop app** overrides this: it spawns `notebook-api` with
+`NOTEBOOK_DB` pointed at Electron's own per-app userData directory, which on
+Windows is `%APPDATA%\notebook-desktop\notebook.db` (Electron names it after
+`apps/desktop/package.json`'s `"name"`, `notebook-desktop`, not `notebook`).
+Check `GET /health` (returns `database`) or `apps/desktop/electron/main.cjs`
+if you need to confirm the path a given running instance is actually using.
 
 Attachments live alongside the database in an `attachments/` directory.
 
@@ -112,12 +120,17 @@ cargo install --path crates/notebook-cli
 ### MCP server (Claude integration)
 
 `tools/notebook-mcp/` is a zero-dependency Node MCP server that lets Claude
-Code read and write notes through the REST API over stdio. It's hard-scoped
-to one notebook (no listing other notebooks, no delete tools), talks to
-`notebook-api` at `NOTEBOOK_API` (default `http://127.0.0.1:8799`), and every
-write lands in that note's normal revision history. See
-`tools/notebook-mcp/README.md` for the 8 tools, the two notes it maintains,
-and how to register it with `claude mcp add`.
+Code read and write notes in one hard-scoped notebook (no listing other
+notebooks, no permanent deletes). It resolves its transport per call: the
+REST API (`NOTEBOOK_API`, default `http://127.0.0.1:8799`) when reachable,
+or direct SQLite (Node's built-in `node:sqlite`, no new dependency) when the
+app/API is closed - so it keeps working offline. Every write lands in that
+note's normal revision history on either transport. The notebook holds a
+`Dev Log` catch-all note plus one opt-in note per enabled project (bugs,
+future improvements, and architecture reviews all live together per
+project). See `tools/notebook-mcp/README.md` for the 11 tools, the note
+model, the transport/DB-path resolution, and how to register it with
+`claude mcp add`.
 
 ### Run the desktop app (dev)
 
