@@ -1,6 +1,6 @@
 # Notebook
 
-Notebook is a faithful Evernote-style notes app **without AI features**. It includes notebooks, stacks, tags, rich-text notes, attachments, reminders metadata, shortcuts, trash, note history, and full-text search.
+Notebook is a faithful Evernote-style notes app. It includes notebooks, stacks, tags, rich-text notes, attachments, reminders metadata, shortcuts, trash, note history, and full-text search.
 
 Built for **macOS and Windows** (Electron desktop), with a **REST API** and **CLI** for integrating with the rest of your stack. The architecture is API-first so an **iOS app** can be added later against the same endpoints.
 
@@ -24,7 +24,7 @@ Built for **macOS and Windows** (Electron desktop), with a **REST API** and **CL
 | CLI (local + remote API) | ✅ |
 | Desktop app (Mac/Windows via Electron) | ✅ |
 | OmniClone / OmniFocus send | ✅ |
-| AI assistant / AI search | ❌ intentionally omitted |
+| MCP server (Claude integration) | ✅ |
 
 ## Architecture
 
@@ -108,6 +108,16 @@ Install the CLI binary:
 ```bash
 cargo install --path crates/notebook-cli
 ```
+
+### MCP server (Claude integration)
+
+`tools/notebook-mcp/` is a zero-dependency Node MCP server that lets Claude
+Code read and write notes through the REST API over stdio. It's hard-scoped
+to one notebook (no listing other notebooks, no delete tools), talks to
+`notebook-api` at `NOTEBOOK_API` (default `http://127.0.0.1:8799`), and every
+write lands in that note's normal revision history. See
+`tools/notebook-mcp/README.md` for the 8 tools, the two notes it maintains,
+and how to register it with `claude mcp add`.
 
 ### Run the desktop app (dev)
 
@@ -296,7 +306,7 @@ The desktop app embeds the same API used by external clients. A future iOS app c
 1. Run against a self-hosted `notebook-api` instance, or
 2. Embed `notebook-core` via FFI / a Rust mobile target, reusing the schema and search logic.
 
-No AI dependencies are included anywhere in the stack.
+Notebook doesn't bundle any AI/model dependencies itself; the `tools/notebook-mcp/` server (see below) bridges it to Claude Code without adding anything to the core app or its dependency tree.
 
 ## Development
 

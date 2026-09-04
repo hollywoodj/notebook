@@ -1,4 +1,4 @@
--- Notebook schema: Evernote-compatible note storage (no AI features)
+-- Notebook schema: Evernote-compatible note storage
 
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,

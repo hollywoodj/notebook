@@ -1,6 +1,6 @@
 # Evernote UI clone handoff
 
-This log is for future sessions continuing the exact-clone work. Passes 1–10 each closed visible Evernote desktop gaps. The goal remains pixel-and-behavior parity with Evernote’s three-pane desktop app (no AI).
+This log is for future sessions continuing the exact-clone work. Passes 1–10 each closed visible Evernote desktop gaps. The goal remains pixel-and-behavior parity with Evernote’s three-pane desktop app (AI was out of scope for these clone passes).
 
 ## Closed so far
 
@@ -235,9 +235,9 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 - Toolbar overflow should be re-checked in a narrow window; font dropdowns take extra width
 - Card thumbnails depend on the first image attachment or an `<img>` in the note body
 
-## Intentionally out of scope
+## Intentionally out of scope for the clone passes
 
-- AI assistant / AI search
+- AI assistant / AI search (see `tools/notebook-mcp/` for the separate Claude integration added later)
 - Evernote cloud sync, sharing, Work Chat, Spaces
 - Web clipper, calendar, home dashboard widgets
 - iOS/Android clients (API-first is already in the README)

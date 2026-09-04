@@ -612,7 +612,7 @@ export function SettingsModal({
                 <h3>Notebook</h3>
                 <p>Version {version}</p>
                 <p className="muted">
-                  An Evernote-style notes app without AI features. Notes, notebooks,
+                  An Evernote-style notes app. Notes, notebooks,
                   tags, templates, and search stay on this computer.
                 </p>
                 <p className="muted">MIT License</p>
