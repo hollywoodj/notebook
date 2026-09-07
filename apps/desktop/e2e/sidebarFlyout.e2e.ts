@@ -4,7 +4,7 @@
  * `src/sidebarFlyout.test.ts` proves the state machine against a fake clock.
  * These tests prove the parts it cannot reach: that the handlers are attached
  * to the elements a user actually touches, that a real `mouseleave` arms the
- * real 180ms timer, and that the View menu items are wired to the commands
+ * real close timer, and that the View menu items are wired to the commands
  * they claim to be.
  */
 import assert from "node:assert/strict";
@@ -103,7 +103,7 @@ describe("sidebar flyout: hover and click through the real DOM", () => {
     assert.equal((await flyoutState()).open, true, "the panel should outlive a brief exit");
 
     await page.waitForTimeout(400);
-    assert.equal((await flyoutState()).open, false, "the panel should close after 180ms away");
+    assert.equal((await flyoutState()).open, false, "the panel should close after the grace period");
   });
 
   it("keeps a pinned panel open no matter where the pointer goes", async () => {

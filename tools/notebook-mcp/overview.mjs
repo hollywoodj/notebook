@@ -10,12 +10,13 @@ import { escapeHtml, decodeEntities, findAllBalancedBlocks, parseTaskListItems, 
 
 export const OVERVIEW_NOTE_TITLE = "Dev - Overview";
 
-/** The ten Dev root files mirrored into the Reference zone, in mirror order. */
+/** The Dev root files mirrored into the Reference zone, in mirror order. */
 export const OVERVIEW_FILES = [
   "NOW.md",
   "GOALS.md",
   "STACK.md",
   "PROJECTS.md",
+  "CLONES.md",
   "PORTS.md",
   "DECISIONS.md",
   "SKILLS.md",
@@ -30,6 +31,7 @@ export const FILE_DESCRIPTIONS = {
   "GOALS.md": "Longer-term goals and directional priorities.",
   "STACK.md": "Default tools/conventions this Dev folder leans on.",
   "PROJECTS.md": "Map of every project in this Dev folder - what it is, its stack, and when it was last touched.",
+  "CLONES.md": "Which apps clone which commercial originals, naming traps, and how the Omni/Evernote suite integrates.",
   "PORTS.md": "Every port claimed by something in this Dev folder.",
   "DECISIONS.md": "Log of deliberate deviations from STACK.md defaults, with the reasoning behind each.",
   "SKILLS.md": "Registry of Claude Code skills shared across projects.",

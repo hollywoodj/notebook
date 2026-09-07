@@ -119,6 +119,7 @@ fn build_router(state: AppState) -> Router {
             "/api/v1/notes/:id/permanent",
             delete(permanently_delete_note),
         )
+        .route("/api/v1/notes/:id/thumbnail", get(note_thumbnail))
         .route("/api/v1/notes/:id/revisions", get(list_revisions))
         .route(
             "/api/v1/notes/:id/revisions/:revision_id/restore",
@@ -495,6 +496,36 @@ async fn download_attachment(
         data,
     )
         .into_response())
+}
+
+/// Serves the inline image a list summary referred to with a
+/// `notebook-thumb://` marker. Keeping it behind its own request is what lets
+/// `/api/v1/notes` stay small: only rows the client actually draws pay for the
+/// image, instead of every response carrying every note's base64.
+async fn note_thumbnail(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, AppError> {
+    let found = {
+        let svc = state.service.lock().await;
+        svc.note_thumbnail(id)?
+    };
+    match found {
+        Some((mime, bytes)) => Ok((
+            [
+                (header::CONTENT_TYPE, mime),
+                // Immutable for a day: the marker changes whenever the note's
+                // first image does, so a stale hit is not possible for long.
+                (
+                    header::CACHE_CONTROL,
+                    "private, max-age=86400".to_string(),
+                ),
+            ],
+            bytes,
+        )
+            .into_response()),
+        None => Ok(StatusCode::NOT_FOUND.into_response()),
+    }
 }
 
 fn content_disposition(filename: &str) -> String {
@@ -1003,7 +1034,7 @@ mod tests {
             .await
             .unwrap();
         let settings: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(settings["theme"], "light");
+        assert_eq!(settings["note_width"], "readable");
         assert_eq!(settings["confirm_delete"], true);
 
         let response = app
@@ -1014,7 +1045,7 @@ mod tests {
                     .uri("/api/v1/settings")
                     .header("content-type", "application/json")
                     .body(Body::from(
-                        serde_json::json!({ "theme": "dark", "note_width": "full" }).to_string(),
+                        serde_json::json!({ "note_width": "full", "font_size": 20 }).to_string(),
                     ))
                     .unwrap(),
             )
@@ -1025,7 +1056,7 @@ mod tests {
             .await
             .unwrap();
         let settings: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(settings["theme"], "dark");
+        assert_eq!(settings["font_size"], 20);
         assert_eq!(settings["note_width"], "full");
         assert_eq!(settings["confirm_delete"], true);
 

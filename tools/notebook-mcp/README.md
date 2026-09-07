@@ -73,7 +73,7 @@ Nothing extra is added in HTTP mode.
 | `NOTEBOOK_MCP_NOTEBOOK_ID` | `3634580e-8510-409a-9f1d-efba851586da` (the "Dev" notebook) | The one notebook this server is allowed to touch. |
 | `NOTEBOOK_DB` | (unset) | SQLite database file path, checked first in offline DB-path resolution. |
 | `NOTEBOOK_MCP_FORCE_SQLITE` | (unset) | Set to `1` to force offline (SQLite) mode even when the API is reachable. |
-| `DEV_ROOT` | `C:\Users\James\Dev` | Where `read_overview`/`sync_overview` look for the ten mirrored Dev root markdown files. |
+| `DEV_ROOT` | `C:\Users\James\Dev` | Where `read_overview`/`sync_overview` look for the Dev root markdown files listed in OVERVIEW_FILES. |
 
 `config.local.json` (next to `server.mjs`, gitignored - machine-specific)
 caches resolved ids and the last-known database path:
@@ -88,8 +88,8 @@ caches resolved ids and the last-known database path:
 }
 ```
 
-`overviewSync` records the `mtimeMs`/`size` seen for each of the ten Dev root
-files at the last successful sync of `Dev - Overview` - that's what makes the
+`overviewSync` records the `mtimeMs`/`size` seen for each of the Dev root
+files listed in OVERVIEW_FILES at the last successful sync of `Dev - Overview` - that's what makes the
 sync mtime-driven rather than re-reading and re-diffing full file contents on
 every call. A file absent from `overviewSync` is treated as missing (or new).
 
@@ -177,10 +177,11 @@ in the scoped notebook, split into two zones:
   write here (via `update_backlog project:"Dev"`); it is **never** regenerated
   or overwritten by sync.
 - **Reference** (`<h2>Reference</h2>` + an index table + one `<h3>` section per
-  file) - **generated**, one-way, from ten Dev root markdown files (`NOW.md`,
-  `GOALS.md`, `STACK.md`, `PROJECTS.md`, `PORTS.md`, `DECISIONS.md`,
-  `SKILLS.md`, `GLOSSARY.md`, `SETUP.md`, `CLAUDE.md` - not
-  `~/.claude/CLAUDE.md`, only the Dev root one). Edits inside this zone are
+  file) - **generated**, one-way, from the Dev root markdown files listed in
+  `OVERVIEW_FILES` in `overview.mjs` (`NOW.md`, `GOALS.md`, `STACK.md`,
+  `PROJECTS.md`, `CLONES.md`, `PORTS.md`, `DECISIONS.md`, `SKILLS.md`,
+  `GLOSSARY.md`, `SETUP.md`, `CLAUDE.md` - not `~/.claude/CLAUDE.md`, only
+  the Dev root one). Edits inside this zone are
   overwritten on the next sync; the files on disk are always the source of
   truth, never the note. A missing file is listed as "missing" in the index
   table with no section - never an error.
@@ -194,7 +195,7 @@ note; absolute `http(s)://` links stay real links.
 
 **Sync is one-way (files -> note) and mtime-driven**, tracked per-file in
 `config.local.json`'s `overviewSync` (`mtimeMs`/`size` at last sync) plus
-`overviewNoteId`. `read_overview` stats all ten files first; if any differs
+`overviewNoteId`. `read_overview` stats all OVERVIEW_FILES first; if any differs
 from the recorded state (or the note is missing, or the Reference zone is
 absent), it regenerates the Reference zone before answering. Regeneration
 always replaces the entire Reference zone while leaving the Ideas zone

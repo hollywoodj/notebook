@@ -6,7 +6,7 @@ import {
   type SidebarFlyoutClock,
 } from "./sidebarFlyout.ts";
 
-/** A hand-driven clock, so the 180ms grace period is asserted rather than
+/** A hand-driven clock, so the close grace period is asserted rather than
  * slept through. `advance` fires everything that has come due. */
 function fakeClock() {
   let now = 0;
@@ -182,7 +182,7 @@ describe("sidebar flyout: the filter belongs to its own section", () => {
   });
 });
 
-describe("sidebar flyout: the 180ms grace period", () => {
+describe("sidebar flyout: the close grace period", () => {
   it("keeps an unpinned panel open until the delay has fully elapsed", () => {
     const { store, timers } = setup();
     store.preview("tags");

@@ -457,11 +457,14 @@ impl NotebookService {
         let title = req.title.unwrap_or_else(|| "Untitled".to_string());
         let content = req.content.unwrap_or_default();
         let content_plain = crate::content::strip_html(&content);
+        // Derived once here so listing a note never has to read its body back.
+        let (checklist_done, checklist_total) = crate::note_query::checklist_progress(&content);
+        let (thumbnail_src, has_inline_thumbnail) = crate::note_query::thumbnail_fields(&content);
 
         let is_template = req.is_template.unwrap_or(false);
         let template_category = req.template_category.clone();
         self.db.connection().execute(
-            "INSERT INTO notes (id, user_id, notebook_id, title, content, content_plain, is_pinned, reminder_at, source_url, is_template, template_category, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO notes (id, user_id, notebook_id, title, content, content_plain, is_pinned, reminder_at, source_url, is_template, template_category, created_at, updated_at, checklist_done, checklist_total, thumbnail_src, has_inline_thumbnail) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 id.to_string(),
                 user_id.to_string(),
@@ -475,7 +478,11 @@ impl NotebookService {
                 if is_template { 1 } else { 0 },
                 template_category,
                 now,
-                now
+                now,
+                checklist_done,
+                checklist_total,
+                thumbnail_src,
+                has_inline_thumbnail as i32
             ],
         )?;
 
@@ -536,9 +543,16 @@ impl NotebookService {
         if let Some(title) = req.title {
             note.title = title;
         }
+        // Only recomputed when the body actually changed: scanning a 43MB note
+        // on a pin or archive toggle is the write amplification this whole
+        // change exists to remove.
+        let mut derived: Option<(i32, i32, Option<String>, bool)> = None;
         if let Some(content) = req.content {
             note.content = content.clone();
             note.content_plain = crate::content::strip_html(&content);
+            let (done, total) = crate::note_query::checklist_progress(&content);
+            let (thumbnail_src, has_inline) = crate::note_query::thumbnail_fields(&content);
+            derived = Some((done, total, thumbnail_src, has_inline));
             self.save_revision(id, &note.title, &content)?;
         }
         if let Some(pinned) = req.is_pinned {
@@ -586,11 +600,44 @@ impl NotebookService {
             ],
         )?;
 
+        // Separate statement so it stays off the pin/archive path, and because
+        // touching neither `title` nor `content_plain` keeps it clear of the
+        // `notes_au` FTS trigger.
+        if let Some((done, total, thumbnail_src, has_inline)) = derived {
+            self.db.connection().execute(
+                "UPDATE notes SET checklist_done = ?1, checklist_total = ?2, thumbnail_src = ?3, has_inline_thumbnail = ?4 WHERE id = ?5",
+                params![done, total, thumbnail_src, has_inline as i32, id.to_string()],
+            )?;
+        }
+
         if let Some(tag_ids) = req.tag_ids {
             self.set_note_tags(id, &tag_ids)?;
         }
 
         self.get_note(id)
+    }
+
+    /// Decoded bytes for a note whose first image is an inline `data:` URI,
+    /// as `(mime_type, bytes)`. Reads exactly one note's body, which is the
+    /// point: list summaries carry a `notebook-thumb://` marker instead of the
+    /// image, and the client resolves it only for rows it actually draws.
+    pub fn note_thumbnail(&self, id: Uuid) -> Result<Option<(String, Vec<u8>)>> {
+        let content: Option<String> = self
+            .db
+            .connection()
+            .query_row(
+                "SELECT content FROM notes WHERE id = ?1",
+                params![id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(content) = content else {
+            return Ok(None);
+        };
+        let Some(src) = crate::note_query::first_image_src(&content) else {
+            return Ok(None);
+        };
+        Ok(decode_data_uri(src.trim()))
     }
 
     fn set_note_tags(&self, note_id: Uuid, tag_ids: &[Uuid]) -> Result<()> {
@@ -1121,6 +1168,35 @@ impl Default for UpdateNoteRequest {
             template_category: None,
         }
     }
+}
+
+/// Splits a `data:<mime>[;base64],<payload>` URI into its media type and
+/// decoded bytes. Returns None for anything that is not a base64 data URI,
+/// including plain http(s) srcs, which the client can already load itself.
+fn decode_data_uri(src: &str) -> Option<(String, Vec<u8>)> {
+    use base64::Engine;
+
+    if src.len() < 5 || !src[..5].eq_ignore_ascii_case("data:") {
+        return None;
+    }
+    let (meta, payload) = src[5..].split_once(',')?;
+    let mut parts = meta.split(';');
+    let mime = parts.next().unwrap_or("").trim();
+    if !parts.any(|part| part.trim().eq_ignore_ascii_case("base64")) {
+        return None;
+    }
+    // Inline HTML wraps long payloads, and the standard alphabet is the only
+    // one browsers emit here.
+    let compact: String = payload.chars().filter(|c| !c.is_whitespace()).collect();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&compact)
+        .ok()?;
+    let mime = if mime.is_empty() {
+        "application/octet-stream".to_string()
+    } else {
+        mime.to_string()
+    };
+    Some((mime, bytes))
 }
 
 #[cfg(test)]

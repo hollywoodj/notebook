@@ -147,9 +147,13 @@ pub fn seed_builtin_templates(conn: &Connection, user_id: Uuid, notebook_id: Uui
         }
         let id = Uuid::new_v4();
         let plain = crate::content::strip_html(tmpl.content);
+        let (checklist_done, checklist_total) =
+            crate::note_query::checklist_progress(tmpl.content);
+        let (thumbnail_src, has_inline_thumbnail) =
+            crate::note_query::thumbnail_fields(tmpl.content);
         conn.execute(
-            "INSERT INTO notes (id, user_id, notebook_id, title, content, content_plain, is_pinned, is_archived, is_template, template_category, template_key, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 0, 1, ?7, ?8, ?9, ?10)",
+            "INSERT INTO notes (id, user_id, notebook_id, title, content, content_plain, is_pinned, is_archived, is_template, template_category, template_key, created_at, updated_at, checklist_done, checklist_total, thumbnail_src, has_inline_thumbnail)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 0, 1, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 id.to_string(),
                 user_id.to_string(),
@@ -160,7 +164,11 @@ pub fn seed_builtin_templates(conn: &Connection, user_id: Uuid, notebook_id: Uui
                 tmpl.category,
                 tmpl.key,
                 now,
-                now
+                now,
+                checklist_done,
+                checklist_total,
+                thumbnail_src,
+                has_inline_thumbnail as i32
             ],
         )?;
         inserted += 1;
@@ -170,7 +178,6 @@ pub fn seed_builtin_templates(conn: &Connection, user_id: Uuid, notebook_id: Uui
 
 pub fn default_preferences() -> serde_json::Value {
     serde_json::json!({
-        "theme": "light",
         "startup_view": "all",
         "confirm_delete": true,
         "spell_check": true,

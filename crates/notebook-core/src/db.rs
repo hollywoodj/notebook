@@ -19,7 +19,15 @@ const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     migrate_templates_and_settings,
     migrate_template_columns,
     migrate_reindex_template_content_plain,
+    migrate_summary_columns,
 ];
+
+/// `user_version` stamped by `migrate_reindex_template_content_plain`, i.e. its
+/// 1-based position in `MIGRATIONS`. Named so the test that proves the step is
+/// wired into the chain does not have to derive it from `MIGRATIONS.len()`,
+/// which silently stops pointing at that step the moment one is appended.
+#[cfg(test)]
+const REINDEX_TEMPLATE_CONTENT_PLAIN_VERSION: u32 = 4;
 
 /// A directory that removes itself on drop.
 ///
@@ -264,6 +272,67 @@ fn migrate_reindex_template_content_plain(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Moves the two per-note values a list summary needs - the checklist counts
+/// and the thumbnail reference - out of the note body and into their own
+/// columns, so `note_query::SUMMARY_SELECT` never has to read `content`.
+///
+/// Reading `content` per row made every list proportional to the size of the
+/// whole notebook rather than to the number of rows: a Trash holding 348MB of
+/// imported HTML took 7.7s and peaked at 390MB of resident memory, and because
+/// every API handler shares one `Mutex<NotebookService>`, it stalled `/health`
+/// along with it.
+///
+/// Idempotent on two counts: `ensure_column` skips columns that already exist,
+/// and the backfill recomputes from `content`, so replaying it on a database
+/// that predates the `user_version` stamp is a no-op in effect.
+fn migrate_summary_columns(conn: &Connection) -> Result<()> {
+    ensure_column(conn, "notes", "checklist_done", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(
+        conn,
+        "notes",
+        "checklist_total",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(conn, "notes", "thumbnail_src", "TEXT")?;
+    ensure_column(
+        conn,
+        "notes",
+        "has_inline_thumbnail",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+
+    // Narrow the FTS trigger before the backfill below, so rewriting these
+    // columns on every existing row does not also rewrite the whole FTS index.
+    conn.execute_batch(
+        "DROP TRIGGER IF EXISTS notes_au;
+         CREATE TRIGGER notes_au AFTER UPDATE OF title, content_plain ON notes BEGIN
+             DELETE FROM notes_fts WHERE note_id = old.id;
+             INSERT INTO notes_fts(note_id, title, content_plain) VALUES (new.id, new.title, new.content_plain);
+         END;",
+    )?;
+
+    // Ids first, then one body at a time. Collecting the bodies up front would
+    // mean holding every note in memory at once (one imported note here is
+    // 43MB), and updating `notes` while a cursor is still scanning it leaves
+    // which rows the scan sees undefined.
+    let ids: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT id FROM notes")?;
+        let mapped = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        mapped.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut read = conn.prepare("SELECT content FROM notes WHERE id = ?1")?;
+    let mut update = conn.prepare(
+        "UPDATE notes SET checklist_done = ?1, checklist_total = ?2, thumbnail_src = ?3, has_inline_thumbnail = ?4 WHERE id = ?5",
+    )?;
+    for id in ids {
+        let content: String = read.query_row(params![id], |row| row.get(0))?;
+        let (done, total) = crate::note_query::checklist_progress(&content);
+        let (thumbnail_src, has_inline) = crate::note_query::thumbnail_fields(&content);
+        update.execute(params![done, total, thumbnail_src, has_inline as i32, id])?;
+    }
+    Ok(())
+}
+
 fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let names = stmt.query_map([], |row| row.get::<_, String>(1))?;
@@ -437,6 +506,86 @@ mod tests {
     }
 
     #[test]
+    fn summary_columns_migration_backfills_and_is_idempotent() {
+        let db = Database::in_memory().unwrap();
+        let conn = db.connection();
+        let user_id = db.default_user_id().unwrap();
+        let notebook_id: String = conn
+            .query_row(
+                "SELECT id FROM notebooks WHERE user_id = ?1 LIMIT 1",
+                params![user_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let insert = |id: &str, content: &str| {
+            conn.execute(
+                "INSERT INTO notes (id, user_id, notebook_id, title, content, content_plain, is_pinned, is_archived, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, 'T', ?4, '', 0, 0, ?5, ?5)",
+                params![id, user_id.to_string(), notebook_id, content, now],
+            )
+            .unwrap();
+        };
+
+        let inline_id = Uuid::new_v4().to_string();
+        let linked_id = Uuid::new_v4().to_string();
+        let plain_id = Uuid::new_v4().to_string();
+        insert(
+            &inline_id,
+            r#"<img src="data:image/png;base64,AA=="><ul><li data-type="taskItem" data-checked="true">a</li></ul>"#,
+        );
+        insert(&linked_id, r#"<img src="https://cdn.example/pic.png">"#);
+        insert(&plain_id, "<p>nothing here</p>");
+
+        // Clear the values `create_note` would normally have written, so the
+        // backfill is what is actually under test.
+        conn.execute(
+            "UPDATE notes SET checklist_done = 0, checklist_total = 0, thumbnail_src = NULL, has_inline_thumbnail = 0",
+            [],
+        )
+        .unwrap();
+
+        let read = |id: &str| -> (i32, i32, Option<String>, i32) {
+            conn.query_row(
+                "SELECT checklist_done, checklist_total, thumbnail_src, has_inline_thumbnail FROM notes WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap()
+        };
+
+        migrate_summary_columns(conn).unwrap();
+
+        assert_eq!(read(&inline_id), (1, 1, None, 1));
+        assert_eq!(
+            read(&linked_id),
+            (0, 0, Some("https://cdn.example/pic.png".to_string()), 0)
+        );
+        assert_eq!(read(&plain_id), (0, 0, None, 0));
+
+        // The FTS trigger must survive being replaced, and stay scoped to the
+        // two columns it indexes.
+        let trigger_sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'notes_au'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(trigger_sql.contains("UPDATE OF title, content_plain"));
+
+        // Replaying it changes nothing, including the trigger.
+        migrate_summary_columns(conn).unwrap();
+        assert_eq!(read(&inline_id), (1, 1, None, 1));
+        assert_eq!(
+            read(&linked_id),
+            (0, 0, Some("https://cdn.example/pic.png".to_string()), 0)
+        );
+        assert_eq!(read(&plain_id), (0, 0, None, 0));
+    }
+
+    #[test]
     fn reindex_step_is_wired_into_the_migration_chain() {
         // The test above calls the step directly, which passes even if the step
         // was never added to MIGRATIONS. This one proves the wiring: an existing
@@ -464,7 +613,8 @@ mod tests {
         .unwrap();
 
         // Rewind the stamp to before this step existed, then replay the chain.
-        let previous = MIGRATIONS.len() as u32 - 1;
+        // Every later step is idempotent, so replaying them alongside it is fine.
+        let previous = REINDEX_TEMPLATE_CONTENT_PLAIN_VERSION - 1;
         conn.execute_batch(&format!("PRAGMA user_version = {previous}"))
             .unwrap();
         db.migrate().unwrap();

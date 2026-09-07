@@ -1,6 +1,6 @@
 /**
  * Owns the sidebar flyout state machine: which section is open, whether a
- * click pinned it, the filter box beside it, and the 180ms grace period that
+ * click pinned it, the filter box beside it, and the 220ms grace period that
  * lets the pointer travel from a nav button to the panel without the panel
  * vanishing underneath it.
  *
@@ -16,7 +16,7 @@
  * `useSidebarFlyout.ts` is the thin React binding.
  *
  * The clock is injected rather than calling `window` directly - that is what
- * makes the hover timer assertable instead of a real 180ms sleep in the test
+ * makes the hover timer assertable instead of a real 220ms sleep in the test
  * suite.
  */
 import {
@@ -26,8 +26,11 @@ import {
   type SidebarFlyoutKind,
 } from "./ui/sidebar.ts";
 
-/** How long an unpinned panel survives after the pointer leaves it. */
-export const SIDEBAR_FLYOUT_CLOSE_DELAY = 180;
+/** How long an unpinned panel survives after the pointer leaves it.
+ * Long enough to cross the rail border onto the panel; short enough that a
+ * skim of the icons does not leave a panel hanging. Evernote’s hover panel
+ * uses a similar grace period. */
+export const SIDEBAR_FLYOUT_CLOSE_DELAY = 220;
 
 export interface SidebarFlyoutState {
   flyout: SidebarFlyout;

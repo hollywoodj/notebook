@@ -1,0 +1,12 @@
+{
+  "name": "notebook-links",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "notebook-links": "./cli.mjs"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

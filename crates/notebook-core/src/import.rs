@@ -131,13 +131,9 @@ impl NotebookService {
         })?;
 
         for resource in note.resources {
-            if enex::is_inline_image(&resource) {
-                continue;
-            }
-            let filename = resource
-                .filename
-                .clone()
-                .unwrap_or_else(|| default_attachment_name(&resource.mime));
+            let filename = resource.filename.clone().unwrap_or_else(|| {
+                crate::content::default_attachment_name(&resource.mime)
+            });
             let resource_marker = format!("notebook-resource://{}", resource.hash);
             let was_referenced = html.contains(&resource_marker);
             let attachment = self.add_attachment(
@@ -190,13 +186,5 @@ impl NotebookService {
             ],
         )?;
         Ok(())
-    }
-}
-
-fn default_attachment_name(mime: &str) -> String {
-    if crate::content::looks_like_pdf(mime, None, &[]) {
-        "document.pdf".into()
-    } else {
-        "attachment".into()
     }
 }

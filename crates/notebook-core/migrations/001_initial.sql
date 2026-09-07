@@ -121,7 +121,11 @@ CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN
     DELETE FROM notes_fts WHERE note_id = old.id;
 END;
 
-CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
+-- Scoped to the two indexed columns on purpose: an unqualified AFTER UPDATE
+-- reindexes the note on every metadata-only write (pin, archive, thumbnail
+-- recompute), which rewrites the whole FTS row for no reason. `db.rs`'s
+-- `migrate_summary_columns` applies the same definition to existing databases.
+CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE OF title, content_plain ON notes BEGIN
     DELETE FROM notes_fts WHERE note_id = old.id;
     INSERT INTO notes_fts(note_id, title, content_plain) VALUES (new.id, new.title, new.content_plain);
 END;

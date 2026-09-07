@@ -8,7 +8,10 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 
 use crate::content::html::{escape_attr, escape_html};
-use crate::content::{decode_xml_entities, file_attachment_html, looks_like_pdf};
+use crate::content::{
+    basename, decode_xml_entities, default_attachment_name, file_attachment_html, looks_like_pdf,
+    sniff_mime,
+};
 use crate::error::{NotebookError, Result};
 
 #[derive(Debug, Clone)]
@@ -37,10 +40,11 @@ pub struct EnexResource {
     pub width: Option<i32>,
     pub height: Option<i32>,
     pub hash: String,
+    pub is_attachment: bool,
 }
 
 pub fn parse_enex(data: &[u8]) -> Result<EnexExport> {
-    let mut reader = Reader::from_reader(Cursor::new(data));
+    let mut reader = Reader::from_reader(Cursor::new(decode_enex_bytes(data)?));
     reader.config_mut().trim_text(true);
 
     let mut notes = Vec::new();
@@ -103,6 +107,12 @@ pub fn parse_enex(data: &[u8]) -> Result<EnexExport> {
                             "height" => resource.height = text.trim().parse().ok(),
                             "file-name" if in_resource_attributes => {
                                 resource.filename = Some(text.trim().to_string())
+                            }
+                            "attachment" if in_resource_attributes => {
+                                resource.is_attachment = matches!(
+                                    text.trim().to_ascii_lowercase().as_str(),
+                                    "true" | "1" | "yes"
+                                );
                             }
                             _ => {}
                         }
@@ -241,6 +251,7 @@ struct PartialResource {
     filename: Option<String>,
     width: Option<i32>,
     height: Option<i32>,
+    is_attachment: bool,
 }
 
 impl PartialResource {
@@ -249,22 +260,24 @@ impl PartialResource {
         if data.is_empty() {
             return Err(NotebookError::Other("empty ENEX resource".into()));
         }
-        let mut mime = if self.mime.is_empty() {
-            "application/octet-stream".to_string()
-        } else {
-            self.mime
-        };
-        if looks_like_pdf(&mime, self.filename.as_deref(), &data) {
-            mime = "application/pdf".to_string();
-        }
+        let mime = sniff_mime(&self.mime, self.filename.as_deref(), &data);
+        let filename = self.filename.map(|name| {
+            let base = basename(&name);
+            if base.is_empty() {
+                default_attachment_name(&mime)
+            } else {
+                base.to_string()
+            }
+        });
         let hash = format!("{:x}", md5::compute(&data));
         Ok(EnexResource {
             data,
             mime,
-            filename: self.filename,
+            filename,
             width: self.width,
             height: self.height,
             hash,
+            is_attachment: self.is_attachment,
         })
     }
 }
@@ -300,8 +313,34 @@ fn pad_base64(value: &str) -> String {
     padded
 }
 
+fn decode_enex_bytes(data: &[u8]) -> Result<Vec<u8>> {
+    if data.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return Ok(data[3..].to_vec());
+    }
+    if data.starts_with(&[0xFF, 0xFE]) {
+        let units: Vec<u16> = data[2..]
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect();
+        return String::from_utf16(&units)
+            .map(|text| text.into_bytes())
+            .map_err(|err| NotebookError::Other(err.to_string()));
+    }
+    if data.starts_with(&[0xFE, 0xFF]) {
+        let units: Vec<u16> = data[2..]
+            .chunks_exact(2)
+            .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+            .collect();
+        return String::from_utf16(&units)
+            .map(|text| text.into_bytes())
+            .map_err(|err| NotebookError::Other(err.to_string()));
+    }
+    Ok(data.to_vec())
+}
+
 pub fn is_inline_image(resource: &EnexResource) -> bool {
-    resource.mime.to_ascii_lowercase().starts_with("image/")
+    !resource.is_attachment
+        && resource.mime.to_ascii_lowercase().starts_with("image/")
         && !looks_like_pdf(&resource.mime, resource.filename.as_deref(), &resource.data)
 }
 
@@ -801,10 +840,14 @@ fn render_en_media(
 ) {
     let mut hash = None;
     let mut mime = None;
+    let mut width: Option<i32> = None;
+    let mut height: Option<i32> = None;
     for attr in e.attributes().flatten() {
         match attr.key.as_ref() {
             b"hash" => hash = Some(String::from_utf8_lossy(&attr.value).to_string()),
             b"type" => mime = Some(String::from_utf8_lossy(&attr.value).to_string()),
+            b"width" => width = String::from_utf8_lossy(&attr.value).parse().ok(),
+            b"height" => height = String::from_utf8_lossy(&attr.value).parse().ok(),
             _ => {}
         }
     }
@@ -814,20 +857,33 @@ fn render_en_media(
         .or_else(|| match_unique_resource(resource_map, mime.as_deref()));
     if let Some(resource) = resource {
         let use_mime = mime.unwrap_or_else(|| resource.mime.clone());
-        if use_mime.to_ascii_lowercase().starts_with("image/")
+        let filename = resource
+            .filename
+            .as_deref()
+            .filter(|name| !name.is_empty())
+            .unwrap_or("attachment");
+        if is_inline_image(resource)
+            && use_mime.to_ascii_lowercase().starts_with("image/")
             && !looks_like_pdf(&use_mime, resource.filename.as_deref(), &resource.data)
         {
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&resource.data);
-            out.push_str(&format!(
-                "<img src=\"data:{};base64,{}\" alt=\"{}\" />",
-                escape_attr(&use_mime),
-                b64,
-                escape_attr(resource.filename.as_deref().unwrap_or("image"))
-            ));
+            let width = width.or(resource.width);
+            let height = height.or(resource.height);
+            out.push_str("<img src=\"notebook-resource://");
+            out.push_str(&escape_attr(&resource.hash));
+            out.push_str("\" alt=\"");
+            out.push_str(&escape_attr(filename));
+            out.push('"');
+            if let Some(width) = width {
+                out.push_str(&format!(" width=\"{width}\""));
+            }
+            if let Some(height) = height {
+                out.push_str(&format!(" height=\"{height}\""));
+            }
+            out.push_str(" />");
         } else {
             out.push_str(&file_attachment_html(
                 &format!("notebook-resource://{}", resource.hash),
-                resource.filename.as_deref().unwrap_or("attachment"),
+                filename,
                 &use_mime,
             ));
         }
@@ -964,6 +1020,7 @@ mod tests {
             width: None,
             height: None,
             hash: hash.to_string(),
+            is_attachment: false,
         };
         let enml = format!(
             r#"<en-note><div>Before <en-media type="image/png" hash="{}"/> after</div></en-note>"#,
@@ -971,6 +1028,11 @@ mod tests {
         );
         let html = enml_to_html(&enml, &[resource]).unwrap();
         assert!(html.contains("<img"), "expected image tag, got: {html}");
+        assert!(
+            html.contains(&format!("notebook-resource://{hash}")),
+            "expected resource placeholder, got: {html}"
+        );
+        assert!(!html.contains("data:image"), "got: {html}");
         assert!(html.contains("Before"));
         assert!(html.contains("after"));
     }
@@ -986,6 +1048,7 @@ mod tests {
             width: None,
             height: None,
             hash: hash.clone(),
+            is_attachment: false,
         };
         let enml = format!(
             r#"<en-note><en-media type="application/pdf" hash="{}"/></en-note>"#,
@@ -1333,5 +1396,199 @@ mod tests {
         assert_eq!(export.notes[0].title, "John's grocery list");
         let html = enml_to_html(&export.notes[0].content, &[]).unwrap();
         assert!(html.contains("Don't forget"), "got: {html}");
+    }
+
+    fn import_bytes(label: &str, enex: &[u8]) -> (crate::service::NotebookService, crate::models::EnexImportResult) {
+        let dir = std::env::temp_dir().join(format!("notebook-{label}-import-test"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let service = crate::service::NotebookService::new(
+            crate::db::Database::open(dir.join("test.db")).unwrap(),
+        );
+        let result = service
+            .import_enex(
+                enex,
+                crate::models::EnexImportRequest {
+                    notebook_id: None,
+                    notebook_name: Some("Imported".into()),
+                    stack_id: None,
+                },
+            )
+            .unwrap();
+        (service, result)
+    }
+
+    fn imported_note(
+        service: &crate::service::NotebookService,
+        notebook_id: uuid::Uuid,
+    ) -> crate::models::Note {
+        service
+            .list_notes(Some(notebook_id), None, false, None, Some(false))
+            .unwrap()
+            .pop()
+            .and_then(|summary| service.get_note(summary.id).ok())
+            .unwrap()
+    }
+
+    #[test]
+    fn imports_inline_png_as_image_attachment() {
+        let file_data = b"\x89PNG\r\n\x1a\nimage-bytes";
+        let hash = format!("{:x}", md5::compute(file_data));
+        let encoded = base64::engine::general_purpose::STANDARD.encode(file_data);
+        let enex = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>Photo</title>
+    <content><![CDATA[<en-note><div>Snap</div><en-media type="image/png" hash="{hash}" width="12" height="8"/></en-note>]]></content>
+    <resource>
+      <data encoding="base64">{encoded}</data>
+      <mime>image/png</mime>
+      <width>12</width>
+      <height>8</height>
+      <resource-attributes><file-name>snap.png</file-name></resource-attributes>
+    </resource>
+  </note>
+</en-export>"#
+        );
+        let (service, result) = import_bytes("png-inline", enex.as_bytes());
+        assert_eq!(result.imported, 1, "errors: {:?}", result.errors);
+        let note = imported_note(&service, result.notebook_id);
+        let attachments = service.list_attachments(note.id).unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].filename, "snap.png");
+        assert_eq!(attachments[0].mime_type, "image/png");
+        assert_eq!(
+            service.read_attachment_data(attachments[0].id).unwrap(),
+            file_data
+        );
+        assert!(note.content.contains("<img"), "got: {}", note.content);
+        assert!(note
+            .content
+            .contains(&format!("notebook-attachment://{}", attachments[0].id)));
+        assert!(note.content.contains("width=\"12\""));
+        assert!(!note.content.contains("data:image"));
+        assert!(!note.content.contains("notebook-resource://"));
+    }
+
+    #[test]
+    fn imports_unreferenced_image_attachment() {
+        let file_data = b"\x89PNG\r\n\x1a\nloose";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(file_data);
+        let enex = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>Loose image</title>
+    <content><![CDATA[<en-note><div>See attached</div></en-note>]]></content>
+    <resource>
+      <data encoding="base64">{encoded}</data>
+      <mime>image/png</mime>
+      <resource-attributes>
+        <file-name>C:\Users\x\photo.png</file-name>
+        <attachment>true</attachment>
+      </resource-attributes>
+    </resource>
+  </note>
+</en-export>"#
+        );
+        let (service, result) = import_bytes("png-unreferenced", enex.as_bytes());
+        assert_eq!(result.imported, 1, "errors: {:?}", result.errors);
+        let note = imported_note(&service, result.notebook_id);
+        let attachments = service.list_attachments(note.id).unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].filename, "photo.png");
+        assert!(note.content.contains("data-notebook-file=\"true\""));
+        assert!(note
+            .content
+            .contains(&format!("notebook-attachment://{}", attachments[0].id)));
+    }
+
+    #[test]
+    fn imports_audio_mpeg_resource() {
+        let file_data = b"ID3\x03\x00\x00fake-mp3";
+        let hash = format!("{:x}", md5::compute(file_data));
+        let encoded = base64::engine::general_purpose::STANDARD.encode(file_data);
+        let enex = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>Voice</title>
+    <content><![CDATA[<en-note><en-media type="audio/mpeg" hash="{hash}"/></en-note>]]></content>
+    <resource>
+      <data encoding="base64">{encoded}</data>
+      <mime>audio/mpeg</mime>
+      <resource-attributes><file-name>memo.mp3</file-name></resource-attributes>
+    </resource>
+  </note>
+</en-export>"#
+        );
+        let (service, result) = import_bytes("audio-mpeg", enex.as_bytes());
+        assert_eq!(result.imported, 1, "errors: {:?}", result.errors);
+        let note = imported_note(&service, result.notebook_id);
+        let attachments = service.list_attachments(note.id).unwrap();
+        assert_eq!(attachments[0].filename, "memo.mp3");
+        assert_eq!(attachments[0].mime_type, "audio/mpeg");
+        assert_eq!(
+            service.read_attachment_data(attachments[0].id).unwrap(),
+            file_data
+        );
+        assert!(note.content.contains("data-notebook-file=\"true\""));
+        assert!(note
+            .content
+            .contains(&format!("notebook-attachment://{}", attachments[0].id)));
+    }
+
+    #[test]
+    fn imports_docx_from_octet_stream() {
+        let file_data = b"PK\x03\x04docx-bytes";
+        let hash = format!("{:x}", md5::compute(file_data));
+        let encoded = base64::engine::general_purpose::STANDARD.encode(file_data);
+        let enex = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>Brief</title>
+    <content><![CDATA[<en-note><en-media type="application/octet-stream" hash="{hash}"/></en-note>]]></content>
+    <resource>
+      <data encoding="base64">{encoded}</data>
+      <mime>application/octet-stream</mime>
+      <resource-attributes><file-name>brief.docx</file-name></resource-attributes>
+    </resource>
+  </note>
+</en-export>"#
+        );
+        let (service, result) = import_bytes("docx-octet", enex.as_bytes());
+        assert_eq!(result.imported, 1, "errors: {:?}", result.errors);
+        let note = imported_note(&service, result.notebook_id);
+        let attachments = service.list_attachments(note.id).unwrap();
+        assert_eq!(attachments[0].filename, "brief.docx");
+        assert_eq!(
+            attachments[0].mime_type,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        );
+        assert!(note
+            .content
+            .contains(&format!("notebook-attachment://{}", attachments[0].id)));
+    }
+
+    #[test]
+    fn imports_utf16_le_enex() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-16"?>
+<en-export>
+  <note>
+    <title>UTF16</title>
+    <content><![CDATA[<en-note><div>Hello from UTF-16</div></en-note>]]></content>
+  </note>
+</en-export>"#;
+        let mut bytes = vec![0xFF, 0xFE];
+        for unit in xml.encode_utf16() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        let (service, result) = import_bytes("utf16-le", &bytes);
+        assert_eq!(result.imported, 1, "errors: {:?}", result.errors);
+        let note = imported_note(&service, result.notebook_id);
+        assert_eq!(note.title, "UTF16");
+        assert!(note.content.contains("Hello from UTF-16"));
     }
 }

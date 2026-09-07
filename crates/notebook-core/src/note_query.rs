@@ -7,9 +7,16 @@ use crate::datetime::{optional_dt, parse_dt};
 use crate::error::Result;
 use crate::models::NoteSummary;
 
+// Deliberately does NOT select `n.content`. The checklist counts and the
+// thumbnail reference are computed once at write time into their own columns
+// (see `service.rs` and `db.rs`'s `migrate_summary_columns`), because dragging
+// every note's full HTML through a list - one note here is 43MB of inline
+// base64 - stalls the single `Mutex<NotebookService>` that every API request
+// shares, which in turn makes `/health` time out.
 const SUMMARY_SELECT: &str = "SELECT n.id, n.notebook_id, n.title, n.content_plain, n.is_pinned, n.is_archived, n.reminder_at, n.created_at, n.updated_at,
              (SELECT COUNT(*) FROM attachments a WHERE a.note_id = n.id) as attachment_count,
-             n.is_template, n.template_category, nb.name, n.content,
+             n.is_template, n.template_category, nb.name,
+             n.checklist_done, n.checklist_total, n.thumbnail_src, n.has_inline_thumbnail,
              (SELECT a.id FROM attachments a WHERE a.note_id = n.id AND a.mime_type LIKE 'image/%' ORDER BY a.created_at LIMIT 1) as thumbnail_attachment_id
              FROM notes n JOIN notebooks nb ON nb.id = n.notebook_id";
 
@@ -45,10 +52,9 @@ impl SummaryRow {
     fn from_sql(row: &Row<'_>) -> rusqlite::Result<Self> {
         let content_plain: String = row.get(3)?;
         let snippet: String = content_plain.chars().take(200).collect();
-        let content: String = row.get(13)?;
-        let (checklist_done, checklist_total) = checklist_progress(&content);
+        let id = Uuid::parse_str(&row.get::<_, String>(0)?).unwrap();
         Ok(Self {
-            id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+            id,
             notebook_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap(),
             title: row.get(2)?,
             snippet,
@@ -61,9 +67,14 @@ impl SummaryRow {
             is_template: row.get::<_, i32>(10)? != 0,
             template_category: row.get(11)?,
             notebook_name: row.get(12)?,
-            thumbnail_url: resolve_thumbnail(row.get::<_, Option<String>>(14)?, &content),
-            checklist_done,
-            checklist_total,
+            checklist_done: row.get(13)?,
+            checklist_total: row.get(14)?,
+            thumbnail_url: resolve_thumbnail(
+                row.get::<_, Option<String>>(17)?,
+                row.get::<_, Option<String>>(15)?,
+                row.get::<_, i32>(16)? != 0,
+                id,
+            ),
         })
     }
 }
@@ -110,11 +121,51 @@ pub fn checklist_progress(content: &str) -> (i32, i32) {
     (done.min(total), total)
 }
 
-fn resolve_thumbnail(attachment_id: Option<String>, content: &str) -> Option<String> {
+/// The longest content-derived image src worth storing inline in a summary.
+/// Anything past this is unusable as a compact reference, so it is dropped.
+const MAX_THUMBNAIL_REF: usize = 2048;
+
+/// Marker scheme handed to the client when a note's first image is an inline
+/// `data:` URI. The client turns it into a request to
+/// `/api/v1/notes/:id/thumbnail`, so the bytes are fetched only for the rows
+/// actually on screen instead of riding along in every list response.
+pub const THUMBNAIL_MARKER_SCHEME: &str = "notebook-thumb://";
+
+/// Splits a content-derived image src into the small reference we can store
+/// inline in a list summary, and a flag for inline base64 we must serve lazily.
+pub fn thumbnail_fields(content: &str) -> (Option<String>, bool) {
+    let Some(src) = first_image_src(content) else {
+        return (None, false);
+    };
+    let trimmed = src.trim();
+    if trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("data:") {
+        return (None, true);
+    }
+    if trimmed.is_empty() || trimmed.len() > MAX_THUMBNAIL_REF {
+        return (None, false);
+    }
+    (Some(trimmed.to_string()), false)
+}
+
+/// An image attachment still wins, then a stored small reference, then the
+/// lazy marker. Takes the precomputed columns rather than the note body so a
+/// list never has to read `content`.
+fn resolve_thumbnail(
+    attachment_id: Option<String>,
+    thumbnail_src: Option<String>,
+    has_inline: bool,
+    note_id: Uuid,
+) -> Option<String> {
     if let Some(id) = attachment_id.filter(|value| !value.is_empty()) {
         return Some(id);
     }
-    first_image_src(content)
+    if let Some(src) = thumbnail_src.filter(|value| !value.trim().is_empty()) {
+        return Some(src);
+    }
+    if has_inline {
+        return Some(format!("{THUMBNAIL_MARKER_SCHEME}{note_id}"));
+    }
+    None
 }
 
 pub fn list_summaries(conn: &Connection, filter: NoteListFilter) -> Result<Vec<NoteSummary>> {
@@ -249,7 +300,8 @@ fn hydrate_summaries(conn: &Connection, rows: Vec<SummaryRow>) -> Result<Vec<Not
 
 #[cfg(test)]
 mod tests {
-    use super::{checklist_progress, first_image_src, resolve_thumbnail};
+    use super::{checklist_progress, first_image_src, resolve_thumbnail, thumbnail_fields};
+    use uuid::Uuid;
 
     #[test]
     fn first_image_src_reads_quoted_html() {
@@ -272,13 +324,55 @@ mod tests {
 
     #[test]
     fn resolve_thumbnail_prefers_an_image_attachment() {
+        let note_id = Uuid::nil();
         assert_eq!(
-            resolve_thumbnail(Some("att-1".into()), r#"<img src="https://x/y.png">"#).as_deref(),
+            resolve_thumbnail(
+                Some("att-1".into()),
+                Some("https://x/y.png".into()),
+                false,
+                note_id
+            )
+            .as_deref(),
             Some("att-1")
         );
         assert_eq!(
-            resolve_thumbnail(None, r#"<img src="https://x/y.png">"#).as_deref(),
+            resolve_thumbnail(None, Some("https://x/y.png".into()), false, note_id).as_deref(),
             Some("https://x/y.png")
         );
+        assert_eq!(resolve_thumbnail(None, None, false, note_id), None);
+    }
+
+    #[test]
+    fn resolve_thumbnail_falls_back_to_the_lazy_marker_for_inline_images() {
+        let note_id = Uuid::parse_str("3443b549-7849-49a1-b4ba-67f44ee9cfb4").unwrap();
+        assert_eq!(
+            resolve_thumbnail(None, None, true, note_id).as_deref(),
+            Some("notebook-thumb://3443b549-7849-49a1-b4ba-67f44ee9cfb4")
+        );
+        // A usable stored reference still beats the marker.
+        assert_eq!(
+            resolve_thumbnail(None, Some("https://x/y.png".into()), true, note_id).as_deref(),
+            Some("https://x/y.png")
+        );
+    }
+
+    #[test]
+    fn thumbnail_fields_keeps_urls_and_flags_inline_data_uris() {
+        assert_eq!(
+            thumbnail_fields(r#"<img src="https://cdn.example/pic.png">"#),
+            (Some("https://cdn.example/pic.png".to_string()), false)
+        );
+        assert_eq!(
+            thumbnail_fields(r#"<img src="data:image/jpeg;base64,/9j/4AAQ">"#),
+            (None, true)
+        );
+        assert_eq!(
+            thumbnail_fields(r#"<img src="DATA:image/png;base64,iVBOR">"#),
+            (None, true)
+        );
+        assert_eq!(thumbnail_fields("<p>no image</p>"), (None, false));
+        // Too long to be a useful compact reference.
+        let long = format!(r#"<img src="https://x/{}.png">"#, "a".repeat(3000));
+        assert_eq!(thumbnail_fields(&long), (None, false));
     }
 }

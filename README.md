@@ -129,7 +129,7 @@ note's normal revision history on either transport. The notebook holds a
 `Dev Log` catch-all note, one opt-in note per enabled project (bugs, future
 improvements, and architecture reviews all live together per project), and a
 global `Dev - Overview` note that one-way mirrors James's Dev root markdown
-files (NOW/GOALS/STACK/PROJECTS/PORTS/DECISIONS/SKILLS/GLOSSARY/SETUP/
+files (NOW/GOALS/STACK/PROJECTS/CLONES/PORTS/DECISIONS/SKILLS/GLOSSARY/SETUP/
 CLAUDE.md) into a generated Reference zone alongside a hand-maintained Ideas
 list, so they're readable from the notes app. See `tools/notebook-mcp/README.md`
 for the 13 tools, the note model, the transport/DB-path resolution, and how
@@ -301,6 +301,12 @@ This is the Evernote ↔ OmniFocus workflow from [Inside OmniFocus](https://insi
 3. **Send Checkboxes to OmniClone** sends unchecked checklist items as Inbox actions (one `add`, or TaskPaper `paste` for several), each linking back to the note — the TaskClone / Mail Drop pattern.
 
 Settings → Integrations chooses OmniClone (`omniclone:///…`), OmniFocus (`omnifocus:///…`), or both.
+
+For a persistent, queryable link between a specific note and a specific
+OmniClone project (rather than a one-off pasted link or Inbox action), see
+`tools/notebook-links/` - a CLI that stores the link in its own broker
+database and keeps a visible, tool-managed pointer inside both the note and
+the OmniClone project.
 
 ### Import mapping
 

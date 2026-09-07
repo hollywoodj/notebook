@@ -15,7 +15,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { htmlToMarkdown, markdownToHtml, escapeHtml, parseTaskListItems } from "./format.mjs";
-import { createSqliteStore, candidateDbPaths, resolveDbPath } from "./sqlite.mjs";
+import { ApiError, SqliteError, resolveNoteTransport } from "./noteTransport.mjs";
 import {
   ToolInputError,
   PROJECT_NOTE_OFFSET,
@@ -47,7 +47,13 @@ const CONFIG_PATH = path.join(__dirname, "config.local.json");
 const API_BASE = (process.env.NOTEBOOK_API || "http://127.0.0.1:8799").replace(/\/$/, "");
 const NOTEBOOK_ID = process.env.NOTEBOOK_MCP_NOTEBOOK_ID || "3634580e-8510-409a-9f1d-efba851586da";
 const REQUEST_TIMEOUT_MS = 10_000;
-const HEALTH_TIMEOUT_MS = 800;
+// Generous on purpose. The old 800ms budget could not tell "the app is not
+// running" from "the app is busy": every API handler shares one mutex, so a
+// single slow request stalled /health, and this server quietly wrote straight
+// into the SQLite file behind the running app instead.
+const HEALTH_TIMEOUT_MS = 5_000;
+/** Backoff between health retries once the API is known to be up but busy. */
+const HEALTH_RETRY_DELAYS_MS = [1_000, 2_000, 4_000];
 const DEV_LOG_TITLE = "Dev Log";
 const DEV_ROOT = process.env.DEV_ROOT || "C:\\Users\\James\\Dev";
 
@@ -55,15 +61,7 @@ function log(...args) {
   console.error("[notebook-mcp]", ...args);
 }
 
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
-/** Notebook API unreachable, timed out, or returned a non-2xx status. */
-class ApiError extends Error {}
-
-/** Offline (SQLite) transport failed - no DB found, or the query itself failed. */
-class SqliteError extends Error {}
+// ApiError / SqliteError are imported from noteTransport.mjs now (see below).
 
 // ---------------------------------------------------------------------------
 // Config (resolved special-note ids, cached db path)
@@ -134,132 +132,27 @@ function saveOverviewSyncState(statResults) {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP transport (Notebook API)
-// ---------------------------------------------------------------------------
-
-async function apiFetch(pathAndQuery, options = {}) {
-  const url = `${API_BASE}${pathAndQuery}`;
-  let res;
-  try {
-    res = await fetch(url, {
-      ...options,
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      headers: { "content-type": "application/json", ...(options.headers || {}) },
-    });
-  } catch (err) {
-    if (err && (err.name === "TimeoutError" || err.name === "AbortError")) {
-      throw new ApiError(`Notebook API request to ${pathAndQuery} timed out after ${REQUEST_TIMEOUT_MS / 1000}s.`);
-    }
-    throw new ApiError(`Could not reach the Notebook API at ${API_BASE}. (${err.message})`);
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    const err = new ApiError(
-      `Notebook API ${options.method || "GET"} ${pathAndQuery} -> ${res.status} ${res.statusText}${text ? `: ${text}` : ""}`
-    );
-    err.status = res.status;
-    throw err;
-  }
-  if (res.status === 204) return null;
-  const text = await res.text();
-  if (!text) return null;
-  return JSON.parse(text);
-}
-
-async function checkHealth() {
-  try {
-    const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-function httpStore() {
-  const store = { offline: false, wrote: false };
-
-  store.listNotes = async () => apiFetch(`/api/v1/notes?notebook_id=${NOTEBOOK_ID}`);
-
-  store.getNote = async (id) => {
-    try {
-      return await apiFetch(`/api/v1/notes/${id}`);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 404) return null;
-      throw err;
-    }
-  };
-
-  store.findByExactTitle = async (title) => {
-    const notes = await store.listNotes();
-    const found = notes.find((n) => n.title === title);
-    return found ? { id: found.id, title: found.title } : null;
-  };
-
-  store.createNote = async (title, contentHtml) => {
-    const created = await apiFetch("/api/v1/notes", {
-      method: "POST",
-      body: JSON.stringify({ notebook_id: NOTEBOOK_ID, title, content: contentHtml }),
-    });
-    store.wrote = true;
-    return created;
-  };
-
-  store.updateNote = async (id, contentHtml) => {
-    const updated = await apiFetch(`/api/v1/notes/${id}`, {
-      method: "PUT",
-      body: JSON.stringify({ content: contentHtml }),
-    });
-    store.wrote = true;
-    return updated;
-  };
-
-  store.softDeleteNote = async (id) => {
-    await apiFetch(`/api/v1/notes/${id}`, { method: "DELETE" });
-    store.wrote = true;
-  };
-
-  store.search = async (query, limit) =>
-    apiFetch(`/api/v1/search?q=${encodeURIComponent(query)}&notebook_id=${NOTEBOOK_ID}&limit=${limit}`);
-
-  store.close = () => {};
-
-  return store;
-}
-
-// ---------------------------------------------------------------------------
-// Transport resolution
+// Transport resolution - the actual HTTP/SQLite logic lives in
+// noteTransport.mjs (shared with tools/notebook-links, which reuses the
+// exact same write path). This is a thin wrapper plugging in notebook-mcp's
+// own env vars, config-file db-path cache, and logging.
 // ---------------------------------------------------------------------------
 
 async function resolveTransport() {
-  if (process.env.NOTEBOOK_MCP_FORCE_SQLITE === "1") {
-    return buildSqliteStore();
-  }
-  const health = await checkHealth();
-  if (health) {
-    if (health.database) cacheDbPath(health.database);
-    return httpStore();
-  }
-  return buildSqliteStore();
-}
-
-function buildSqliteStore() {
-  const config = loadConfig();
-  const opts = { envDb: process.env.NOTEBOOK_DB, cachedDbPath: config.dbPath };
-  const dbPath = resolveDbPath(opts);
-  if (!dbPath) {
-    const tried = candidateDbPaths(opts);
-    throw new SqliteError(
-      "Notebook app isn't running and no SQLite database could be found offline. Tried:\n" +
-        tried.map((p) => `  - ${p}`).join("\n") +
-        "\nStart the Notebook app, or set NOTEBOOK_DB to the database file path."
-    );
-  }
-  try {
-    return createSqliteStore(dbPath, NOTEBOOK_ID);
-  } catch (err) {
-    throw new SqliteError(`Could not open the offline database at ${dbPath}: ${err.message}`);
-  }
+  return resolveNoteTransport({
+    apiBase: API_BASE,
+    notebookId: NOTEBOOK_ID,
+    envDb: process.env.NOTEBOOK_DB,
+    cachedDbPath: loadConfig().dbPath,
+    forceSqlite: process.env.NOTEBOOK_MCP_FORCE_SQLITE === "1",
+    healthTimeoutMs: HEALTH_TIMEOUT_MS,
+    retryDelaysMs: HEALTH_RETRY_DELAYS_MS,
+    requestTimeoutMs: REQUEST_TIMEOUT_MS,
+    onHealthOk: (health) => {
+      if (health?.database) cacheDbPath(health.database);
+    },
+    log,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -407,7 +300,7 @@ async function withProjectBlock(store, project, mutate) {
 // something's actually stale; sync_overview always does.
 // ---------------------------------------------------------------------------
 
-/** Stats + reads all ten Dev root files. A missing file is never an error -
+/** Stats + reads all Dev root files listed in OVERVIEW_FILES. A missing file is never an error -
  * it's just `exists: false` and gets listed as "missing" in the index table. */
 function statAllDevRootFiles() {
   return OVERVIEW_FILES.map((name) => {
@@ -458,7 +351,7 @@ async function findOverviewNote(store) {
 }
 
 /**
- * Stats all ten Dev root files, and regenerates the Reference zone (creating
+ * Stats all Dev root files listed in OVERVIEW_FILES, and regenerates the Reference zone (creating
  * Dev - Overview on first use if it doesn't exist yet) whenever `force` is
  * set, the note doesn't exist yet, its Reference zone is absent, or any
  * file's mtime/size differs from what was recorded at last sync. The Ideas
@@ -1088,14 +981,14 @@ const TOOLS = {
   },
   read_overview: {
     description:
-      "Read the global 'Dev - Overview' note: a status board for cross-project matters, holding a hand-maintained Ideas list plus a Reference zone that mirrors James's ten Dev root markdown files (NOW/GOALS/STACK/PROJECTS/PORTS/DECISIONS/SKILLS/GLOSSARY/SETUP/CLAUDE.md) one-way from disk. Auto-syncs first: if any source file's mtime/size has changed, the note doesn't exist yet, or its Reference zone is missing, the Reference zone is regenerated before answering (the Ideas zone is always left untouched). Omit `section` to get just the Ideas list, the Reference index table, and the list of available section names - NOT the full ~38KB mirror. Pass `section: \"STACK.md\"` (or \"STACK\", case-insensitive) for just that file's mirrored content as Markdown, or `section: \"all\"` for everything.",
+      "Read the global 'Dev - Overview' note: a status board for cross-project matters, holding a hand-maintained Ideas list plus a Reference zone that mirrors James's Dev root markdown files (NOW/GOALS/STACK/PROJECTS/CLONES/PORTS/DECISIONS/SKILLS/GLOSSARY/SETUP/CLAUDE.md) one-way from disk. Auto-syncs first: if any source file's mtime/size has changed, the note doesn't exist yet, or its Reference zone is missing, the Reference zone is regenerated before answering (the Ideas zone is always left untouched). Omit `section` to get just the Ideas list, the Reference index table, and the list of available section names - NOT the full mirror. Pass `section: \"STACK.md\"` (or \"STACK\", case-insensitive) for just that file's mirrored content as Markdown, or `section: \"all\"` for everything.",
     inputSchema: {
       type: "object",
       properties: {
         section: {
           type: "string",
           description:
-            'Omit for a summary (Ideas + index + available section names). One of the ten mirrored filenames (with or without ".md", case-insensitive) for just that file, or "all" for everything.',
+            'Omit for a summary (Ideas + index + available section names). One of the mirrored filenames from OVERVIEW_FILES (with or without ".md", case-insensitive) for just that file, or "all" for everything.',
         },
       },
       additionalProperties: false,
@@ -1104,7 +997,7 @@ const TOOLS = {
   },
   sync_overview: {
     description:
-      "Force-regenerate the Reference zone of 'Dev - Overview' from the ten Dev root markdown files right now, regardless of recorded mtimes (creating the note on first use). The Ideas zone is always left byte-identical. Reports which files' mirrored content changed since the last sync.",
+      "Force-regenerate the Reference zone of 'Dev - Overview' from the Dev root markdown files listed in OVERVIEW_FILES right now, regardless of recorded mtimes (creating the note on first use). The Ideas zone is always left byte-identical. Reports which files' mirrored content changed since the last sync.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     handler: toolSyncOverview,
   },
@@ -1136,8 +1029,8 @@ function handleInitialize(params) {
 function appendTransportNote(result, store) {
   if (!store.offline || !result || !Array.isArray(result.content)) return result;
   const note = store.wrote
-    ? "(offline - wrote directly to the database; open Notebook to see it)"
-    : "(offline - read directly from the database)";
+    ? "(offline - the Notebook app was not running, so this wrote directly to the database; open Notebook to see it)"
+    : "(offline - the Notebook app was not running, so this read directly from the database)";
   result.content = result.content.map((c) => (c.type === "text" ? { ...c, text: `${c.text}\n\n${note}` } : c));
   return result;
 }
