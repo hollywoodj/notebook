@@ -45,6 +45,38 @@ describe("jumpToMatches", () => {
       ]
     );
   });
+
+  it("includes templates when they match", () => {
+    const results = jumpToMatches(
+      "meet",
+      [{ id: "n1", title: "Standup", notebook_name: "Work" }],
+      [],
+      [],
+      12,
+      undefined,
+      [{ id: "tpl1", title: "Meeting notes" }]
+    );
+    assert.deepEqual(
+      results.map((item) => [item.kind, item.title]),
+      [["template", "Meeting notes"]]
+    );
+  });
+
+  it("includes trashed notes with a Trash subtitle", () => {
+    const results = jumpToMatches(
+      "old",
+      [],
+      [],
+      [],
+      12,
+      undefined,
+      [],
+      [{ id: "t1", title: "Old invoice" }]
+    );
+    assert.deepEqual(results, [
+      { kind: "trash", id: "t1", title: "Old invoice", subtitle: "Trash" },
+    ]);
+  });
 });
 
 describe("recent searches", () => {

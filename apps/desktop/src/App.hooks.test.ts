@@ -55,6 +55,7 @@ describe("Evernote sidebar chrome", () => {
     assert.match(appSource, /title="Search"/);
     assert.match(appSource, /title="New note"/);
     assert.match(appSource, /title="More actions"/);
+    assert.match(appSource, /className="menu-anchor" onMouseDown=\{\(e\) => e\.stopPropagation\(\)\}/);
     assert.match(appSource, /className="menu-popover sidebar-more-menu" role="menu"/);
     assert.match(appSource, /searchOpen \|\| filter\.type === "search"/);
     assert.match(appSource, /sidebarFilterOpen \|\| Boolean\(sidebarFilter\.trim\(\)\)/);
@@ -72,11 +73,17 @@ describe("Evernote sidebar chrome", () => {
   });
 
   it("exposes hide note list and expand note as a pair", () => {
+    assert.match(appSource, /title=\{paneLayout\.sidebarCollapsed \? "Show Sidebar" : "Hide Sidebar"\}/);
     assert.match(appSource, /title=\{paneLayout\.listCollapsed \? "Show note list" : "Hide note list"\}/);
     assert.match(appSource, /title=\{isNoteExpanded\(paneLayout\) \? "Restore panes" : "Expand note"\}/);
+    assert.match(appSource, /toggleSidebarHidden/);
     assert.match(appSource, /toggleNoteListHidden/);
     assert.match(appSource, /toggleNoteExpanded/);
     assert.match(appSource, /className="note-chrome"/);
+    assert.match(appSource, /Search in this notebook/);
+    assert.match(appSource, />\s*New stack\s*</);
+    assert.match(appSource, /templates=\{templates\}/);
+    assert.match(appSource, /target\.kind === "template"/);
   });
 
   it("keeps import in the menu bar instead of the sidebar", () => {
@@ -103,6 +110,16 @@ describe("Evernote sidebar chrome", () => {
     assert.match(appSource, /openSidebarFlyout\("notebooks"\)/);
     assert.match(appSource, /openSidebarFlyout\("shortcuts"\)/);
     assert.match(appSource, /closeSidebarFlyout\(\);/);
+    assert.match(appSource, /aria-label=\{navIconTitle\("Notebooks"/);
+    assert.match(appSource, /aria-label=\{navIconTitle\("Tags"/);
+    assert.match(appSource, /aria-label=\{navIconTitle\("Shortcuts"/);
+    assert.equal(appSource.includes('title={navIconTitle("Notebooks"'), false);
+    assert.equal(appSource.includes('title={navIconTitle("Tags"'), false);
+    assert.equal(appSource.includes('title={navIconTitle("Shortcuts"'), false);
+    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    assert.match(styles, /animation: sidebar-flyout-in 80ms/);
+    assert.match(styles, /\.sidebar-flyout::before/);
+    assert.equal(styles.includes("translateX(-6px)"), false);
   });
 
   it("keeps tags out of the nav list now that they have their own panel", () => {
@@ -131,11 +148,14 @@ describe("Evernote sidebar chrome", () => {
   });
 
   it("keeps section names for tooltips and flyouts, without pinning a labeled pane", () => {
-    for (const label of ["Notes", "Shortcuts", "Reminders", "Notebooks", "Tags", "Templates", "Trash"]) {
+    for (const label of ["Notes", "Shortcuts", "Reminders", "Notebooks", "Tags", "Templates", "Files", "Trash"]) {
       assert.match(appSource, new RegExp(`<span className="nav-label">${label}</span>`));
     }
     assert.match(appSource, /navIconTitle\("Notes"/);
     assert.match(appSource, /navIconTitle\("Notebooks"/);
+    assert.match(appSource, /section === "files"/);
+    assert.match(appSource, /showListFilter\(\{ type: "files" \}\)/);
+    assert.match(appSource, /prefs\.show_files/);
   });
 
   it("counts the current view rather than repeating the all-notes total", () => {
@@ -201,7 +221,7 @@ describe("Evernote list chrome", () => {
     assert.match(appSource, /outlineOpen=\{editorChrome\.outlineOpen\}/);
     const searchSource = readFileSync(new URL("./components/SearchDialog.tsx", import.meta.url), "utf8");
     assert.match(searchSource, /Recent searches/);
-    assert.match(searchSource, /notebook: tag: created: resource:/);
+    assert.match(searchSource, /placeholder="Search notes"/);
     assert.match(menuSource, /Collapse stack/);
     assert.match(menuSource, /label: "Align"/);
     assert.match(menuSource, /label: "Table"/);
@@ -229,6 +249,13 @@ describe("Evernote list chrome", () => {
     assert.match(appSource, /type: "archived"/);
     assert.match(appSource, /Untagged/);
     assert.match(appSource, /Clear filters/);
+    assert.match(appSource, /list-filters-btn/);
+    assert.match(appSource, /note-card-date/);
+    assert.match(appSource, /note-updated/);
+    assert.match(appSource, /saveStateLabel/);
+    const tagBarSource = readFileSync(new URL("./components/NoteTagBar.tsx", import.meta.url), "utf8");
+    assert.match(tagBarSource, /placeholder="Add a tag"/);
+    assert.doesNotMatch(tagBarSource, /Add tag"/);
     assert.match(appSource, /trash-toast/);
     assert.match(appSource, /formatRelativeTime/);
     assert.match(appSource, /canReopenClosedTab/);
@@ -236,18 +263,28 @@ describe("Evernote list chrome", () => {
     assert.match(editorSource, /CODE_LANGUAGES/);
     assert.match(editorSource, /aria-label="Code language"/);
     assert.match(editorSource, /findCaseSensitive/);
-    assert.match(editorSource, /code-copy-btn/);
+    // The copy affordance moved out of NoteEditor into its own extension: as a
+    // DOM node appended to each <pre> it fought ProseMirror's reconciler and
+    // pinned the renderer at 100% CPU. It is a widget decoration now.
+    const copyButtonSource = readFileSync(
+      new URL("./components/codeCopyButton.ts", import.meta.url),
+      "utf8"
+    );
+    assert.match(copyButtonSource, /code-copy-btn/);
+    assert.match(copyButtonSource, /Decoration\.widget/);
+    assert.doesNotMatch(editorSource, /new MutationObserver/);
     assert.match(editorSource, /CaptionImage/);
     assert.match(editorSource, /IMAGE_SIZE_PRESETS/);
   });
 });
 
 describe("menu bar, sidebar icons, and OmniClone", () => {
-  it("keeps Settings in File and the account menu, not on the sidebar", () => {
+  it("keeps Settings in File, not on the sidebar", () => {
     assert.equal(appSource.includes('title="Settings"'), false);
     assert.equal(appSource.includes("Icon.Gear"), false);
     assert.match(menuSource, /label: "Settings…"/);
-    assert.match(appSource, /account-popover/);
+    assert.equal(appSource.includes("account-popover"), false);
+    assert.equal(appSource.includes("account-chip"), false);
   });
 
   it("uses 20px sidebar nav icons and a 22px application menu bar", () => {
@@ -270,5 +307,25 @@ describe("menu bar, sidebar icons, and OmniClone", () => {
     assert.match(appSource, /parseNotebookUrl/);
     const settings = readFileSync(new URL("./components/SettingsModal.tsx", import.meta.url), "utf8");
     assert.match(settings, /id: "integrations"/);
+  });
+
+  it("matches Evernote note type, list spacing, and Settings → Notes fonts", () => {
+    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    const settings = readFileSync(new URL("./components/SettingsModal.tsx", import.meta.url), "utf8");
+    const editorSource = readFileSync(new URL("./components/NoteEditor.tsx", import.meta.url), "utf8");
+    assert.match(styles, /font-family: "Inter"/);
+    assert.match(styles, /\.title-input \{[\s\S]*font-size: 32px/);
+    assert.match(styles, /\.ProseMirror p \{[\s\S]*margin: 0/);
+    assert.match(styles, /--editor-line-height: 1\.5/);
+    assert.match(styles, /\.note-card-title \{[\s\S]*font-size: 14px/);
+    assert.match(styles, /\.note-card \{[\s\S]*padding: 10px 16px 12px/);
+    assert.match(settings, /Default font settings/);
+    assert.match(settings, /NOTE_STYLE_OPTIONS/);
+    assert.doesNotMatch(settings, /id: "tasks"/);
+    const fontsSource = readFileSync(new URL("./ui/noteFonts.ts", import.meta.url), "utf8");
+    assert.match(fontsSource, /Large header/);
+    assert.match(editorSource, /Text style/);
+    assert.match(editorSource, /NOTE_STYLE_OPTIONS/);
+    assert.match(menuSource, /Large header/);
   });
 });

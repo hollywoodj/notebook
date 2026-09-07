@@ -27,6 +27,12 @@ import {
   type Ref,
 } from "react";
 import { api, Attachment, attachmentUrl } from "../api";
+import {
+  NOTE_STYLE_OPTIONS,
+  noteFontStyleVars,
+  stylesFromLegacy,
+  type NoteFontStyles,
+} from "../ui/noteFonts.ts";
 import { Icon } from "./Icons";
 import {
   CODE_LANGUAGES,
@@ -50,6 +56,7 @@ import { ContextMenu, ContextMenuEntry } from "./ContextMenu";
 import { LinkDialog } from "./LinkDialog";
 import { FontFamily, FontSize } from "./fontMarks";
 import { Callout, Subscript, Superscript } from "./editorMarks";
+import { CodeCopyButton } from "./codeCopyButton";
 import {
   FileAttachment,
   USE_FILE_AS_TITLE,
@@ -72,6 +79,7 @@ interface Props {
   spellLanguage?: string;
   fontFamily: "default" | "serif" | "mono";
   fontSize: number;
+  fontStyles?: NoteFontStyles;
   noteWidth: "readable" | "full";
   lineHeight?: number;
   readOnly?: boolean;
@@ -272,6 +280,7 @@ export function NoteEditor({
   spellLanguage = "en-US",
   fontFamily,
   fontSize,
+  fontStyles,
   noteWidth,
   lineHeight = 1.5,
   readOnly = false,
@@ -308,6 +317,7 @@ export function NoteEditor({
   const [showColors, setShowColors] = useState(false);
   const [showTextColors, setShowTextColors] = useState(false);
   const [showOverflow, setShowOverflow] = useState(false);
+  const [showStyleMenu, setShowStyleMenu] = useState(false);
   const [overflowIds, setOverflowIds] = useState<string[]>([]);
   const [editorMenu, setEditorMenu] = useState<{ x: number; y: number } | null>(null);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
@@ -351,6 +361,7 @@ export function NoteEditor({
       Superscript,
       Subscript,
       Callout,
+      CodeCopyButton,
     ],
     content,
     autofocus: false,
@@ -482,36 +493,11 @@ export function NoteEditor({
     editor.chain().insertContentAt(editor.state.doc.content.size, nodes).run();
   }, [attachments, editor]);
 
-  useEffect(() => {
-    if (!editor) return;
-    const root = editor.view.dom as HTMLElement;
-    const decorate = () => {
-      root.querySelectorAll("pre").forEach((pre) => {
-        if (pre.querySelector(".code-copy-btn")) return;
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "code-copy-btn";
-        button.textContent = "Copy";
-        button.addEventListener("mousedown", (event) => event.preventDefault());
-        button.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          const text = pre.querySelector("code")?.textContent || pre.textContent || "";
-          void navigator.clipboard.writeText(text.replace(/\s*Copy\s*$/, "")).then(() => {
-            button.textContent = "Copied";
-            window.setTimeout(() => {
-              button.textContent = "Copy";
-            }, 1200);
-          });
-        });
-        pre.appendChild(button);
-      });
-    };
-    decorate();
-    const observer = new MutationObserver(decorate);
-    observer.observe(root, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, [editor, content]);
+  // The code-block "Copy" button lives in the `CodeCopyButton` extension as a
+  // ProseMirror widget decoration. It was a MutationObserver appending a real
+  // button into each <pre>; ProseMirror reconciled the foreign node away, the
+  // observer put it back, and the two span at 100% CPU forever on any note
+  // containing a code block. See components/codeCopyButton.ts.
 
   useEffect(() => {
     const onLightbox = (event: Event) => {
@@ -838,37 +824,72 @@ export function NoteEditor({
   useLayoutEffect(() => {
     const el = toolbarRef.current;
     if (!el || !editor || !formattingToolbarVisible(toolbarHidden, editorFocused)) return;
-    const measure = () => {
-      const items = [...el.querySelectorAll<HTMLElement>("[data-toolbar-item]")];
-      const overflowBtn = el.querySelector<HTMLElement>(".toolbar-overflow");
-      const available = el.clientWidth - 12;
-      const widths = items.map((item) => {
-        const hidden = item.classList.contains("is-overflowed");
-        if (!hidden) return item.getBoundingClientRect().width + 2;
-        const previous = item.style.display;
-        item.style.display = "inline-flex";
+
+    // Measuring an overflowed item means briefly un-hiding it, which is a
+    // layout change inside the element the ResizeObserver is watching. Doing
+    // that from the observer's own callback re-triggers the observer, and
+    // hiding an item frees the width that made it overflow in the first place,
+    // so the toolbar oscillates and the renderer never goes idle. Natural
+    // widths are cached per item, and the observer only reacts when the
+    // toolbar's own width actually changed.
+    const naturalWidths = new Map<string, number>();
+    let measuring = false;
+    let lastWidth = -1;
+    let frame = 0;
+
+    const widthOf = (item: HTMLElement): number => {
+      const id = item.dataset.toolbarItem || "";
+      if (!item.classList.contains("is-overflowed")) {
         const width = item.getBoundingClientRect().width + 2;
-        item.style.display = previous;
+        if (id) naturalWidths.set(id, width);
         return width;
-      });
-      const visible = visibleToolbarCount(
-        available,
-        widths,
-        overflowBtn?.getBoundingClientRect().width || 34
-      );
-      const hiddenIds = items.slice(visible).map((item) => item.dataset.toolbarItem || "");
-      setOverflowIds((current) => {
-        const next = hiddenIds.filter(Boolean);
-        if (current.length === next.length && current.every((id, index) => id === next[index])) {
-          return current;
-        }
-        return next;
-      });
+      }
+      const cached = id ? naturalWidths.get(id) : undefined;
+      if (cached !== undefined) return cached;
+      const previous = item.style.display;
+      item.style.display = "inline-flex";
+      const width = item.getBoundingClientRect().width + 2;
+      item.style.display = previous;
+      if (id) naturalWidths.set(id, width);
+      return width;
     };
-    const observer = new ResizeObserver(measure);
+
+    const measure = () => {
+      measuring = true;
+      try {
+        const items = [...el.querySelectorAll<HTMLElement>("[data-toolbar-item]")];
+        const overflowBtn = el.querySelector<HTMLElement>(".toolbar-overflow");
+        const available = el.clientWidth - 12;
+        const visible = visibleToolbarCount(
+          available,
+          items.map(widthOf),
+          overflowBtn?.getBoundingClientRect().width || 34
+        );
+        const hiddenIds = items.slice(visible).map((item) => item.dataset.toolbarItem || "");
+        setOverflowIds((current) => {
+          const next = hiddenIds.filter(Boolean);
+          if (current.length === next.length && current.every((id, index) => id === next[index])) {
+            return current;
+          }
+          return next;
+        });
+      } finally {
+        lastWidth = el.clientWidth;
+        measuring = false;
+      }
+    };
+
+    const observer = new ResizeObserver(() => {
+      if (measuring || el.clientWidth === lastWidth) return;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    });
     observer.observe(el);
     measure();
-    return () => observer.disconnect();
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   }, [editor, toolbarHidden, editorFocused]);
 
   if (!editor) return null;
@@ -987,9 +1008,9 @@ export function NoteEditor({
   };
 
   const overflowActions: { id: string; label: string; action: () => void }[] = [
-    { id: "h1", label: "Heading 1", action: () => editor.chain().focus().toggleHeading({ level: 1 }).run() },
-    { id: "h2", label: "Heading 2", action: () => editor.chain().focus().toggleHeading({ level: 2 }).run() },
-    { id: "h3", label: "Heading 3", action: () => editor.chain().focus().toggleHeading({ level: 3 }).run() },
+    { id: "h1", label: "Large header", action: () => editor.chain().focus().toggleHeading({ level: 1 }).run() },
+    { id: "h2", label: "Medium header", action: () => editor.chain().focus().toggleHeading({ level: 2 }).run() },
+    { id: "h3", label: "Small header", action: () => editor.chain().focus().toggleHeading({ level: 3 }).run() },
     { id: "bold", label: "Bold", action: () => editor.chain().focus().toggleBold().run() },
     { id: "italic", label: "Italic", action: () => editor.chain().focus().toggleItalic().run() },
     { id: "underline", label: "Underline", action: () => editor.chain().focus().toggleUnderline().run() },
@@ -1325,6 +1346,61 @@ export function NoteEditor({
         aria-hidden={!showToolbar}
       >
         {wrap(
+          "text-style",
+          <div className="style-picker">
+            {btn(
+              "Text style",
+              () => setShowStyleMenu((open) => !open),
+              editor.isActive("heading"),
+              <span className="toolbar-text">Aa</span>
+            )}
+            {showStyleMenu && (
+              <div className="style-menu" onMouseDown={(event) => event.preventDefault()}>
+                {NOTE_STYLE_OPTIONS.map((style) => {
+                  const active =
+                    style.heading === 0
+                      ? editor.isActive("paragraph") && !editor.isActive("heading")
+                      : editor.isActive("heading", { level: style.heading });
+                  return (
+                    <button
+                      key={style.id}
+                      type="button"
+                      data-style={style.id}
+                      className={active ? "style-menu-item is-active" : "style-menu-item"}
+                      onClick={() => {
+                        const chain = editor.chain().focus();
+                        if (style.heading === 0) chain.setParagraph().run();
+                        else chain.toggleHeading({ level: style.heading }).run();
+                        setShowStyleMenu(false);
+                      }}
+                    >
+                      {style.label}
+                      <span
+                        className="style-menu-reset"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          const chain = editor
+                            .chain()
+                            .focus()
+                            .unsetFontFamily()
+                            .unsetFontSize()
+                            .unsetColor();
+                          if (style.heading === 0) chain.setParagraph();
+                          else chain.setHeading({ level: style.heading });
+                          chain.run();
+                          setShowStyleMenu(false);
+                        }}
+                      >
+                        Reset
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+        {wrap(
           "font-family",
           <select
             className="toolbar-select"
@@ -1385,19 +1461,19 @@ export function NoteEditor({
         )}
         <span className="toolbar-sep" />
         {wrap("h1", btn(
-          "Heading 1",
+          "Large header",
           () => editor.chain().focus().toggleHeading({ level: 1 }).run(),
           editor.isActive("heading", { level: 1 }),
           <Icon.Heading size={16} />
         ))}
         {wrap("h2", btn(
-          "Heading 2",
+          "Medium header",
           () => editor.chain().focus().toggleHeading({ level: 2 }).run(),
           editor.isActive("heading", { level: 2 }),
           <span className="toolbar-text">H2</span>
         ))}
         {wrap("h3", btn(
-          "Heading 3",
+          "Small header",
           () => editor.chain().focus().toggleHeading({ level: 3 }).run(),
           editor.isActive("heading", { level: 3 }),
           <span className="toolbar-text">H3</span>
@@ -1757,7 +1833,9 @@ export function NoteEditor({
         <div
           className={`editor-page ${fontClass} ${noteWidth === "readable" ? "readable" : "full"}`}
           style={{
-            fontSize: `${fontSize}px`,
+            ...noteFontStyleVars(
+              fontStyles ?? stylesFromLegacy(fontFamily, fontSize, undefined)
+            ),
             zoom: zoom / 100,
             ["--editor-line-height" as string]: String(lineHeight),
           }}

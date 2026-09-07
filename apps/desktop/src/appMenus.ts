@@ -183,7 +183,7 @@ export function buildContextMenu(
       ...(count === 1
         ? [
             {
-              label: "Add tag",
+              label: "Add a tag",
               children: ctx.tags.length
                 ? ctx.tags
                     .filter((tag) => !targets[0].tag_ids.includes(tag.id))
@@ -589,6 +589,7 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           },
         },
         commandItem("find.inNote", ctx, { disabled: !ctx.activeNote }),
+        commandItem("edit.spellCheck", ctx),
         // Left literal (not commandItem("find.replace", ...)): this is the
         // only place in this file that still writes `ctx.openReplace()`, and
         // editorHandle.test.ts asserts on that exact raw source text.
@@ -627,14 +628,7 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         commandItem("nav.back", ctx),
         commandItem("nav.forward", ctx),
         { type: "separator" },
-        {
-          label: ctx.paneLayout.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar",
-          onSelect: () =>
-            ctx.persistPaneLayout({
-              ...ctx.paneLayout,
-              sidebarCollapsed: !ctx.paneLayout.sidebarCollapsed,
-            }),
-        },
+        commandItem("view.toggleSidebar", ctx),
         commandItem("view.toggleNoteList", ctx),
         commandItem("view.expandNote", ctx),
         {
@@ -725,8 +719,7 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         commandItem("view.zoomIn", ctx),
         commandItem("view.zoomOut", ctx),
         commandItem("view.zoomReset", ctx),
-        { type: "separator" },
-        commandItem("view.theme", ctx),
+        commandItem("view.statusBar", ctx),
         { type: "separator" },
         {
           label: "Collapse All Stacks",
@@ -961,7 +954,7 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           disabled: !ctx.activeNote,
           children: [
             { label: "Default", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontFamily" }) },
-            { label: "Sans Serif", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontFamily", family: "Arial, sans-serif" }) },
+            { label: "Helvetica", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontFamily", family: "\"Helvetica Neue\", Helvetica, Arial, sans-serif" }) },
             { label: "Serif", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontFamily", family: "Georgia, \"Times New Roman\", serif" }) },
             { label: "Monospace", disabled: !ctx.activeNote, onSelect: () => ctx.runEditorCommand({ type: "fontFamily", family: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" }) },
             { type: "separator" },
@@ -976,17 +969,17 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         },
         { type: "separator" },
         {
-          label: "Heading 1",
+          label: "Large header",
           disabled: !ctx.activeNote,
           onSelect: () => ctx.runEditorCommand({ type: "heading", level: 1 }),
         },
         {
-          label: "Heading 2",
+          label: "Medium header",
           disabled: !ctx.activeNote,
           onSelect: () => ctx.runEditorCommand({ type: "heading", level: 2 }),
         },
         {
-          label: "Heading 3",
+          label: "Small header",
           disabled: !ctx.activeNote,
           onSelect: () => ctx.runEditorCommand({ type: "heading", level: 3 }),
         },
@@ -1245,6 +1238,14 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           disabled: !ctx.activeNote,
           onSelect: () => ctx.runEditorCommand({ type: "clear" }),
         },
+      ],
+    },
+    {
+      label: "Window",
+      items: [
+        commandItem("window.minimize", ctx),
+        commandItem("window.maximize", ctx),
+        commandItem("window.alwaysOnTop", ctx),
       ],
     },
     {

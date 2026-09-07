@@ -12,6 +12,9 @@ interface NotebookDesktopBridge {
   isElectron: boolean;
   getPathForFile?: (file: File) => string | null;
   openExternal?: (url: string) => Promise<void>;
+  windowControl?: (
+    action: "minimize" | "maximize" | "alwaysOnTop" | "setAlwaysOnTop" | "clearAlwaysOnTop"
+  ) => Promise<{ alwaysOnTop: boolean; maximized: boolean } | null>;
   onOpenUrl?: (cb: (url: string) => void) => () => void;
 }
 

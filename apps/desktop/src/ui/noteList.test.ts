@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { viewFilterKey, viewTitleForFilter } from "./navigation.ts";
 import { outlineToHtml } from "./noteContent.ts";
-import { adjacentNoteId, attachmentCountLabel, decodeNoteDrag, displayedListCount, emptyStateCopy, encodeNoteDrag, formatRelativeTime, groupNotesByNotebook, groupNotesForList, hasActiveListFilters, knownViewNoteCount, listCountLabel, navCountLabel, noteIdByOffset, resolveListView, sortNotes, stickyNavCount } from "./noteList.ts";
+import { adjacentNoteId, attachmentCountLabel, decodeNoteDrag, displayedListCount, emptyStateCopy, encodeNoteDrag, formatRelativeTime, groupNotesByNotebook, groupNotesForList, hasActiveListFilters, knownViewNoteCount, listCountLabel, listFilterCount, navCountLabel, noteCardNotebookName, noteIdByOffset, resolveListView, sortNotes, stickyNavCount } from "./noteList.ts";
 import { parsePaneLayout } from "./panes.ts";
 import { groupNotesByReminder } from "./reminders.ts";
 import { navIconTitle } from "./sidebar.ts";
@@ -108,9 +108,16 @@ describe("parsePaneLayout", () => {
 
   it("titles views, groups by reminder, and detects active filters", () => {
     assert.equal(viewTitleForFilter({ type: "archived" }), "Archived");
+    assert.equal(viewTitleForFilter({ type: "files" }), "Files");
     assert.equal(viewTitleForFilter({ type: "tag", name: "work" }), "#work");
     assert.equal(hasActiveListFilters(["untagged"], "any"), true);
     assert.equal(hasActiveListFilters([], "any"), false);
+    assert.equal(listFilterCount(["untagged", "image"], "week"), 3);
+    assert.equal(listFilterCount([], "any"), 0);
+    assert.equal(noteCardNotebookName("Work", { type: "all" }), "Work");
+    assert.equal(noteCardNotebookName("Work", { type: "notebook", name: "Work" }), "");
+    assert.equal(noteCardNotebookName("Work", { type: "notebook", name: "Home" }), "Work");
+    assert.equal(noteCardNotebookName("Work", { type: "tag", name: "inbox" }), "Work");
     const grouped = groupNotesByReminder(
       [
         { reminder_at: "2026-08-18T09:00:00Z" },

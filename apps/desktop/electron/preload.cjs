@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("notebookDesktop", {
     return file && typeof file.path === "string" ? file.path : null;
   },
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
+  windowControl: (action) => ipcRenderer.invoke("window-control", action),
   onOpenUrl: (cb) => {
     const handler = (_event, url) => cb(url);
     ipcRenderer.on("open-url", handler);

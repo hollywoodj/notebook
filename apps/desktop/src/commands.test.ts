@@ -30,7 +30,6 @@ function stubContext(overrides: Partial<CommandContext> = {}): CommandContext {
     paneLayout: defaultPaneLayout(),
     editorChrome: defaultEditorChrome(),
     prefs: {
-      theme: "light",
       confirm_delete: true,
     } as CommandContext["prefs"],
     showInfo: false,
@@ -97,7 +96,6 @@ function stubContext(overrides: Partial<CommandContext> = {}): CommandContext {
     deleteStack: noop,
     deleteTag: noop,
     restoreTemplates: noop,
-    toggleTheme: noop,
     collapsedStacks: [],
     toggleStackCollapsed: noop,
     collapseAllStacks: noop,
@@ -111,6 +109,12 @@ function stubContext(overrides: Partial<CommandContext> = {}): CommandContext {
     openCommandPalette: noop,
     isReminderCompleted: () => false,
     openGlobalSearch: noop,
+    focusTagInput: noop,
+    alwaysOnTop: false,
+    toggleAlwaysOnTop: noop,
+    windowMinimize: noop,
+    windowMaximize: noop,
+    toggleSpellCheck: noop,
     ...overrides,
   };
 }
@@ -172,6 +176,7 @@ describe("command registry", () => {
       [{ key: "c", mod: true, shift: true }, "Ctrl/⌘ ⇧ C"],
       [{ key: "/", mod: true }, "Ctrl/⌘ /"],
       [{ key: "k", mod: true }, "Ctrl/⌘ K"],
+      [{ key: "'", mod: true }, "Ctrl/⌘ '"],
     ];
     for (const [binding, expected] of cases) {
       assert.equal(formatBinding(binding), expected, JSON.stringify(binding));
@@ -209,6 +214,10 @@ describe("command registry", () => {
       matchCommand(fakeEvent("p", { ctrlKey: true }), ctxWithNote)?.id,
       "note.print"
     );
+    assert.equal(
+      matchCommand(fakeEvent("m", { ctrlKey: true }), stubContext())?.id,
+      "window.minimize"
+    );
   });
 
   it("skips a matched command whose enabled() is false", () => {
@@ -234,6 +243,15 @@ describe("command registry", () => {
     assert.equal(openedGlobal, 1);
   });
 
+  it("focuses the tag field on Ctrl/' when a note is open", () => {
+    const ctxWithNote = stubContext({ activeNote: { id: "n1" } as CommandContext["activeNote"] });
+    assert.equal(
+      matchCommand(fakeEvent("'", { ctrlKey: true }), ctxWithNote)?.id,
+      "note.addTag"
+    );
+    assert.equal(matchCommand(fakeEvent("'", { ctrlKey: true }), stubContext()), null);
+  });
+
   it("keeps every palette id pointed at a real command", () => {
     for (const id of PALETTE_ORDER) {
       assert.ok(commandById(id), `missing command for palette id "${id}"`);
@@ -242,7 +260,7 @@ describe("command registry", () => {
 
   it("builds the palette in the documented order and count", () => {
     const actions = paletteActions(stubContext());
-    assert.equal(actions.length, 19);
+    assert.equal(actions.length, 18);
     assert.deepEqual(
       actions.map((a) => a.id),
       PALETTE_ORDER

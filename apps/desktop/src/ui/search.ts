@@ -40,7 +40,7 @@ export function nextMatchIndex(count: number, current: number, direction: 1 | -1
 }
 
 export type JumpTarget = {
-  kind: "note" | "notebook" | "tag";
+  kind: "note" | "notebook" | "tag" | "template" | "trash";
   id: string;
   title: string;
   subtitle: string;
@@ -52,7 +52,9 @@ export function jumpToMatches(
   notebooks: { id: string; name: string }[],
   tags: { id: string; name: string }[],
   limit = 12,
-  kinds?: JumpKind[]
+  kinds?: JumpKind[],
+  templates: { id: string; title: string }[] = [],
+  trashed: { id: string; title: string }[] = []
 ): JumpTarget[] {
   const needle = query.trim().toLowerCase();
   const matches = (text: string) => !needle || text.toLowerCase().includes(needle);
@@ -90,6 +92,30 @@ export function jumpToMatches(
           id: note.id,
           title: note.title || "Untitled",
           subtitle: note.notebook_name,
+        });
+      }
+    }
+  }
+  if (allow("trash")) {
+    for (const note of trashed) {
+      if (matches(note.title)) {
+        results.push({
+          kind: "trash",
+          id: note.id,
+          title: note.title || "Untitled",
+          subtitle: "Trash",
+        });
+      }
+    }
+  }
+  if (allow("template")) {
+    for (const note of templates) {
+      if (matches(note.title)) {
+        results.push({
+          kind: "template",
+          id: note.id,
+          title: note.title || "Untitled",
+          subtitle: "Template",
         });
       }
     }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { clampPaneWidth, defaultPaneLayout, isNoteExpanded, parsePaneLayout, resizeSidebarTo, revealNoteBrowser, toggleNoteExpanded, toggleNoteListHidden, visibleToolbarCount } from "./panes.ts";
+import { clampPaneWidth, defaultPaneLayout, isNoteExpanded, parsePaneLayout, resizeSidebarTo, revealNoteBrowser, toggleNoteExpanded, toggleNoteListHidden, toggleSidebarHidden, visibleToolbarCount } from "./panes.ts";
 
 describe("clampPaneWidth", () => {
   it("keeps widths inside Evernote-like pane bounds", () => {
@@ -48,6 +48,13 @@ describe("note chrome layout", () => {
     assert.equal(next.listCollapsed, true);
     assert.equal(next.sidebarCollapsed, false);
     assert.equal(toggleNoteListHidden(next).listCollapsed, false);
+  });
+
+  it("hides the sidebar without collapsing the note list", () => {
+    const next = toggleSidebarHidden(defaultPaneLayout());
+    assert.equal(next.sidebarCollapsed, true);
+    assert.equal(next.listCollapsed, false);
+    assert.equal(toggleSidebarHidden(next).sidebarCollapsed, false);
   });
 
   it("expands the note by hiding sidebar and list, then restores both", () => {

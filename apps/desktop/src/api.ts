@@ -1,4 +1,10 @@
 import { decodeXmlEntities, repairImportedHtml } from "./htmlEntities.ts";
+import {
+  defaultNoteFontStyles,
+  legacyFontFamily,
+  type NoteFontStyles,
+  stylesFromLegacy,
+} from "./ui/noteFonts.ts";
 
 export interface Notebook {
   id: string;
@@ -123,7 +129,6 @@ export interface Account {
 }
 
 export interface Preferences {
-  theme: "light" | "dark" | "system";
   startup_view: "all" | "shortcuts" | "notebook";
   confirm_delete: boolean;
   spell_check: boolean;
@@ -132,6 +137,7 @@ export interface Preferences {
   note_width: "readable" | "full";
   font_family: "default" | "serif" | "mono";
   font_size: number;
+  font_styles: NoteFontStyles;
   show_snippets: boolean;
   list_view: "snippets" | "titles" | "cards";
   list_density: "comfortable" | "compact";
@@ -157,7 +163,6 @@ export interface Preferences {
 }
 
 export const defaultPreferences: Preferences = {
-  theme: "light",
   startup_view: "all",
   confirm_delete: true,
   spell_check: true,
@@ -166,6 +171,7 @@ export const defaultPreferences: Preferences = {
   note_width: "readable",
   font_family: "default",
   font_size: 16,
+  font_styles: defaultNoteFontStyles(),
   show_snippets: true,
   list_view: "snippets",
   list_density: "comfortable",
@@ -189,6 +195,18 @@ export const defaultPreferences: Preferences = {
   omniclone_scheme: "omniclone",
   omniclone_send_due: true,
 };
+
+export function normalizePreferences(prefs: Partial<Preferences>): Preferences {
+  const merged = { ...defaultPreferences, ...prefs };
+  merged.font_styles = stylesFromLegacy(
+    merged.font_family,
+    merged.font_size,
+    prefs.font_styles
+  );
+  merged.font_family = legacyFontFamily(merged.font_styles.normal.family);
+  merged.font_size = merged.font_styles.normal.size;
+  return merged;
+}
 
 export interface SidebarCounts {
   notes: number;
@@ -215,6 +233,11 @@ const API_BASE =
 
 export const attachmentUrl = (id: string) =>
   `${API_BASE}/api/v1/attachments/${encodeURIComponent(id)}`;
+
+/** Resolves a `notebook-thumb://` marker from a list summary. The image is
+ * fetched per visible row rather than inlined into every list response. */
+export const noteThumbnailUrl = (noteId: string) =>
+  `${API_BASE}/api/v1/notes/${encodeURIComponent(noteId)}/thumbnail`;
 
 function repairImportedNote<T extends { title?: string | null; snippet?: string | null; content?: string | null; content_plain?: string | null }>(
   note: T

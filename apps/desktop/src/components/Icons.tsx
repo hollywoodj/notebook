@@ -379,4 +379,9 @@ export const Icon = {
       <path d="M8 3v4M16 3v4M4 10h16" />
     </I>
   ),
+  Filter: (p: IconProps) => (
+    <I {...p}>
+      <path d="M4 5h16l-6 7v5l-4 2v-7z" />
+    </I>
+  ),
 };

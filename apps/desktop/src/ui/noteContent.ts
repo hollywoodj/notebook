@@ -45,14 +45,26 @@ export function checklistProgressLabel(done: number, total: number): string | nu
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Stands in for a note whose first image is inline base64. The API sends the
+ * marker instead of the image so a list response stays small; the bytes come
+ * from `/api/v1/notes/:id/thumbnail` only for rows that are actually drawn. */
+const THUMB_MARKER_PREFIX = "notebook-thumb://";
+
 export function resolveThumbnailUrl(
   raw: string | null | undefined,
-  toAttachmentUrl: (id: string) => string
+  toAttachmentUrl: (id: string) => string,
+  toNoteThumbnailUrl: (noteId: string) => string
 ): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
   const attached = trimmed.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+  // Checked before the attachment cases on purpose: the id regex below matches
+  // the note id inside this marker too, and falling through to `return trimmed`
+  // would put the raw marker into a CSS url().
+  if (trimmed.startsWith(THUMB_MARKER_PREFIX)) {
+    return attached ? toNoteThumbnailUrl(attached[1]) : null;
+  }
   if (UUID_RE.test(trimmed) && attached) return toAttachmentUrl(attached[1]);
   if (trimmed.startsWith("notebook-attachment://") && attached) {
     return toAttachmentUrl(attached[1]);

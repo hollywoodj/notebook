@@ -4,6 +4,8 @@ import {
   api,
   attachmentUrl,
   defaultPreferences,
+  normalizePreferences,
+  noteThumbnailUrl,
   Note,
   NoteSummary,
   Notebook,
@@ -44,7 +46,6 @@ import {
   sendUrlsForNote,
 } from "./omniFocus";
 import {
-  applyTheme,
   formatDate,
   isBlankNote,
   isTextInputFocused,
@@ -64,15 +65,16 @@ import { useSidebarFlyout } from "./useSidebarFlyout";
 import { buildContextMenu, buildMenuBar, type AppMenuContext } from "./appMenus";
 import { matchCommand, paletteActions, runCommandById } from "./commands";
 import { isPdfFile, titleFromFilename } from "./components/fileAttachment";
-import { EDITOR_CHROME_KEY, parseEditorChrome, windowTitleForNote } from "./ui/editorChrome";
+import { EDITOR_CHROME_KEY, parseEditorChrome, saveStateLabel, windowTitleForNote } from "./ui/editorChrome";
 import { LAST_SESSION_KEY, RECENT_NOTES_KEY, parseLastSession, parseRecentNotes, rememberRecentNote, viewTitleForFilter } from "./ui/navigation";
 import { LOCKED_NOTES_KEY, NOTE_COLORS, NOTE_COLORS_KEY, checklistProgressLabel, countCharacters, countWords, htmlToMarkdown, htmlToPlainText, parseIdList, parseNoteColorMap, readingTimeLabel, resolveThumbnailUrl, setNoteColor as applyNoteColor } from "./ui/noteContent";
-import { NOTE_DRAG_TYPE, adjacentNoteId, attachmentCountLabel, decodeNoteDrag, displayedListCount, encodeNoteDrag, formatRelativeTime, groupNotesByNotebook, groupNotesForList, hasActiveListFilters, knownViewNoteCount, navCountLabel, resolveListView, stickyNavCount, trashToastCopy, type ListView } from "./ui/noteList";
-import { LIST_MAX, LIST_MIN, PANE_LAYOUT_KEY, SIDEBAR_RAIL_WIDTH, clampPaneWidth, isNoteExpanded, parsePaneLayout, revealNoteBrowser, toggleNoteExpanded, toggleNoteListHidden } from "./ui/panes";
+import { NOTE_DRAG_TYPE, adjacentNoteId, attachmentCountLabel, decodeNoteDrag, displayedListCount, encodeNoteDrag, formatRelativeTime, groupNotesByNotebook, groupNotesForList, hasActiveListFilters, knownViewNoteCount, listFilterCount, navCountLabel, noteCardNotebookName, resolveListView, stickyNavCount, trashToastCopy, type ListView } from "./ui/noteList";
+import { noteFontStyleVars, parseNoteFontStyles } from "./ui/noteFonts.ts";
+import { LIST_MAX, LIST_MIN, PANE_LAYOUT_KEY, SIDEBAR_RAIL_WIDTH, clampPaneWidth, isNoteExpanded, parsePaneLayout, revealNoteBrowser, toggleNoteExpanded, toggleNoteListHidden, toggleSidebarHidden } from "./ui/panes";
 import { COMPLETED_REMINDERS_KEY, formatReminderLabel, fromDatetimeLocalValue, groupRemindersForList, isReminderDone, isReminderOverdue, isoDayKey, parseCompletedReminders, reminderFallsOnDay, reminderFromPreset, reminderFromSnooze, toDatetimeLocalValue, toggleCompletedReminder, type ReminderPreset, type SnoozePreset } from "./ui/reminders";
 import { RECENT_SEARCHES_KEY, SAVED_SEARCHES_KEY, deleteSavedSearch, noteMatchesDateRange, noteMatchesFacets, parseRecentSearches, parseSavedSearches, rememberSearch, renameSavedSearch, snippetParts, toggleListFacet, type DateRangeFacet, type NoteListFacet, upsertSavedSearch } from "./ui/search";
 import { copyTextToClipboard, downloadTextFile, noteAppLink, noteMailtoHref, notesToEnex, safeFilename } from "./ui/share";
-import { COLLAPSED_STACKS_KEY, SIDEBAR_NAV_ICON_SIZE, SIDEBAR_SECTIONS_KEY, SidebarSectionId, avatarColor, collapseAllIds, hasVisibleSidebarNotebooks, matchesSidebarFilter, navIconTitle, notebooksMatchingFilter, parseCollapsedStacks, parseSidebarSections, sidebarFilterLabel, sidebarFlyoutTitle, toggleCollapsedId, type SidebarFlyoutKind } from "./ui/sidebar";
+import { COLLAPSED_STACKS_KEY, SIDEBAR_NAV_ICON_SIZE, SIDEBAR_SECTIONS_KEY, SidebarSectionId, collapseAllIds, hasVisibleSidebarNotebooks, matchesSidebarFilter, navIconTitle, notebooksMatchingFilter, parseCollapsedStacks, parseSidebarSections, sidebarFilterLabel, sidebarFlyoutTitle, toggleCollapsedId, type SidebarFlyoutKind } from "./ui/sidebar";
 import { closeAllUnpinnedTabIds, closeOtherTabIds, closeTabsToTheRight, noteTabLabel, pinTabById, popClosedTab, rememberClosedTab } from "./ui/tabs";
 
 
@@ -120,7 +122,6 @@ export default function App() {
       typeof localStorage === "undefined" ? null : localStorage.getItem(RECENT_NOTES_KEY)
     )
   );
-  const [accountMenu, setAccountMenu] = useState(false);
   const [sidebarSections, setSidebarSections] = useState<SidebarSectionId[]>(() =>
     parseSidebarSections(
       typeof localStorage === "undefined" ? null : localStorage.getItem(SIDEBAR_SECTIONS_KEY)
@@ -167,6 +168,8 @@ export default function App() {
   const [focusMode, setFocusMode] = useState(false);
   const [showJump, setShowJump] = useState(false);
   const [jumpNotes, setJumpNotes] = useState<NoteSummary[]>([]);
+  const [jumpTrashNotes, setJumpTrashNotes] = useState<NoteSummary[]>([]);
+  const [listFiltersOpen, setListFiltersOpen] = useState(false);
   const [notebookPicker, setNotebookPicker] = useState<"move" | "copy" | null>(null);
   const [showReminderMenu, setShowReminderMenu] = useState(false);
   const [editorChrome, setEditorChrome] = useState(() =>
@@ -178,6 +181,11 @@ export default function App() {
   const [newName, setNewName] = useState("");
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [alwaysOnTop, setAlwaysOnTop] = useState(
+    () =>
+      typeof localStorage !== "undefined" &&
+      localStorage.getItem("notebook.alwaysOnTop") === "1"
+  );
   const [settingsSection, setSettingsSection] =
     useState<SettingsSection>("application");
   const [showGallery, setShowGallery] = useState(false);
@@ -225,6 +233,7 @@ export default function App() {
   const importRef = useRef<HTMLInputElement>(null);
   const sidebarFilterRef = useRef<HTMLInputElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
+  const tagInputRef = useRef<HTMLInputElement>(null);
   const noteListRef = useRef<HTMLDivElement>(null);
   const dragSelectRef = useRef<{
     anchorId: string | null;
@@ -271,6 +280,39 @@ export default function App() {
     setEditorChrome(next);
     localStorage.setItem(EDITOR_CHROME_KEY, JSON.stringify(next));
   };
+
+  const toggleSpellCheck = () => {
+    const spell_check = !prefs.spell_check;
+    setPrefs((current) => ({ ...current, spell_check }));
+    api.updateSettings({ spell_check }).catch(console.error);
+  };
+
+  const windowMinimize = () => {
+    void window.notebookDesktop?.windowControl?.("minimize");
+  };
+
+  const windowMaximize = () => {
+    void window.notebookDesktop?.windowControl?.("maximize");
+  };
+
+  const persistAlwaysOnTop = (next: boolean) => {
+    setAlwaysOnTop(next);
+    localStorage.setItem("notebook.alwaysOnTop", next ? "1" : "0");
+    void window.notebookDesktop?.windowControl?.(
+      next ? "setAlwaysOnTop" : "clearAlwaysOnTop"
+    );
+  };
+
+  const toggleAlwaysOnTop = () => persistAlwaysOnTop(!alwaysOnTop);
+
+  useEffect(() => {
+    if (!window.notebookDesktop?.windowControl) return;
+    void window.notebookDesktop.windowControl(
+      localStorage.getItem("notebook.alwaysOnTop") === "1"
+        ? "setAlwaysOnTop"
+        : "clearAlwaysOnTop"
+    );
+  }, []);
 
   const persistRecentSearches = (history: string[]) => {
     setRecentSearches(history);
@@ -488,10 +530,15 @@ export default function App() {
   useEffect(() => {
     if (!showJump && !searchOpen) return;
     let cancelled = false;
-    api
-      .listNotes({ templates: false })
-      .then((list) => {
-        if (!cancelled) setJumpNotes(list);
+    const live = api.listNotes({ templates: false });
+    const trash = showJump
+      ? api.listNotes({ trash: true, templates: false })
+      : Promise.resolve([] as NoteSummary[]);
+    Promise.all([live, trash])
+      .then(([list, trashed]) => {
+        if (cancelled) return;
+        setJumpNotes(list);
+        if (showJump) setJumpTrashNotes(trashed);
       })
       .catch(console.error);
     return () => {
@@ -511,9 +558,8 @@ export default function App() {
             api.storageInfo(),
             api.templateCatalog(),
           ]);
-          const mergedPrefs = { ...defaultPreferences, ...loadedPrefs };
+          const mergedPrefs = normalizePreferences(loadedPrefs);
           setPrefs(mergedPrefs);
-          applyTheme(loadedPrefs.theme);
           setAccount(loadedAccount);
           setStorage(loadedStorage);
           setCatalog(loadedCatalog);
@@ -582,15 +628,7 @@ export default function App() {
     if (!activeNote) setShowInfo(false);
   }, [activeNote]);
 
-  useEffect(() => {
-    applyTheme(prefs.theme);
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => applyTheme(prefs.theme);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, [prefs.theme]);
-
-  const saveNote = useCallback(
+const saveNote = useCallback(
     async (patch: Partial<Note>) => {
       if (!activeNote) return;
       setSaveState("saving");
@@ -1096,12 +1134,6 @@ export default function App() {
     setNewName(target.name);
   };
 
-  const toggleTheme = () => {
-    const theme = prefs.theme === "dark" ? "light" : "dark";
-    setPrefs((current) => ({ ...current, theme }));
-    void api.updateSettings({ theme });
-  };
-
 
   // Ported from main. runPaletteAction stayed behind: commands.ts owns
   // dispatch, so these are the handlers its context calls.
@@ -1188,6 +1220,11 @@ export default function App() {
     setActiveNote: noteSession.setActiveNote,
     persistPaneLayout,
     persistEditorChrome,
+    alwaysOnTop,
+    toggleAlwaysOnTop,
+    windowMinimize,
+    windowMaximize,
+    toggleSpellCheck,
     revealSidebarFlyout,
     closeSidebarFlyout,
     revealNoteList,
@@ -1218,7 +1255,7 @@ export default function App() {
       const next = await api.updateSettings({
         default_notebook_id: notebook.id,
       });
-      setPrefs({ ...defaultPreferences, ...next });
+      setPrefs(normalizePreferences(next));
       await refreshMeta();
     },
     setNotebookStack: async (notebookId, stackId) => {
@@ -1271,7 +1308,6 @@ export default function App() {
       await refreshNotes();
     },
     restoreTemplates: () => void api.restoreTemplates().then(refreshMeta),
-    toggleTheme,
     collapsedStacks,
     toggleStackCollapsed: (id: string) =>
       persistCollapsedStacks(toggleCollapsedId(collapsedStacks, id)),
@@ -1286,6 +1322,7 @@ export default function App() {
     openCommandPalette: () => setShowPalette(true),
     isReminderCompleted: (id) => isReminderDone(completedReminders, id),
     openGlobalSearch,
+    focusTagInput: () => tagInputRef.current?.focus(),
     tags,
     addTagToSelected: (tagId) => void addTagToSelected(tagId),
     openJump: (mode = "all") => {
@@ -1506,7 +1543,7 @@ export default function App() {
           >
             <Icon.Plus size={SIDEBAR_NAV_ICON_SIZE} />
           </button>
-          <div className="menu-anchor">
+          <div className="menu-anchor" onMouseDown={(e) => e.stopPropagation()}>
             <button
               type="button"
               className={showNewMenu ? "icon-btn active" : "icon-btn"}
@@ -1553,6 +1590,16 @@ export default function App() {
                   role="menuitem"
                   onClick={() => {
                     setShowNewMenu(false);
+                    openNewStack();
+                  }}
+                >
+                  New stack
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setShowNewMenu(false);
                     setShowNewTag(true);
                   }}
                 >
@@ -1577,6 +1624,17 @@ export default function App() {
                   }}
                 >
                   Filter tags
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setShowNewMenu(false);
+                    closeSidebarFlyout();
+                    persistPaneLayout(toggleSidebarHidden(paneLayout));
+                  }}
+                >
+                  {paneLayout.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
                 </button>
               </div>
             )}
@@ -1608,7 +1666,7 @@ export default function App() {
                       ? "nav-item active"
                       : "nav-item"
                   }
-                  title={navIconTitle("Shortcuts", shortcutNotes.length)}
+                  aria-label={navIconTitle("Shortcuts", shortcutNotes.length)}
                   aria-haspopup="dialog"
                   aria-expanded={sidebarFlyout === "shortcuts"}
                   onMouseEnter={() => previewSidebarFlyout("shortcuts")}
@@ -1652,7 +1710,7 @@ export default function App() {
                       ? "nav-item active"
                       : "nav-item"
                   }
-                  title={navIconTitle("Notebooks", notebooks.length)}
+                  aria-label={navIconTitle("Notebooks", notebooks.length)}
                   aria-haspopup="dialog"
                   aria-expanded={sidebarFlyout === "notebooks"}
                   onMouseEnter={() => previewSidebarFlyout("notebooks")}
@@ -1678,7 +1736,7 @@ export default function App() {
                       ? "nav-item active"
                       : "nav-item"
                   }
-                  title={navIconTitle("Tags", tags.length)}
+                  aria-label={navIconTitle("Tags", tags.length)}
                   aria-haspopup="dialog"
                   aria-expanded={sidebarFlyout === "tags"}
                   onMouseEnter={() => previewSidebarFlyout("tags")}
@@ -1706,6 +1764,20 @@ export default function App() {
                   <Icon.Templates size={SIDEBAR_NAV_ICON_SIZE} />
                   <span className="nav-label">Templates</span>
                   <span className="nav-count">{navCountLabel(counts?.templates)}</span>
+                </button>
+              ) : null;
+            }
+            if (section === "files") {
+              return prefs.show_files ? (
+                <button
+                  key="files"
+                  className={filter.type === "files" ? "nav-item active" : "nav-item"}
+                  title={navIconTitle("Files", counts?.files)}
+                  onClick={() => showListFilter({ type: "files" })}
+                >
+                  <Icon.Files size={SIDEBAR_NAV_ICON_SIZE} />
+                  <span className="nav-label">Files</span>
+                  <span className="nav-count">{navCountLabel(counts?.files)}</span>
                 </button>
               ) : null;
             }
@@ -2000,7 +2072,6 @@ export default function App() {
                       onClick={() => {
                         closeSidebarFlyout();
                         noteSession.setFilter({ type: "tag", id: tag.id, name: tag.name });
-                        noteSession.setFilter({ type: "tag", id: tag.id, name: tag.name });
                         revealNoteList();
                       }}
                       onDragOver={(event) => allowNoteDrop(event, `tag:${tag.id}`)}
@@ -2025,75 +2096,6 @@ export default function App() {
             </div>
           </div>
         )}
-        <div className="sidebar-account">
-          <div className="account-menu-wrap" onMouseDown={(event) => event.stopPropagation()}>
-            <button
-              type="button"
-              className={accountMenu ? "account-chip active" : "account-chip"}
-              onClick={() => setAccountMenu((open) => !open)}
-              title={account.display_name}
-            >
-              <span
-                className="avatar"
-                style={{ background: avatarColor(account.display_name) }}
-              >
-                {account.display_name.slice(0, 1).toUpperCase()}
-              </span>
-              <span className="account-copy">
-                <span className="account-name">{account.display_name}</span>
-                <span className="account-email">{account.email || "Local account"}</span>
-              </span>
-            </button>
-            {accountMenu && (
-              <div className="account-popover" role="menu">
-                <div className="account-popover-head">
-                  <span
-                    className="avatar"
-                    style={{ background: avatarColor(account.display_name) }}
-                  >
-                    {account.display_name.slice(0, 1).toUpperCase()}
-                  </span>
-                  <span className="account-copy">
-                    <span className="account-name">{account.display_name}</span>
-                    <span className="account-email">{account.email || "Local account"}</span>
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setAccountMenu(false);
-                    openSettings("account");
-                  }}
-                >
-                  Account
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setAccountMenu(false);
-                    openSettings();
-                  }}
-                >
-                  Settings
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setAccountMenu(false);
-                    const theme = prefs.theme === "dark" ? "light" : "dark";
-                    setPrefs((current) => ({ ...current, theme }));
-                    void api.updateSettings({ theme });
-                  }}
-                >
-                  {prefs.theme === "dark" ? "Use light theme" : "Use dark theme"}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
         <input
           ref={importRef}
           type="file"
@@ -2111,6 +2113,7 @@ export default function App() {
               let lastNotebookId: string | undefined;
               let lastNotebookName: string | undefined;
               let notebookCount = 0;
+              const importErrors: { title?: string; message: string }[] = [];
               for (const file of files) {
                 const result = await api.importEnex(file, {
                   notebookName: file.name.replace(/\.enex$/i, ""),
@@ -2120,6 +2123,7 @@ export default function App() {
                 lastNotebookId = result.notebook_id;
                 lastNotebookName = result.notebook_name;
                 notebookCount = Math.max(notebookCount, result.notebook_count ?? 1);
+                importErrors.push(...(result.errors ?? []));
               }
               const target =
                 files.length === 1 &&
@@ -2128,9 +2132,15 @@ export default function App() {
                 lastNotebookName
                   ? ` into “${lastNotebookName}”`
                   : "";
+              const firstError = importErrors[0];
+              const errorHint = firstError
+                ? ` — ${firstError.title ? `${firstError.title}: ` : ""}${firstError.message}` +
+                  (importErrors.length > 1 ? ` (+${importErrors.length - 1} more)` : "")
+                : "";
               setImportStatus(
                 `Imported ${totalImported} note${totalImported === 1 ? "" : "s"}${target}` +
-                  (totalSkipped ? ` (${totalSkipped} skipped)` : "")
+                  (totalSkipped ? ` (${totalSkipped} skipped)` : "") +
+                  errorHint
               );
               await refreshMeta();
               await refreshNotes();
@@ -2165,6 +2175,18 @@ export default function App() {
             </span>
           </div>
           <div className="panel-tools">
+            {filter.type === "notebook" && (
+              <button
+                type="button"
+                className="ghost-btn small"
+                title="Search in this notebook"
+                onClick={() =>
+                  searchInNotebook({ id: filter.id, name: filter.name })
+                }
+              >
+                Search in this notebook
+              </button>
+            )}
             {filter.type === "templates" && (
               <button className="ghost-btn small" onClick={() => setShowGallery(true)}>
                 Gallery
@@ -2188,6 +2210,28 @@ export default function App() {
                 }}
               >
                 Empty
+              </button>
+            )}
+            {filter.type !== "trash" && (
+              <button
+                type="button"
+                className={
+                  "list-filters-btn" +
+                  (listFiltersOpen || hasActiveListFilters(listFacets, listDateRange)
+                    ? " active"
+                    : "")
+                }
+                aria-expanded={listFiltersOpen}
+                aria-label="Filter notes"
+                onClick={() => setListFiltersOpen((open) => !open)}
+              >
+                <Icon.Filter size={14} />
+                Filters
+                {listFilterCount(listFacets, listDateRange) > 0 && (
+                  <span className="list-filter-count">
+                    {listFilterCount(listFacets, listDateRange)}
+                  </span>
+                )}
               </button>
             )}
             <select
@@ -2257,7 +2301,7 @@ export default function App() {
             </div>
           </div>
         </div>
-        {filter.type !== "trash" && (
+        {filter.type !== "trash" && listFiltersOpen && (
           <div className="list-facets" role="group" aria-label="Filter notes">
             <button
               type="button"
@@ -2482,16 +2526,24 @@ export default function App() {
               }}
             >
               <div className="note-card-title">
-                {note.is_pinned && <Icon.Pin size={13} />}
-                {note.is_template && <Icon.Templates size={13} />}
-                {note.title || "Untitled"}
-              </div>
-              <div className="note-card-meta">
-                <span title={formatDate(note.updated_at, prefs.date_format)}>
+                <span className="note-card-title-text">
+                  {note.is_pinned && <Icon.Pin size={13} />}
+                  {note.is_template && <Icon.Templates size={13} />}
+                  {note.title || "Untitled"}
+                </span>
+                <span
+                  className="note-card-date"
+                  title={formatDate(note.updated_at, prefs.date_format)}
+                >
                   {formatRelativeTime(note.updated_at)}
                 </span>
-                {note.notebook_name ? ` · ${note.notebook_name}` : ""}
               </div>
+              {listView !== "titles" &&
+                noteCardNotebookName(note.notebook_name, filter) && (
+                  <div className="note-card-meta">
+                    {noteCardNotebookName(note.notebook_name, filter)}
+                  </div>
+                )}
               {(note.reminder_at ||
                 note.attachment_count > 0 ||
                 (note.checklist_total || 0) > 0) && (
@@ -2525,11 +2577,11 @@ export default function App() {
                 </div>
               )}
               {listView === "cards" &&
-                resolveThumbnailUrl(note.thumbnail_url, attachmentUrl) && (
+                resolveThumbnailUrl(note.thumbnail_url, attachmentUrl, noteThumbnailUrl) && (
                   <div
                     className="note-card-thumb"
                     style={{
-                      backgroundImage: `url("${resolveThumbnailUrl(note.thumbnail_url, attachmentUrl)}")`,
+                      backgroundImage: `url("${resolveThumbnailUrl(note.thumbnail_url, attachmentUrl, noteThumbnailUrl)}")`,
                     }}
                     aria-hidden="true"
                   />
@@ -2605,6 +2657,17 @@ export default function App() {
         <div className="note-chrome">
           <button
             type="button"
+            className={paneLayout.sidebarCollapsed ? "icon-btn active" : "icon-btn"}
+            title={paneLayout.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
+            onClick={() => {
+              closeSidebarFlyout();
+              persistPaneLayout(toggleSidebarHidden(paneLayout));
+            }}
+          >
+            <Icon.Sidebar size={16} />
+          </button>
+          <button
+            type="button"
             className={paneLayout.listCollapsed ? "icon-btn active" : "icon-btn"}
             title={paneLayout.listCollapsed ? "Show note list" : "Hide note list"}
             onClick={() => persistPaneLayout(toggleNoteListHidden(paneLayout))}
@@ -2627,7 +2690,10 @@ export default function App() {
               (noteColors[activeNote.id] ? ` note-color-${noteColors[activeNote.id]}` : "")
             }
           >
-          <div className="editor-main">
+          <div
+            className={"editor-main" + (prefs.note_width === "readable" ? " note-width-readable" : "")}
+            style={noteFontStyleVars(parseNoteFontStyles(prefs.font_styles)) as CSSProperties}
+          >
             {activeNote.is_template && (
               <div className="template-banner">
                 <div>
@@ -2644,16 +2710,7 @@ export default function App() {
               </div>
             )}
             <div className="editor-header">
-              <div className="editor-header-row">
-                <input
-                  ref={titleRef}
-                  className="title-input"
-                  value={activeNote.title}
-                  onChange={(e) =>
-                    noteSession.setActiveNote({ ...activeNote, title: e.target.value })
-                  }
-                  placeholder="Title"
-                />
+              <div className="editor-header-row editor-header-tools">
                 <div className="editor-actions">
                   <button
                     type="button"
@@ -3023,6 +3080,21 @@ export default function App() {
                   </span>
                 )}
               </div>
+              <input
+                ref={titleRef}
+                className="title-input"
+                value={activeNote.title}
+                onChange={(e) =>
+                  noteSession.setActiveNote({ ...activeNote, title: e.target.value })
+                }
+                placeholder="Title"
+              />
+              <div
+                className="note-updated"
+                title={formatDate(activeNote.updated_at, prefs.date_format)}
+              >
+                Updated {formatRelativeTime(activeNote.updated_at)}
+              </div>
             </div>
             {isBlankNote(activeNote) && !activeNote.is_template && (
               <div className="template-hint">
@@ -3039,6 +3111,7 @@ export default function App() {
               content={activeNote.content}
               spellCheck={prefs.spell_check}
               spellLanguage={prefs.spell_language || "en-US"}
+              fontStyles={prefs.font_styles}
               fontFamily={prefs.font_family}
               fontSize={prefs.font_size}
               noteWidth={prefs.note_width}
@@ -3083,6 +3156,7 @@ export default function App() {
             <NoteTagBar
               tags={tags}
               selectedIds={activeNote.tag_ids}
+              inputRef={tagInputRef}
               onChange={(tagIds) => void saveNote({ tag_ids: tagIds })}
               onCreateTag={async (name) => {
                 const tag = await api.createTag(name);
@@ -3118,7 +3192,7 @@ export default function App() {
                   Reminder {formatReminderLabel(activeNote.reminder_at, prefs.date_format)}
                 </span>
               )}
-              <span className="save-state">{saveState}</span>
+              <span className="save-state">{saveStateLabel(saveState)}</span>
             </div>
             )}
           </div>
@@ -3307,7 +3381,7 @@ export default function App() {
           onClose={() => setShowSettings(false)}
           onSavePrefs={async (patch) => {
             const next = await api.updateSettings(patch);
-            setPrefs({ ...defaultPreferences, ...next });
+            setPrefs(normalizePreferences(next));
             if (patch.default_notebook_id) {
               await api.updateNotebook(patch.default_notebook_id, {
                 is_default: true,
@@ -3321,7 +3395,7 @@ export default function App() {
           }}
           onResetPrefs={async () => {
             const next = await api.resetSettings();
-            setPrefs({ ...defaultPreferences, ...next });
+            setPrefs(normalizePreferences(next));
           }}
           onRestoreTemplates={async () => {
             await api.restoreTemplates();
@@ -3385,6 +3459,8 @@ export default function App() {
           notes={jumpNotes.length ? jumpNotes : notes}
           notebooks={notebooks}
           tags={tags}
+          templates={templates}
+          trashed={jumpTrashNotes}
           mode={jumpMode}
           onClose={() => setShowJump(false)}
           onSelect={(target) => {
@@ -3395,6 +3471,12 @@ export default function App() {
             } else if (target.kind === "tag") {
               const tag = tags.find((item) => item.id === target.id);
               if (tag) noteSession.setFilter({ type: "tag", id: tag.id, name: tag.name });
+            } else if (target.kind === "template") {
+              noteSession.setFilter({ type: "templates" });
+              void loadNote(target.id);
+            } else if (target.kind === "trash") {
+              noteSession.setFilter({ type: "trash" });
+              void loadNote(target.id);
             } else {
               void loadNote(target.id);
             }
@@ -3411,6 +3493,7 @@ export default function App() {
           notes={jumpNotes.length ? jumpNotes : notes}
           notebooks={notebooks}
           tags={tags}
+          templates={templates}
           onQueryChange={setSearchInput}
           onClearRecent={() => persistRecentSearches([])}
           onClearScope={() => setSearchScope(null)}
@@ -3429,6 +3512,12 @@ export default function App() {
             } else if (target.kind === "tag") {
               const tag = tags.find((item) => item.id === target.id);
               if (tag) noteSession.setFilter({ type: "tag", id: tag.id, name: tag.name });
+            } else if (target.kind === "template") {
+              noteSession.setFilter({ type: "templates" });
+              void loadNote(target.id);
+            } else if (target.kind === "trash") {
+              noteSession.setFilter({ type: "trash" });
+              void loadNote(target.id);
             } else {
               void loadNote(target.id);
             }

@@ -2,6 +2,17 @@ import { ReactNode, useEffect, useState } from "react";
 import { Account, Notebook, Preferences } from "../api";
 import { Icon } from "./Icons";
 import { SPELLCHECK_LANGUAGES } from "../ui/editorChrome";
+import {
+  cssFontFamily,
+  DEFAULT_NOTE_TEXT_COLOR,
+  legacyFontFamily,
+  NOTE_FONT_FAMILIES,
+  NOTE_FONT_SIZES,
+  NOTE_STYLE_OPTIONS,
+  parseNoteFontStyles,
+  patchNoteFontStyle,
+  type NoteStyleId,
+} from "../ui/noteFonts.ts";
 import { KEYBOARD_SHORTCUTS } from "../ui/shortcuts";
 import { moveSidebarSection, sidebarSectionLabel, type SidebarSectionId } from "../ui/sidebar";
 
@@ -68,6 +79,20 @@ export function SettingsModal({
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [name, setName] = useState(account.display_name);
   const [email, setEmail] = useState(account.email);
+  const fontStyles = parseNoteFontStyles(prefs.font_styles);
+
+  const saveFontStyle = (id: NoteStyleId, patch: { family?: string; size?: number; color?: string }) => {
+    const next = patchNoteFontStyle(fontStyles, id, patch);
+    onSavePrefs({
+      font_styles: next,
+      ...(id === "normal"
+        ? {
+            font_size: next.normal.size,
+            font_family: legacyFontFamily(next.normal.family),
+          }
+        : {}),
+    });
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -111,21 +136,6 @@ export function SettingsModal({
           <div className="settings-body scroll-pane">
             {section === "application" && (
               <>
-                <SettingsRow
-                  title="Theme"
-                  hint="Light, dark, or follow your system appearance."
-                >
-                  <select
-                    value={prefs.theme}
-                    onChange={(e) =>
-                      onSavePrefs({ theme: e.target.value as Preferences["theme"] })
-                    }
-                  >
-                    <option value="light">Light</option>
-                    <option value="dark">Dark</option>
-                    <option value="system">Match system</option>
-                  </select>
-                </SettingsRow>
                 <SettingsRow title="Startup view" hint="What opens when Notebook launches.">
                   <select
                     value={prefs.startup_view}
@@ -237,31 +247,66 @@ export function SettingsModal({
                     <option value="full">Fit to window</option>
                   </select>
                 </SettingsRow>
-                <SettingsRow title="Default font" hint="Typeface used in the note body.">
-                  <select
-                    value={prefs.font_family}
-                    onChange={(e) =>
-                      onSavePrefs({
-                        font_family: e.target.value as Preferences["font_family"],
-                      })
-                    }
-                  >
-                    <option value="default">Sans serif</option>
-                    <option value="serif">Serif</option>
-                    <option value="mono">Monospace</option>
-                  </select>
-                </SettingsRow>
-                <SettingsRow title="Font size" hint="Body text size in the editor.">
-                  <select
-                    value={String(prefs.font_size)}
-                    onChange={(e) => onSavePrefs({ font_size: Number(e.target.value) })}
-                  >
-                    <option value="14">14</option>
-                    <option value="16">16</option>
-                    <option value="18">18</option>
-                    <option value="20">20</option>
-                  </select>
-                </SettingsRow>
+                <div className="settings-section-label">Default font settings</div>
+                {NOTE_STYLE_OPTIONS.map((style) => {
+                  const current = fontStyles[style.id];
+                  const familyValue = NOTE_FONT_FAMILIES.some((font) => font.id === current.family)
+                    ? current.family
+                    : "";
+                  return (
+                    <div
+                      key={style.id}
+                      className="settings-row font-style-row"
+                    >
+                      <div
+                        className="font-style-preview"
+                        data-style={style.id}
+                        style={{
+                          ["--preview-size" as string]: `${current.size}px`,
+                          ["--preview-family" as string]: cssFontFamily(current.family),
+                          ["--preview-color" as string]:
+                            current.color || DEFAULT_NOTE_TEXT_COLOR,
+                        }}
+                      >
+                        {style.label}
+                      </div>
+                      <div className="font-style-controls">
+                        <select
+                          aria-label={`${style.label} font`}
+                          value={familyValue}
+                          onChange={(e) => saveFontStyle(style.id, { family: e.target.value })}
+                        >
+                          {NOTE_FONT_FAMILIES.map((font) => (
+                            <option key={font.label} value={font.id}>
+                              {font.label}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          className="size"
+                          aria-label={`${style.label} size`}
+                          value={String(current.size)}
+                          onChange={(e) =>
+                            saveFontStyle(style.id, { size: Number(e.target.value) })
+                          }
+                        >
+                          {NOTE_FONT_SIZES.map((size) => (
+                            <option key={size} value={String(size)}>
+                              {size}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          className="font-color-input"
+                          type="color"
+                          aria-label={`${style.label} color`}
+                          value={current.color || DEFAULT_NOTE_TEXT_COLOR}
+                          onChange={(e) => saveFontStyle(style.id, { color: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
                 <SettingsRow
                   title="PDF attachments"
                   hint="Evernote can show a PDF as a filename title or as an expanded preview. You can also right-click a PDF in a note to switch."
@@ -296,20 +341,6 @@ export function SettingsModal({
                     <option value="titles">Titles</option>
                     <option value="cards">Cards</option>
                   </select>
-                </SettingsRow>
-                <SettingsRow
-                  title="Show snippets"
-                  hint="Show a preview of each note in the list."
-                >
-                  <Toggle
-                    on={prefs.show_snippets}
-                    onChange={(v) =>
-                      onSavePrefs({
-                        show_snippets: v,
-                        list_view: v ? "snippets" : "titles",
-                      })
-                    }
-                  />
                 </SettingsRow>
                 <SettingsRow title="Note list density" hint="Spacing between notes.">
                   <select

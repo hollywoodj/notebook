@@ -1,8 +1,13 @@
+import { NOTE_FONT_SIZES } from "./noteFonts.ts";
+
 export const HIGHLIGHT_COLORS = [
   { id: "yellow", label: "Yellow", color: "#fff3a0" },
   { id: "green", label: "Green", color: "#c6f6d5" },
   { id: "pink", label: "Pink", color: "#ffcce5" },
   { id: "blue", label: "Blue", color: "#cde4ff" },
+  { id: "orange", label: "Orange", color: "#ffd8a8" },
+  { id: "purple", label: "Purple", color: "#e9d8fd" },
+  { id: "gray", label: "Gray", color: "#e2e8f0" },
 ] as const;
 
 export const TEXT_COLORS = [
@@ -86,16 +91,7 @@ export function windowTitleForNote(noteTitle: string | null): string {
   return `${cleaned} – Notebook`;
 }
 
-export const EDITOR_FONTS = [
-  { id: "", label: "Default" },
-  { id: "Arial, sans-serif", label: "Sans Serif" },
-  { id: "Georgia, \"Times New Roman\", serif", label: "Serif" },
-  { id: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", label: "Monospace" },
-  { id: "Trebuchet MS, sans-serif", label: "Trebuchet" },
-  { id: "Verdana, sans-serif", label: "Verdana" },
-] as const;
-
-export const EDITOR_FONT_SIZES = [12, 14, 16, 18, 24, 32, 48] as const;
+export { NOTE_FONT_FAMILIES as EDITOR_FONTS, NOTE_FONT_SIZES as EDITOR_FONT_SIZES } from "./noteFonts.ts";
 
 export const CODE_LANGUAGES = [
   { id: "", label: "Plain text" },
@@ -140,7 +136,7 @@ export function nextLineHeight(current: LineHeight, direction: 1 | -1): LineHeig
 }
 
 export function nextFontSize(current: string | undefined, direction: 1 | -1): string {
-  const sizes = [...EDITOR_FONT_SIZES];
+  const sizes = [...NOTE_FONT_SIZES];
   const parsed = Number.parseInt(String(current || ""), 10);
   const fallback = 16;
   const value = Number.isFinite(parsed) ? parsed : fallback;
@@ -178,4 +174,12 @@ export function insertDateStamp(now = new Date()): string {
 
 export function insertTimeStamp(now = new Date()): string {
   return now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+export type SaveState = "saved" | "saving" | "error";
+
+export function saveStateLabel(state: SaveState): string {
+  if (state === "saving") return "Saving…";
+  if (state === "error") return "Couldn't save";
+  return "All changes saved";
 }

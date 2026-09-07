@@ -43,16 +43,30 @@ describe("checklistProgressLabel", () => {
 
 describe("resolveThumbnailUrl", () => {
   const toUrl = (id: string) => `http://api/attachments/${id}`;
+  const toThumb = (id: string) => `http://api/notes/${id}/thumbnail`;
 
   it("turns attachment ids into download URLs and leaves remote images alone", () => {
     const id = "11111111-1111-4111-8111-111111111111";
-    assert.equal(resolveThumbnailUrl(id, toUrl), `http://api/attachments/${id}`);
+    assert.equal(resolveThumbnailUrl(id, toUrl, toThumb), `http://api/attachments/${id}`);
     assert.equal(
-      resolveThumbnailUrl(`notebook-attachment://${id}`, toUrl),
+      resolveThumbnailUrl(`notebook-attachment://${id}`, toUrl, toThumb),
       `http://api/attachments/${id}`
     );
-    assert.equal(resolveThumbnailUrl("https://cdn.example/pic.png", toUrl), "https://cdn.example/pic.png");
-    assert.equal(resolveThumbnailUrl(null, toUrl), null);
+    assert.equal(
+      resolveThumbnailUrl("https://cdn.example/pic.png", toUrl, toThumb),
+      "https://cdn.example/pic.png"
+    );
+    assert.equal(resolveThumbnailUrl(null, toUrl, toThumb), null);
+  });
+
+  it("sends notebook-thumb markers to the lazy per-note endpoint", () => {
+    const id = "22222222-2222-4222-8222-222222222222";
+    assert.equal(
+      resolveThumbnailUrl(`notebook-thumb://${id}`, toUrl, toThumb),
+      `http://api/notes/${id}/thumbnail`
+    );
+    // Never leak a raw marker into a CSS url().
+    assert.equal(resolveThumbnailUrl("notebook-thumb://nonsense", toUrl, toThumb), null);
   });
 });
 

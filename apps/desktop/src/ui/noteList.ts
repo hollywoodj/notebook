@@ -331,6 +331,19 @@ export function hasActiveListFilters(
   return facets.length > 0 || range !== "any";
 }
 
+export function listFilterCount(facets: NoteListFacet[], range: DateRangeFacet): number {
+  return facets.length + (range !== "any" ? 1 : 0);
+}
+
+export function noteCardNotebookName(
+  notebookName: string | null | undefined,
+  filter: { type: string; name?: string }
+): string {
+  if (!notebookName) return "";
+  if (filter.type === "notebook" && filter.name === notebookName) return "";
+  return notebookName;
+}
+
 export function noteIdByOffset<T extends { id: string }>(
   notes: T[],
   currentId: string | null,

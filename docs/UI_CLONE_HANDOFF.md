@@ -73,7 +73,7 @@ This log is for future sessions continuing the exact-clone work. Passes 1–10 e
 6. **Recent searches** under Search, persisted locally
 7. **Filter chips** for Has reminder and Has attachment
 8. **Link dialog** Open / Copy, and display text is always applied
-9. **Account chip popover** with a hashed avatar color, Account, Settings, and theme
+9. **Account chip popover** with a hashed avatar color, Account, and Settings
 10. **Collapse / expand stacks** (click, context menu, View menu)
 
 ### Pass 8 (this session)
@@ -175,11 +175,68 @@ This log is for future sessions continuing the exact-clone work. Passes 1–10 e
 3. Settings gear removed from the sidebar; Settings stays in File and the account menu
 4. OmniClone / OmniFocus integration: Copy Note Link opens `notebook://`, Send to OmniClone uses `omniclone:///add`
 
+### Pass 14 (this session)
+1. **Sidebar flyout pops faster**: 80ms opacity fade (no slide), 1px overlap + 8px hover bridge so the panel survives the trip from the rail
+2. **220ms close grace** (was 180ms) — still immediate on hover; native tooltips removed from Shortcuts / Notebooks / Tags so they do not fight the panel
+3. **Files on the sidebar rail**, gated on the existing `show_files` setting
+4. **ENEX images become attachments** with `notebook-attachment://` in `<img>` instead of base64 data URIs, so they show in Files and as card thumbnails
+5. **Audio, office docs, octet-stream, Windows paths, and UTF-16 ENEX** import as real attachments
+6. **Import status** includes the first error hint when notes are skipped
+7. **Add a tag** wording on the note menu; duplicate tag-filter setState removed
+8. ~~**Account chip** restored on the sidebar rail (avatar opens Account / Settings)~~ — removed for now; Settings stays in File
+
+### Pass 15 (this session)
+Account avatar removed from the sidebar rail (Settings stays in File). Ten chrome gaps closed:
+
+1. **Hide Sidebar button** in the note chrome, next to Hide note list
+2. **Hide/Show Sidebar** in the sidebar More (•••) menu
+3. **Minimize** in a new Window menu (Ctrl/⌘ M)
+4. **Zoom** (maximize / restore) in the Window menu
+5. **Keep on Top** in the Window menu, persisted
+6. **Show/Hide Status Bar** in View
+7. **Enable/Disable Spell Check** in Edit (same setting as Preferences)
+8. **New stack** in the sidebar More menu
+9. **Jump To / Search include templates** and open the Templates view
+10. **Search in this notebook** in the note-list header when a notebook is selected
+
+Shortcut overlay also lists Hide Sidebar and Jump To templates.
+
+### Pass 16 (this session)
+Visual fidelity for Settings and the note editor. No Tasks, Calendar, or Daily note.
+
+1. **Inter** as the UI and note font (Evernote’s 2024 typeface), 13px chrome
+2. **Editor line spacing**: body 16/24 (line-height 1.5); paragraphs have no extra margin so Enter is one line
+3. **Heading sizes** match Evernote defaults: Large 28, Medium 22, Small 18
+4. **Title** is 32px bold in the readable column, under the notebook crumb
+5. **Note list** row padding, 14px titles, 13/18 snippets
+6. **Settings → Notes** Default font settings (Normal / Large / Medium / Small: family, size, color)
+7. **Aa** text-style menu in the formatting toolbar, with Reset
+8. Format menu uses Large / Medium / Small header labels
+9. Readable note column is 720px with 48px side padding
+10. Checklists and lists use the same line spacing as body text
+
+### Pass 17 (this session)
+Visible chrome on existing surfaces only. No Tasks, Calendar, or Daily note.
+
+1. **Add a tag** placeholder always, plus Ctrl/⌘ ' to focus the tag field
+2. Highlight palette now has Evernote’s seven swatches (orange, purple, gray added)
+3. **Jump To** includes trashed notes (subtitle Trash) and opens them in Trash
+4. Note list omits the notebook name when that notebook is already the filter
+5. List **date sits on the right** of the title row
+6. Search placeholder is **Search notes** (operators still work)
+7. **Updated {relative}** under the note title
+8. Status bar save copy: **All changes saved** / **Saving…** / **Couldn't save**
+9. **Filters** button hides the chip row until opened (count badge when active)
+10. Settings → Notes no longer duplicates **Show snippets** (list view select is enough)
+
+Find in note already showed `N of M`; the count uses tabular numbers so it stays readable.
+
 ## Where to look
 
-- Chrome helpers and tests: `apps/desktop/src/uiChrome.ts`, `apps/desktop/src/uiChrome.test.ts`
+- Chrome helpers and tests: `apps/desktop/src/ui/editorChrome.ts`, `apps/desktop/src/ui/noteFonts.ts`
 - Shell / menus / list / reminder header: `apps/desktop/src/App.tsx`
 - Editor: `apps/desktop/src/components/NoteEditor.tsx`
+- Settings: `apps/desktop/src/components/SettingsModal.tsx`
 - New dialogs: `JumpToDialog.tsx`, `SearchDialog.tsx`, `CommandPalette.tsx`, `LinkDialog.tsx`, `NotebookPickerDialog.tsx`
 - Preferences: `apps/desktop/src/api.ts` (`list_view`) and `crates/notebook-core/src/templates.rs`
 
@@ -191,7 +248,10 @@ which needs its own config for the Node types the app does not use.
 handler is on which element, whether a real `mouseleave` reaches a timer, whether a menu item is
 wired to the command it claims. It starts Vite if it is not already running, uses a throwaway
 `--user-data-dir` so it never opens your real database, and needs the release backend
-(`cargo build --release -p notebook-api`) because that is what the dev app spawns. Neither
+(`cargo build --release -p notebook-api`) because that is what the dev app spawns. The script
+runs files one at a time (`--test-concurrency=1`) so they do not race two Vite servers.
+`e2e/sidebarFlyout.e2e.ts` covers the rail flyout; `e2e/noteChrome.e2e.ts` covers Hide Sidebar,
+the Window menu, Jump To templates, and Search in this notebook. Neither
 runner takes a glob: a new `e2e/*.e2e.ts` file does not run until it is added to the
 `test:e2e` script, exactly like `src/**/*.test.ts` and `test`.
 
@@ -200,8 +260,7 @@ runner takes a glob: a new `e2e/*.e2e.ts` file does not run until it is added to
 Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the product scope changes.
 
 ### High-visibility chrome
-- Always on top
-- Account chip already lives in the footer with a popover; match Evernote’s signed-in menu more closely if needed
+- Account chip can return later if we want Evernote’s signed-in menu on the rail
 
 ### Note list
 - Drag to reorder notebooks and tags
@@ -221,16 +280,14 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 - Nest remaining menus the way Format now nests Align / Table / Color / Callout
 
 ### Settings & theming
-- Custom highlight colors (seven swatches exist)
+- Dark theme
 
 ### Quality / parity bugs to re-check
 - Note-list splitter sometimes feels like it does not move until a larger drag (the sidebar splitter now tracks the pointer instead)
-- Hide Sidebar should be verified with a click, not only the menu label
+- Hide Sidebar should be verified with a click in the note chrome and the More menu
 - Drag-and-drop notes onto notebooks/tags was implemented but QA skipped it
 - ArrowUp/ArrowDown with a single note cannot prove non-wrapping selection
-- “Add tag” vs Evernote’s “Add a tag”
 - Table Tab vs indent: indent yields to the table extension; re-test nested lists inside table cells
-- Jump To currently lists non-template notes only; consider templates and trash as optional groups
 - Toolbar hide + attach: media button is in the toolbar; drag-and-drop still works when hidden
 - Toolbar overflow should be re-checked in a narrow window; font dropdowns take extra width
 - Card thumbnails depend on the first image attachment or an `<img>` in the note body

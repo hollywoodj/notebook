@@ -59,6 +59,13 @@ export function toggleNoteListHidden(layout: PaneLayout): PaneLayout {
   return { ...layout, listCollapsed: !layout.listCollapsed };
 }
 
+export function toggleSidebarHidden(layout: PaneLayout): PaneLayout {
+  if (isNoteExpanded(layout)) {
+    return { ...layout, sidebarCollapsed: false, listCollapsed: false };
+  }
+  return { ...layout, sidebarCollapsed: !layout.sidebarCollapsed };
+}
+
 export function toggleNoteExpanded(layout: PaneLayout): PaneLayout {
   if (isNoteExpanded(layout)) {
     return { ...layout, sidebarCollapsed: false, listCollapsed: false };

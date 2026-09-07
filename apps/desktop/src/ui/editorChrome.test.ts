@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { attachmentsLabel, formattingToolbarVisible, insertDateStamp, insertTimeStamp, nextFontSize, nextLineHeight, nextZoom, parseEditorChrome, parseLineHeight, windowTitleForNote } from "./editorChrome.ts";
+import { attachmentsLabel, formattingToolbarVisible, HIGHLIGHT_COLORS, insertDateStamp, insertTimeStamp, nextFontSize, nextLineHeight, nextZoom, parseEditorChrome, parseLineHeight, saveStateLabel, windowTitleForNote } from "./editorChrome.ts";
 import { parseRecentNotes, rememberRecentNote } from "./navigation.ts";
 import { parsePaneLayout } from "./panes.ts";
 
@@ -66,5 +66,18 @@ describe("parsePaneLayout", () => {
     const recent = rememberRecentNote([{ id: "a", title: "A" }], { id: "b", title: "B" });
     assert.deepEqual(recent.map((item) => item.id), ["b", "a"]);
     assert.equal(parseRecentNotes(JSON.stringify(recent))[0].id, "b");
+  });
+
+  it("exposes Evernote's seven highlight swatches", () => {
+    assert.deepEqual(
+      HIGHLIGHT_COLORS.map((swatch) => swatch.id),
+      ["yellow", "green", "pink", "blue", "orange", "purple", "gray"]
+    );
+  });
+
+  it("labels save state the way Evernote does", () => {
+    assert.equal(saveStateLabel("saved"), "All changes saved");
+    assert.equal(saveStateLabel("saving"), "Saving…");
+    assert.equal(saveStateLabel("error"), "Couldn't save");
   });
 });

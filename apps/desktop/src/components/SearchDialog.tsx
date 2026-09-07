@@ -10,6 +10,7 @@ export function SearchDialog({
   notes,
   notebooks,
   tags,
+  templates = [],
   onQueryChange,
   onClearRecent,
   onClearScope,
@@ -27,6 +28,7 @@ export function SearchDialog({
   notes: { id: string; title: string; notebook_name: string }[];
   notebooks: { id: string; name: string }[];
   tags: { id: string; name: string }[];
+  templates?: { id: string; title: string }[];
   onQueryChange: (query: string) => void;
   onClearRecent: () => void;
   onClearScope: () => void;
@@ -40,8 +42,8 @@ export function SearchDialog({
   const inputRef = useRef<HTMLInputElement>(null);
   const [index, setIndex] = useState(0);
   const matches = useMemo(
-    () => jumpToMatches(query, notes, notebooks, tags, 8),
-    [query, notes, notebooks, tags]
+    () => jumpToMatches(query, notes, notebooks, tags, 8, undefined, templates),
+    [query, notes, notebooks, tags, templates]
   );
   const trimmed = query.trim();
   const recents = trimmed ? [] : recentSearches;
@@ -129,7 +131,7 @@ export function SearchDialog({
           <input
             ref={inputRef}
             value={query}
-            placeholder="Search notes  notebook: tag: created: resource:"
+            placeholder="Search notes"
             aria-label="Search notes"
             onChange={(event) => onQueryChange(event.target.value)}
           />

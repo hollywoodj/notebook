@@ -137,6 +137,7 @@ export function viewTitleForFilter(
   if (filter.type === "templates") return "Templates";
   if (filter.type === "trash") return "Trash";
   if (filter.type === "archived") return "Archived";
+  if (filter.type === "files") return "Files";
   if (filter.type === "search") return `Search: ${filter.query || ""}`;
   return "Notes";
 }

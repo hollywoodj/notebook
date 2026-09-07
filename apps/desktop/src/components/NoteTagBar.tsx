@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, Ref, useMemo, useState } from "react";
 import { Tag } from "../api";
 import { suggestedTags } from "../ui/noteContent";
 import { Icon } from "./Icons";
@@ -8,11 +8,13 @@ export function NoteTagBar({
   selectedIds,
   onChange,
   onCreateTag,
+  inputRef,
 }: {
   tags: Tag[];
   selectedIds: string[];
   onChange: (tagIds: string[]) => void;
   onCreateTag?: (name: string) => void;
+  inputRef?: Ref<HTMLInputElement>;
 }) {
   const [query, setQuery] = useState("");
   const selected = tags.filter((tag) => selectedIds.includes(tag.id));
@@ -63,9 +65,10 @@ export function NoteTagBar({
       ))}
       <form className="note-tag-form" onSubmit={submit}>
         <input
+          ref={inputRef}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder={selected.length ? "Add tag" : "Add a tag"}
+          placeholder="Add a tag"
           aria-label="Add a tag"
         />
         {(query && suggestions.length > 0) || canCreate ? (

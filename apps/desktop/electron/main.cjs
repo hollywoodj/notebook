@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, shell, nativeTheme } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
@@ -7,6 +7,9 @@ const { spawn } = require("child_process");
 const API_HOST = "127.0.0.1";
 const API_PORT = 8799;
 const DEV_URL = "http://127.0.0.1:1420";
+// A dev run launches electron.exe directly, so without an explicit icon
+// Windows would show the stock Electron icon instead of Notebook's own.
+const APP_ICON = path.join(__dirname, "..", "build", process.platform === "win32" ? "icon.ico" : "icon.png");
 
 let apiProcess = null;
 let mainWindow = null;
@@ -130,6 +133,8 @@ async function createWindow() {
     title: "Notebook",
     autoHideMenuBar: true,
     show: false,
+    backgroundColor: "#ffffff",
+    ...(fs.existsSync(APP_ICON) ? { icon: APP_ICON } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -187,6 +192,35 @@ if (!gotLock) {
     await shell.openExternal(String(url));
   });
 
+  ipcMain.handle("window-control", async (event, action) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return null;
+    switch (String(action)) {
+      case "minimize":
+        win.minimize();
+        break;
+      case "maximize":
+        if (win.isMaximized()) win.unmaximize();
+        else win.maximize();
+        break;
+      case "alwaysOnTop":
+        win.setAlwaysOnTop(!win.isAlwaysOnTop());
+        break;
+      case "setAlwaysOnTop":
+        win.setAlwaysOnTop(true);
+        break;
+      case "clearAlwaysOnTop":
+        win.setAlwaysOnTop(false);
+        break;
+      default:
+        break;
+    }
+    return {
+      alwaysOnTop: win.isAlwaysOnTop(),
+      maximized: win.isMaximized(),
+    };
+  });
+
   if (process.defaultApp) {
     if (process.argv.length >= 2) {
       app.setAsDefaultProtocolClient("notebook", process.execPath, [
@@ -198,6 +232,13 @@ if (!gotLock) {
   }
 
   app.whenReady().then(async () => {
+    // Ties windows to this app's own taskbar/Start Menu identity instead of
+    // Electron's, which is what makes the explicit icon above take effect.
+    app.setAppUserModelId("app.notebook.desktop");
+    // Notebook is light-mode-only; without this, the native window chrome
+    // (title bar) still follows the OS dark/light setting even though the
+    // in-app UI is hardcoded to light.
+    nativeTheme.themeSource = "light";
     Menu.setApplicationMenu(null);
     await boot();
   }).catch((err) => {

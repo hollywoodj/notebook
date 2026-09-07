@@ -1,3 +1,19 @@
+@font-face {
+  font-family: "Inter";
+  src: url("./fonts/InterVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("./fonts/InterVariable-Italic.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+
 :root {
   --green: #00a82d;
   --green-dark: #008f26;
@@ -6,33 +22,20 @@
   --sidebar-hover: #eaeae6;
   --panel-bg: #ffffff;
   --list-bg: #fafaf8;
-  --border: #e4e4df;
-  --text: #262626;
-  --text-muted: #6f6f6b;
+  --border: #e8e8e3;
+  --text: #26251e;
+  --text-muted: #73726c;
   --code-bg: #f4f4f1;
   --danger: #d9534f;
   --shadow: 0 12px 40px rgba(20, 20, 16, 0.18);
   --radius: 8px;
-  --font: "Segoe UI", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
-  --editor-serif: "Iowan Old Style", "Palatino Linotype", Palatino, serif;
+  --font: "Inter", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --editor-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   --editor-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --note-readable-width: 720px;
+  --note-page-pad-x: 48px;
+  --editor-line-height: 1.5;
   color-scheme: light;
-}
-
-[data-theme="dark"] {
-  --green: #2dbe4f;
-  --green-dark: #24a844;
-  --green-soft: #1c3a24;
-  --sidebar-bg: #1c1c1a;
-  --sidebar-hover: #2a2a27;
-  --panel-bg: #242422;
-  --list-bg: #1f1f1d;
-  --border: #33332e;
-  --text: #ecece8;
-  --text-muted: #a3a39c;
-  --code-bg: #1c1c1a;
-  --shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
-  color-scheme: dark;
 }
 
 * {
@@ -48,6 +51,9 @@ body,
   background: var(--panel-bg);
   color: var(--text);
   font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.4;
+  font-feature-settings: "cv05" 1, "ss01" 1;
 }
 
 button,
@@ -94,15 +100,6 @@ select:focus-visible {
 .gallery-grid {
   scrollbar-width: auto;
   scrollbar-color: #b5b5ae transparent;
-}
-
-[data-theme="dark"] .scroll-pane,
-[data-theme="dark"] .editor-scroll,
-[data-theme="dark"] .sidebar-nav,
-[data-theme="dark"] .note-list,
-[data-theme="dark"] .settings-body,
-[data-theme="dark"] .gallery-grid {
-  scrollbar-color: #5c5c56 transparent;
 }
 
 .scroll-pane::-webkit-scrollbar,
@@ -579,78 +576,6 @@ select:focus-visible {
   padding: 10px 0;
 }
 
-.sidebar-footer {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.app-shell.sidebar-rail .sidebar-account {
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  padding: 8px 0 10px;
-}
-
-.app-shell.sidebar-rail .sidebar-account .account-chip {
-  flex: none;
-  width: 100%;
-  justify-content: center;
-  gap: 0;
-  padding: 4px 0;
-}
-
-.app-shell.sidebar-rail .account-popover {
-  left: calc(100% + 8px);
-  bottom: 0;
-}
-
-.sidebar-account {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 6px;
-  margin-top: auto;
-  padding: 8px 0 10px;
-  border-top: 1px solid var(--border);
-  background: var(--sidebar-bg);
-}
-
-.avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--green);
-  color: white;
-  display: grid;
-  place-items: center;
-  font-size: 13px;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
-.account-name {
-  font-weight: 600;
-  font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.account-copy {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.account-email {
-  font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .icon-btn {
   border: none;
   background: transparent;
@@ -1063,7 +988,7 @@ select:focus-visible {
 
 .sidebar-flyout {
   position: absolute;
-  left: 100%;
+  left: calc(100% - 1px);
   top: 0;
   bottom: 0;
   width: 280px;
@@ -1074,13 +999,23 @@ select:focus-visible {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  animation: sidebar-flyout-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: sidebar-flyout-in 80ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
+/* Catch the pointer while it crosses the 1px rail border so the close timer
+ * does not win the race against mouseenter on the panel. */
+.sidebar-flyout::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
 }
 
 @keyframes sidebar-flyout-in {
   from {
     opacity: 0;
-    transform: translateX(-6px);
   }
 }
 
@@ -1321,6 +1256,40 @@ select:focus-visible {
   outline-offset: 1px;
 }
 
+.list-filters-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-bg);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.list-filters-btn:hover,
+.list-filters-btn.active {
+  border-color: var(--green);
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.list-filter-count {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--green);
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+
 .view-toggle {
   display: flex;
   border: 1px solid var(--border);
@@ -1355,13 +1324,13 @@ select:focus-visible {
 }
 
 .note-card {
-  width: calc(100% - 12px);
-  margin: 0 6px;
+  width: 100%;
+  margin: 0;
   text-align: left;
   border: none;
   border-bottom: 1px solid var(--border);
   background: transparent;
-  padding: 14px 12px;
+  padding: 10px 16px 12px;
   border-radius: 0;
   user-select: none;
 }
@@ -1371,12 +1340,12 @@ select:focus-visible {
 }
 
 .note-card.compact {
-  padding: 8px 12px;
+  padding: 7px 16px 8px;
 }
 
 .note-card.selected {
   background: var(--green-soft);
-  border-radius: 8px;
+  border-radius: 6px;
   border-bottom-color: transparent;
   box-shadow: inset 3px 0 0 var(--green);
 }
@@ -1423,18 +1392,42 @@ select:focus-visible {
 }
 
 .note-card-title {
-  font-weight: 650;
-  line-height: 1.3;
-  margin-bottom: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  margin-bottom: 2px;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.note-card-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 1;
+}
+
+.note-card-date {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  color: var(--text-muted);
+  letter-spacing: 0;
 }
 
 .note-card-meta {
   font-size: 12px;
+  line-height: 16px;
   color: var(--text-muted);
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .note-card-extras {
@@ -1480,7 +1473,7 @@ select:focus-visible {
   width: 100%;
   border: 0;
   background: transparent;
-  padding: 10px 18px 6px;
+  padding: 8px 16px 4px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -1510,7 +1503,7 @@ select:focus-visible {
 .note-card-snippet {
   font-size: 13px;
   color: var(--text-muted);
-  line-height: 1.45;
+  line-height: 18px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -1620,28 +1613,52 @@ select:focus-visible {
 }
 
 .editor-header {
-  padding: 12px 28px 8px;
+  padding: 8px var(--note-page-pad-x) 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
+}
+
+.editor-main.note-width-readable .editor-header,
+.editor-main.note-width-readable .template-hint {
+  max-width: var(--note-readable-width);
+  width: 100%;
+  margin: 0 auto;
 }
 
 .editor-header-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
+}
+
+.editor-header-tools {
+  min-height: 32px;
+  justify-content: flex-end;
 }
 
 .title-input {
   width: 100%;
   border: none;
   background: transparent;
-  font-size: 26px;
+  font-family: var(--note-font-family, var(--font));
+  font-size: 32px;
   font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+  color: var(--text);
   outline: none;
   min-width: 0;
-  flex: 1;
-  padding: 2px 0;
+  flex: none;
+  padding: 8px 0 4px;
+}
+
+.note-updated {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+  padding: 0 0 12px;
 }
 
 .editor-header-meta {
@@ -1706,7 +1723,6 @@ select:focus-visible {
   margin-left: auto;
   color: var(--text-muted);
   font-size: 12px;
-  text-transform: capitalize;
 }
 
 .menu-anchor {
@@ -1717,7 +1733,7 @@ select:focus-visible {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 28px 8px;
+  padding: 0 var(--note-page-pad-x) 8px;
   color: var(--text-muted);
   font-size: 13px;
 }
@@ -1787,6 +1803,69 @@ select:focus-visible {
 
 .toolbar-select.code-lang {
   max-width: 120px;
+}
+
+.style-picker {
+  position: relative;
+}
+
+.style-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 24;
+  min-width: 220px;
+  padding: 6px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+}
+
+.style-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: inherit;
+}
+
+.style-menu-item:hover,
+.style-menu-item.is-active {
+  background: var(--green-soft);
+}
+
+.style-menu-item[data-style="normal"] {
+  font-size: 14px;
+}
+
+.style-menu-item[data-style="h1"] {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.style-menu-item[data-style="h2"] {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.style-menu-item[data-style="h3"] {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.style-menu-reset {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
 }
 
 .toolbar-overflow {
@@ -2058,12 +2137,14 @@ select:focus-visible {
 }
 
 .editor-page {
-  padding: 20px 8px 80px;
+  padding: 4px 8px 80px;
 }
 
 .editor-page.readable {
-  max-width: 760px;
+  max-width: var(--note-readable-width);
   margin: 0 auto;
+  padding-left: var(--note-page-pad-x);
+  padding-right: var(--note-page-pad-x);
 }
 
 .editor-page.full {
@@ -2092,9 +2173,18 @@ select:focus-visible {
   min-height: 100%;
   height: auto;
   overflow: visible;
-  padding: 0 20px;
+  padding: 0;
   outline: none;
-  line-height: var(--editor-line-height, 1.6);
+  color: var(--note-font-color, var(--text));
+  font-family: var(--note-font-family, var(--font));
+  font-size: var(--note-font-size, 16px);
+  line-height: var(--editor-line-height, 1.5);
+}
+
+.note-editor-content p,
+.ProseMirror p {
+  margin: 0;
+  min-height: calc(1em * var(--editor-line-height, 1.5));
 }
 
 .note-editor-content p.is-editor-empty:first-child::before,
@@ -2108,17 +2198,44 @@ select:focus-visible {
 
 .note-editor-content h1,
 .ProseMirror h1 {
-  font-size: 1.8rem;
+  font-family: var(--note-h1-family, var(--note-font-family, var(--font)));
+  font-size: var(--note-h1-size, 28px);
+  line-height: 1.25;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--note-h1-color, var(--text));
+  margin: 1.15em 0 0.3em;
 }
 
 .note-editor-content h2,
 .ProseMirror h2 {
-  font-size: 1.35rem;
+  font-family: var(--note-h2-family, var(--note-font-family, var(--font)));
+  font-size: var(--note-h2-size, 22px);
+  line-height: 1.3;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--note-h2-color, var(--text));
+  margin: 1.05em 0 0.28em;
 }
 
 .note-editor-content h3,
 .ProseMirror h3 {
-  font-size: 1.15rem;
+  font-family: var(--note-h3-family, var(--note-font-family, var(--font)));
+  font-size: var(--note-h3-size, 18px);
+  line-height: 1.35;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--note-h3-color, var(--text));
+  margin: 0.95em 0 0.22em;
+}
+
+.note-editor-content h1:first-child,
+.note-editor-content h2:first-child,
+.note-editor-content h3:first-child,
+.ProseMirror h1:first-child,
+.ProseMirror h2:first-child,
+.ProseMirror h3:first-child {
+  margin-top: 0.2em;
 }
 
 .note-editor-content code,
@@ -2279,10 +2396,6 @@ select:focus-visible {
   background: #ecece8;
 }
 
-[data-theme="dark"] .note-attachments-toggle:hover {
-  background: #2f2f2c;
-}
-
 .note-attachments-toggle svg:last-child {
   margin-left: auto;
   color: var(--text-muted);
@@ -2342,11 +2455,6 @@ select:focus-visible {
   background: #f3f3f0;
   overflow: visible;
   position: relative;
-}
-
-[data-theme="dark"] .notebook-file {
-  border-color: #3a3a36;
-  background: #2b2b28;
 }
 
 .notebook-file.is-pdf.is-expanded {
@@ -2467,11 +2575,6 @@ select:focus-visible {
   background: #fff;
 }
 
-[data-theme="dark"] .notebook-file-preview {
-  border-top-color: #3a3a36;
-  background: #1f1f1d;
-}
-
 .notebook-pdf-frame {
   display: block;
   width: 100%;
@@ -2489,7 +2592,19 @@ select:focus-visible {
 .note-editor-content ol,
 .ProseMirror ul,
 .ProseMirror ol {
-  padding-left: 1.4rem;
+  padding-left: 1.5rem;
+  margin: 0.2em 0;
+}
+
+.note-editor-content li,
+.ProseMirror li {
+  margin: 0;
+}
+
+.note-editor-content li p,
+.ProseMirror li p {
+  margin: 0;
+  min-height: calc(1em * var(--editor-line-height, 1.5));
 }
 
 .ProseMirror ul[data-type="taskList"],
@@ -2503,10 +2618,12 @@ select:focus-visible {
   padding-left: 1.5rem;
 }
 
+/* Checklist rows match body line spacing. The inner paragraph is zeroed so
+   the checkbox sits on the same line as the text. */
 .ProseMirror ul[data-type="taskList"] li,
 .note-editor-content ul[data-type="taskList"] li {
   position: relative;
-  margin: 2px 0;
+  margin: 0;
 }
 
 .ProseMirror .task-item-row,
@@ -2516,7 +2633,7 @@ select:focus-visible {
   grid-template-columns: 17px minmax(0, 1fr);
   column-gap: 7px;
   align-items: start;
-  min-height: 1.6em;
+  min-height: 1lh;
 }
 
 .ProseMirror .task-item-content,
@@ -2524,8 +2641,12 @@ select:focus-visible {
   min-width: 0;
 }
 
-.ProseMirror .task-item-content[data-node-view-content] > p,
-.note-editor-content .task-item-content[data-node-view-content] > p,
+/* TipTap's React NodeViewContent wraps the paragraph in one more div than the
+   HTML stored in a note does, so match any depth here: as a direct-child rule
+   this missed the editor entirely and the paragraph kept its 1em UA margin,
+   which pushed the text a line below the checkbox. */
+.ProseMirror .task-item-content p,
+.note-editor-content .task-item-content p,
 .ProseMirror ul[data-type="taskList"] li > div > p,
 .note-editor-content ul[data-type="taskList"] li > div > p {
   margin: 0;
@@ -2538,7 +2659,7 @@ select:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 1.6em;
+  height: 1lh;
   margin: 0;
   user-select: none;
 }
@@ -2551,11 +2672,9 @@ select:focus-visible {
   display: grid;
   place-items: center;
   width: 18px;
-  height: 1.6em;
+  height: 1lh;
   border-radius: 4px;
   color: var(--text-muted);
-  font-size: 14px;
-  line-height: 1;
   cursor: grab;
   opacity: 0;
   touch-action: none;
@@ -2593,6 +2712,12 @@ select:focus-visible {
   user-select: none !important;
 }
 
+.ProseMirror .task-item-drag-handle > span,
+.note-editor-content .task-item-drag-handle > span {
+  font-size: 14px;
+  line-height: 1;
+}
+
 .ProseMirror .task-item-node.is-task-drag-source,
 .note-editor-content .task-item-node.is-task-drag-source {
   opacity: 0.45;
@@ -2624,6 +2749,8 @@ select:focus-visible {
 }
 
 .ProseMirror ul[data-type="taskList"] input[type="checkbox"],
+.note-editor-content ul[data-type="taskList"] input[type="checkbox"],
+.ProseMirror input[data-inline-checkbox],
 .note-editor-content input[data-inline-checkbox] {
   appearance: none;
   width: 16px;
@@ -2638,6 +2765,8 @@ select:focus-visible {
 }
 
 .ProseMirror ul[data-type="taskList"] input[type="checkbox"]:checked,
+.note-editor-content ul[data-type="taskList"] input[type="checkbox"]:checked,
+.ProseMirror input[data-inline-checkbox]:checked,
 .note-editor-content input[data-inline-checkbox]:checked {
   background: var(--green);
   border-color: var(--green);
@@ -2647,8 +2776,9 @@ select:focus-visible {
   background-size: 12px;
 }
 
+.ProseMirror input[data-inline-checkbox],
 .note-editor-content input[data-inline-checkbox] {
-  vertical-align: -2px;
+  vertical-align: middle;
   margin: 0 3px;
 }
 
@@ -3079,28 +3209,30 @@ select:focus-visible {
   width: min(960px, 94vw);
   height: min(680px, 90vh);
   background: var(--panel-bg);
-  border-radius: 14px;
+  border-radius: 12px;
   box-shadow: var(--shadow);
   display: grid;
   overflow: hidden;
 }
 
 .settings-modal {
-  grid-template-columns: 230px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
 }
 
 .settings-nav {
   background: var(--sidebar-bg);
   border-right: 1px solid var(--border);
-  padding: 18px 10px;
+  padding: 16px 8px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .settings-nav-title {
   font-weight: 700;
-  padding: 6px 10px 14px;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+  padding: 8px 12px 16px;
 }
 
 .settings-nav-item {
@@ -3110,8 +3242,10 @@ select:focus-visible {
   border: none;
   background: transparent;
   text-align: left;
-  padding: 8px 10px;
-  border-radius: 6px;
+  padding: 8px 12px;
+  min-height: 36px;
+  border-radius: 8px;
+  font-size: 13px;
 }
 
 .settings-nav-item.active {
@@ -3131,17 +3265,28 @@ select:focus-visible {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 20px;
+  padding: 18px 24px 12px;
   border-bottom: 1px solid var(--border);
 }
 
 .settings-header h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .settings-body {
   padding: 8px 8px 24px;
+}
+
+.settings-section-label {
+  padding: 16px 16px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 .settings-row {
@@ -3149,18 +3294,71 @@ select:focus-visible {
   justify-content: space-between;
   align-items: center;
   gap: 24px;
-  padding: 16px 16px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--border);
+}
+
+.font-style-row {
+  align-items: center;
+}
+
+.font-style-preview {
+  min-width: 0;
+  flex: 1;
+  line-height: 1.25;
+}
+
+.font-style-preview[data-style="normal"] {
+  font-size: var(--preview-size, 16px);
+  font-family: var(--preview-family, var(--font));
+  color: var(--preview-color, var(--text));
+}
+
+.font-style-preview[data-style="h1"],
+.font-style-preview[data-style="h2"],
+.font-style-preview[data-style="h3"] {
+  font-size: var(--preview-size, 18px);
+  font-family: var(--preview-family, var(--font));
+  color: var(--preview-color, var(--text));
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.font-style-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.font-style-controls select {
+  min-width: 108px;
+}
+
+.font-style-controls select.size {
+  min-width: 72px;
+}
+
+.font-color-input {
+  width: 32px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-bg);
+  cursor: pointer;
 }
 
 .settings-row-title {
   font-weight: 600;
+  font-size: 14px;
 }
 
 .settings-row-hint {
   color: var(--text-muted);
-  font-size: 13px;
-  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  margin-top: 3px;
   max-width: 420px;
 }
 
@@ -3392,6 +3590,8 @@ kbd {
   font-size: 12px;
   color: var(--text-muted);
   min-width: 72px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .find-in-note .ghost-btn.small.active {
@@ -3500,7 +3700,6 @@ kbd {
 
 .editor-status .save-state {
   margin-left: auto;
-  text-transform: capitalize;
 }
 
 .ProseMirror::spelling-error {

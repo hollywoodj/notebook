@@ -46,13 +46,6 @@ export function formatDate(iso: string, format: Preferences["date_format"]) {
   return new Date(iso).toLocaleDateString(undefined, options);
 }
 
-export function applyTheme(theme: Preferences["theme"]) {
-  const dark =
-    theme === "dark" ||
-    (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  document.documentElement.dataset.theme = dark ? "dark" : "light";
-}
-
 export function isBlankNote(note: Note) {
   const text = note.content_plain?.trim() || note.content.replace(/<[^>]+>/g, "").trim();
   return (!note.title || note.title === "Untitled") && text.length === 0;

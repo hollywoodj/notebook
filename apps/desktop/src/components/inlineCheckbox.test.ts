@@ -70,7 +70,7 @@ describe("note list and checkbox commands", () => {
   it("keeps checklist text aligned after Backspace joins or removes an item", () => {
     assert.match(
       stylesSource,
-      /\.task-item-content\[data-node-view-content\] > p/
+      /\.task-item-content p/
     );
     assert.doesNotMatch(stylesSource, /data-node-view-content-react/);
   });

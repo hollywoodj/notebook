@@ -6,6 +6,8 @@ export function JumpToDialog({
   notes,
   notebooks,
   tags,
+  templates = [],
+  trashed = [],
   mode = "all",
   onClose,
   onSelect,
@@ -13,6 +15,8 @@ export function JumpToDialog({
   notes: { id: string; title: string; notebook_name: string }[];
   notebooks: { id: string; name: string }[];
   tags: { id: string; name: string }[];
+  templates?: { id: string; title: string }[];
+  trashed?: { id: string; title: string }[];
   mode?: "all" | "notebook" | "tag";
   onClose: () => void;
   onSelect: (target: JumpTarget) => void;
@@ -23,8 +27,8 @@ export function JumpToDialog({
   const kinds: JumpKind[] | undefined =
     mode === "notebook" ? ["notebook"] : mode === "tag" ? ["tag"] : undefined;
   const results = useMemo(
-    () => jumpToMatches(query, notes, notebooks, tags, 12, kinds),
-    [query, notes, notebooks, tags, kinds]
+    () => jumpToMatches(query, notes, notebooks, tags, 12, kinds, templates, trashed),
+    [query, notes, notebooks, tags, kinds, templates, trashed]
   );
 
   useEffect(() => {
@@ -76,7 +80,7 @@ export function JumpToDialog({
                 ? "Go to a notebook"
                 : mode === "tag"
                   ? "Go to a tag"
-                  : "Jump to a note, notebook, or tag"
+                  : "Jump to a note, notebook, tag, template, or trash"
             }
             onChange={(event) => setQuery(event.target.value)}
           />

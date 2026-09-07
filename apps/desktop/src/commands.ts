@@ -21,6 +21,7 @@ import {
   isNoteExpanded,
   toggleNoteExpanded,
   toggleNoteListHidden,
+  toggleSidebarHidden,
 } from "./ui/panes.ts";
 import { type SidebarFlyoutKind } from "./ui/sidebar.ts";
 import { type SnoozePreset } from "./ui/reminders.ts";
@@ -126,7 +127,6 @@ export type CommandContext = {
   deleteStack: (stack: Stack) => void | Promise<void>;
   deleteTag: (tag: { id: string; name: string }) => void | Promise<void>;
   restoreTemplates: () => void | Promise<void>;
-  toggleTheme: () => void;
   collapsedStacks: string[];
   toggleStackCollapsed: (id: string) => void;
   collapseAllStacks: () => void;
@@ -140,6 +140,12 @@ export type CommandContext = {
   openCommandPalette: () => void;
   isReminderCompleted: (id: string) => boolean;
   openGlobalSearch: () => void;
+  focusTagInput: () => void;
+  alwaysOnTop: boolean;
+  toggleAlwaysOnTop: () => void;
+  windowMinimize: () => void;
+  windowMaximize: () => void;
+  toggleSpellCheck: () => void;
 };
 
 export type KeyBinding = {
@@ -162,7 +168,7 @@ const ARROW_LABELS: Record<string, string> = {
   ArrowRight: "→",
 };
 
-const VERBATIM_KEYS = new Set([",", "/", "[", "]", "+", "-", "0", "F11"]);
+const VERBATIM_KEYS = new Set([",", "/", "[", "]", "+", "-", "0", "F11", "'"]);
 
 function keyLabel(key: string): string {
   if (ARROW_LABELS[key]) return ARROW_LABELS[key];
@@ -266,6 +272,13 @@ export const COMMANDS: Command[] = [
     run: (ctx) => ctx.openSettings("shortcuts"),
   },
   {
+    id: "note.addTag",
+    label: "Add a tag",
+    keys: [{ key: "'", mod: true }],
+    enabled: (ctx) => !!ctx.activeNote,
+    run: (ctx) => ctx.focusTagInput(),
+  },
+  {
     id: "find.inNote",
     label: "Find…",
     keys: [{ key: "f", mod: true }],
@@ -350,6 +363,45 @@ export const COMMANDS: Command[] = [
     run: (ctx) => ctx.persistPaneLayout(toggleNoteListHidden(ctx.paneLayout)),
   },
   {
+    id: "view.toggleSidebar",
+    label: (ctx) => (ctx.paneLayout.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"),
+    run: (ctx) => {
+      ctx.closeSidebarFlyout();
+      ctx.persistPaneLayout(toggleSidebarHidden(ctx.paneLayout));
+    },
+  },
+  {
+    id: "view.statusBar",
+    label: (ctx) =>
+      ctx.editorChrome.statusBarHidden ? "Show Status Bar" : "Hide Status Bar",
+    run: (ctx) =>
+      ctx.persistEditorChrome({
+        ...ctx.editorChrome,
+        statusBarHidden: !ctx.editorChrome.statusBarHidden,
+      }),
+  },
+  {
+    id: "edit.spellCheck",
+    label: (ctx) => (ctx.prefs.spell_check ? "Disable Spell Check" : "Enable Spell Check"),
+    run: (ctx) => ctx.toggleSpellCheck(),
+  },
+  {
+    id: "window.minimize",
+    label: "Minimize",
+    keys: [{ key: "m", mod: true }],
+    run: (ctx) => ctx.windowMinimize(),
+  },
+  {
+    id: "window.maximize",
+    label: "Zoom",
+    run: (ctx) => ctx.windowMaximize(),
+  },
+  {
+    id: "window.alwaysOnTop",
+    label: (ctx) => (ctx.alwaysOnTop ? "Don't Keep on Top" : "Keep on Top"),
+    run: (ctx) => ctx.toggleAlwaysOnTop(),
+  },
+  {
     id: "view.expandNote",
     label: (ctx) => (isNoteExpanded(ctx.paneLayout) ? "Restore Panes" : "Expand Note"),
     keys: [{ key: "ArrowRight", mod: true, alt: true }],
@@ -377,12 +429,7 @@ export const COMMANDS: Command[] = [
         outlineOpen: !ctx.editorChrome.outlineOpen,
       }),
   },
-  {
-    id: "view.theme",
-    label: (ctx) => (ctx.prefs.theme === "dark" ? "Use Light Theme" : "Use Dark Theme"),
-    run: (ctx) => ctx.toggleTheme(),
-  },
-  {
+{
     id: "view.zoomIn",
     label: "Zoom In",
     keys: [
@@ -502,7 +549,6 @@ const PALETTE_LABELS: Record<string, string> = {
   "note.newFromTemplate": "Browse templates",
   "note.print": "Print note",
   "note.email": "Email note…",
-  "view.theme": "Toggle theme",
   "view.focusMode": "Focus mode",
   "nav.back": "Go back",
   "nav.forward": "Go forward",
@@ -524,7 +570,6 @@ export const PALETTE_ORDER: string[] = [
   "note.newFromTemplate",
   "note.print",
   "note.email",
-  "view.theme",
   "view.focusMode",
   "nav.back",
   "nav.forward",

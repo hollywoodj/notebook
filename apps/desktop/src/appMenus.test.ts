@@ -24,7 +24,6 @@ function stubMenu(overrides: Partial<AppMenuContext> = {}): AppMenuContext {
     paneLayout: defaultPaneLayout(),
     editorChrome: defaultEditorChrome(),
     prefs: {
-      theme: "light",
       confirm_delete: true,
     } as AppMenuContext["prefs"],
     showInfo: false,
@@ -91,7 +90,6 @@ function stubMenu(overrides: Partial<AppMenuContext> = {}): AppMenuContext {
     deleteStack: noop,
     deleteTag: noop,
     restoreTemplates: noop,
-    toggleTheme: noop,
     collapsedStacks: [],
     toggleStackCollapsed: noop,
     collapseAllStacks: noop,
@@ -105,6 +103,7 @@ function stubMenu(overrides: Partial<AppMenuContext> = {}): AppMenuContext {
     openCommandPalette: noop,
     isReminderCompleted: () => false,
     openGlobalSearch: noop,
+    focusTagInput: noop,
     closeSidebarFlyout: noop,
     revealNoteList: noop,
     tags: [],
@@ -125,6 +124,11 @@ function stubMenu(overrides: Partial<AppMenuContext> = {}): AppMenuContext {
     collapseAllListGroups: noop,
     expandAllListGroups: noop,
     canCollapseListGroups: false,
+    alwaysOnTop: false,
+    toggleAlwaysOnTop: noop,
+    windowMinimize: noop,
+    windowMaximize: noop,
+    toggleSpellCheck: noop,
     ...overrides,
   };
 }
@@ -172,6 +176,7 @@ describe("buildMenuBar", () => {
     assert.equal(viewLabels.includes("Collapse Sidebar to Icons"), false);
     assert.equal(viewLabels.includes("Hide Attachments"), true);
     assert.equal(viewLabels.includes("Show Note Outline"), true);
+    assert.equal(viewLabels.includes("Hide Status Bar"), true);
     assert.equal(viewLabels.includes("Back"), true);
     assert.equal(viewLabels.includes("Forward"), true);
   });
@@ -306,5 +311,21 @@ describe("buildContextMenu", () => {
     assert.equal(labels(file.items).includes("Email Note…"), true);
     assert.equal(labels(view.items).includes("Command Palette…"), true);
     assert.equal(labels(note.items).includes("Mark Reminder Done"), true);
+  });
+
+  it("exposes spell check, window controls, and keep-on-top", () => {
+    const groups = buildMenuBar(
+      stubMenu({
+        alwaysOnTop: true,
+        prefs: { confirm_delete: true, spell_check: true } as AppMenuContext["prefs"],
+      })
+    );
+    const edit = groups.find((group) => group.label === "Edit");
+    const windowMenu = groups.find((group) => group.label === "Window");
+    assert.ok(edit && windowMenu);
+    assert.equal(labels(edit.items).includes("Disable Spell Check"), true);
+    assert.equal(labels(windowMenu.items).includes("Minimize"), true);
+    assert.equal(labels(windowMenu.items).includes("Zoom"), true);
+    assert.equal(labels(windowMenu.items).includes("Don't Keep on Top"), true);
   });
 });
