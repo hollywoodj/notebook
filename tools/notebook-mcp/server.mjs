@@ -30,9 +30,12 @@ import {
 } from "./notes.mjs";
 import {
   OVERVIEW_NOTE_TITLE,
+  LEGACY_OVERVIEW_NOTE_TITLE,
   OVERVIEW_FILES,
   isDevProject,
   isProjectNoteTitle,
+  projectNoteTitle,
+  projectNameFromTitle,
   buildIdeasZoneHtml,
   buildReferenceZoneHtml,
   parseOverviewZones,
@@ -184,7 +187,7 @@ async function resolveNoteRef(store, { note_id, title }) {
 
 const DEV_LOG_SEED_MD = `This note is Claude Code's and James's shared catch-all: every project that hasn't been given its own note lives here as a "## ProjectName" section, holding "### Bugs", "### Future Improvements", and "### Architecture Reviews" subsections (reviews newest first). \`update_backlog\` / \`add_report\` (the Notebook MCP server's tools) create sections and subsections on demand.
 
-Once a project is busy enough to want its own note, run \`enable_project\` - it moves that project's whole section out of here into a dedicated note titled with just the project's name (\`disable_project\` folds it back in, never permanently deleting anything). \`list_projects\` shows every project known here or holding its own note, with its enabled state.`;
+Once a project is busy enough to want its own note, run \`enable_project\` - it moves that project's whole section out of here into a dedicated note titled \`Dev: ProjectName\` (\`disable_project\` folds it back in, never permanently deleting anything). \`list_projects\` shows every project known here or holding its own note, with its enabled state.`;
 
 /** Dev Log, if it currently exists - never creates it. Used by pure reads and
  * by enable_project, which must not conjure Dev Log into existence just to
@@ -218,17 +221,38 @@ async function resolveDevLogNoteId(store) {
   return created.id;
 }
 
-/** The project's own note, if one currently exists in the scoped notebook (an "enabled" project). */
+/** The project's own note, if one currently exists in the scoped notebook (an
+ * "enabled" project). Resolution order, first hit wins:
+ *   (a) config cache under `project` - accepts the current `Dev: ` title, the
+ *       legacy bare title, or a case-insensitive match of either (a cached id
+ *       whose live title has drifted from all of those is treated as stale);
+ *   (b) exact match on the current `Dev: ProjectName` title;
+ *   (c) case-insensitive scan for the current title - project names come from
+ *       the cwd folder name (e.g. folder `notebook`), which won't case-match
+ *       a human-cased note title (`Dev: Notebook`);
+ *   (d) TRANSITIONAL legacy fallback for notebooks not yet migrated to the
+ *       `Dev: ` prefix: exact match on the bare project name, then a
+ *       case-insensitive scan for a bare title match. */
 async function findOwnProjectNote(store, project) {
   const config = loadConfig();
+  const wantTitle = projectNoteTitle(project);
   const cachedId = config.projectNotes && config.projectNotes[project];
   if (cachedId) {
     const note = await store.getNote(cachedId);
-    if (note && !note.deleted_at && note.notebook_id === NOTEBOOK_ID && note.title === project) {
+    if (
+      note &&
+      !note.deleted_at &&
+      note.notebook_id === NOTEBOOK_ID &&
+      [wantTitle, project].some(
+        (t) => note.title === t || note.title.toLowerCase() === t.toLowerCase()
+      )
+    ) {
       return note;
     }
   }
-  const found = await store.findByExactTitle(project);
+
+  // (b) exact match on "Dev: ProjectName"
+  const found = await store.findByExactTitle(wantTitle);
   if (found) {
     const note = await getNoteScoped(store, found.id);
     if (!note.deleted_at) {
@@ -236,6 +260,36 @@ async function findOwnProjectNote(store, project) {
       return note;
     }
   }
+
+  // (c) case-insensitive scan for "Dev: ProjectName"
+  const notes = await store.listNotes();
+  const ciMatch = notes.find((n) => n.title.toLowerCase() === wantTitle.toLowerCase());
+  if (ciMatch) {
+    const note = await getNoteScoped(store, ciMatch.id);
+    if (!note.deleted_at) {
+      cacheProjectNoteId(project, note.id);
+      return note;
+    }
+  }
+
+  // (d) transitional: legacy bare-title match, exact then case-insensitive.
+  const legacyFound = await store.findByExactTitle(project);
+  if (legacyFound) {
+    const note = await getNoteScoped(store, legacyFound.id);
+    if (!note.deleted_at) {
+      cacheProjectNoteId(project, note.id);
+      return note;
+    }
+  }
+  const legacyCiMatch = notes.find((n) => n.title.toLowerCase() === project.toLowerCase());
+  if (legacyCiMatch) {
+    const note = await getNoteScoped(store, legacyCiMatch.id);
+    if (!note.deleted_at) {
+      cacheProjectNoteId(project, note.id);
+      return note;
+    }
+  }
+
   return null;
 }
 
@@ -330,16 +384,23 @@ function diffSyncState(prevSync, statResults) {
   return changed;
 }
 
-/** Dev - Overview, if it currently exists - never creates it. */
+/** Dev: Overview, if it currently exists - never creates it. Tries the
+ * current title first, then LEGACY_OVERVIEW_NOTE_TITLE as a transitional
+ * fallback for notebooks not yet migrated to the `Dev: ` prefix. */
 async function findOverviewNote(store) {
   const config = loadConfig();
   if (config.overviewNoteId) {
     const note = await store.getNote(config.overviewNoteId);
-    if (note && !note.deleted_at && note.notebook_id === NOTEBOOK_ID && note.title === OVERVIEW_NOTE_TITLE) {
+    if (
+      note &&
+      !note.deleted_at &&
+      note.notebook_id === NOTEBOOK_ID &&
+      (note.title === OVERVIEW_NOTE_TITLE || note.title === LEGACY_OVERVIEW_NOTE_TITLE)
+    ) {
       return note;
     }
   }
-  const found = await store.findByExactTitle(OVERVIEW_NOTE_TITLE);
+  const found = (await store.findByExactTitle(OVERVIEW_NOTE_TITLE)) || (await store.findByExactTitle(LEGACY_OVERVIEW_NOTE_TITLE));
   if (found) {
     const note = await getNoteScoped(store, found.id);
     if (!note.deleted_at) {
@@ -563,9 +624,11 @@ async function toolSearchNotes(args, store) {
   return textResult(lines.join("\n"));
 }
 
-/** Enumerate every project known to Dev Log or holding its own note: any
- * note in the scoped notebook other than Dev Log IS a project note (that's
- * exactly what enable_project creates, and all this notebook ever holds). */
+/** Enumerate every project known to Dev Log or holding its own note. A note
+ * IS a project note only when isProjectNoteTitle says so - i.e. it carries
+ * the `Dev: ` prefix (see enable_project) and isn't Dev Log or the overview
+ * note. A one-off note with no prefix is not a project, even though it also
+ * isn't Dev Log or the overview. */
 async function listAllProjects(store) {
   const notes = await store.listNotes();
   const devLogSummary = notes.find((n) => n.title === DEV_LOG_TITLE);
@@ -579,7 +642,7 @@ async function listAllProjects(store) {
   for (const n of notes) {
     if (!isProjectNoteTitle(n.title, DEV_LOG_TITLE)) continue;
     const note = await getNoteScoped(store, n.id);
-    rows.push({ name: n.title, enabled: true, block: parseProjectBlock(note.content, PROJECT_NOTE_OFFSET) });
+    rows.push({ name: projectNameFromTitle(n.title), enabled: true, block: parseProjectBlock(note.content, PROJECT_NOTE_OFFSET) });
   }
   rows.sort((a, b) => a.name.localeCompare(b.name));
   return rows;
@@ -718,15 +781,16 @@ async function toolEnableProject(args, store) {
     if (idx !== -1) block = devLog.projects[idx];
   }
 
-  const created = await store.createNote(project, serializeProjectBlock(block, PROJECT_NOTE_OFFSET));
+  const title = projectNoteTitle(project);
+  const created = await store.createNote(title, serializeProjectBlock(block, PROJECT_NOTE_OFFSET));
   cacheProjectNoteId(project, created.id);
 
   if (idx !== -1) {
     devLog.projects.splice(idx, 1);
     await store.updateNote(devLogNote.id, serializeDevLog(devLog));
-    return textResult(`Enabled "${project}": moved its Dev Log section into a new note [id: ${created.id}].`);
+    return textResult(`Enabled "${project}": moved its Dev Log section into a new note titled "${title}" [id: ${created.id}].`);
   }
-  return textResult(`Enabled "${project}": created its own note [id: ${created.id}] (it had no Dev Log section yet).`);
+  return textResult(`Enabled "${project}": created its own note titled "${title}" [id: ${created.id}] (it had no Dev Log section yet).`);
 }
 
 async function toolDisableProject(args, store) {
@@ -823,6 +887,45 @@ async function toolSyncOverview(_args, store) {
   const { note, changed } = await ensureOverviewSynced(store, { force: true });
   const changedMsg = changed.length ? changed.join(", ") : "(none - every file was already up to date)";
   return textResult(`Synced "${OVERVIEW_NOTE_TITLE}" [id: ${note.id}]. Changed: ${changedMsg}.`);
+}
+
+async function toolRenameNote(args, store) {
+  const { note_id, title, new_title } = args;
+  if (!note_id && !title) throw new ToolInputError("Provide note_id or title.");
+  const note = await resolveNoteRef(store, { note_id, title });
+  if (!note) throw new ToolInputError(`No note found matching ${describeRef({ note_id, title })} in the scoped notebook.`);
+
+  if (typeof new_title !== "string") throw new ToolInputError("new_title is required.");
+  const trimmed = new_title.trim();
+  if (!trimmed) throw new ToolInputError("new_title cannot be empty.");
+
+  if (trimmed === note.title) {
+    return textResult(`"${note.title}" is already titled that - no change made.`);
+  }
+
+  const clash = await store.findByExactTitle(trimmed);
+  if (clash && clash.id !== note.id) {
+    throw new ToolInputError(`rename_note: another note is already titled "${trimmed}" [id: ${clash.id}] in the scoped notebook.`);
+  }
+
+  if (note.title === DEV_LOG_TITLE || trimmed === DEV_LOG_TITLE) {
+    throw new ToolInputError(
+      `rename_note: "${DEV_LOG_TITLE}" is structural and resolved by constant - it cannot be renamed away from or to.`
+    );
+  }
+
+  await store.renameNote(note.id, trimmed);
+
+  if (note.title === OVERVIEW_NOTE_TITLE || note.title === LEGACY_OVERVIEW_NOTE_TITLE) {
+    cacheOverviewNoteId(note.id);
+  } else if (isProjectNoteTitle(note.title, DEV_LOG_TITLE)) {
+    const oldName = projectNameFromTitle(note.title);
+    if (oldName) uncacheProjectNoteId(oldName);
+    const newName = projectNameFromTitle(trimmed);
+    if (newName) cacheProjectNoteId(newName, note.id);
+  }
+
+  return textResult(`Renamed "${note.title}" -> "${trimmed}" [id: ${note.id}]`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1000,6 +1103,21 @@ const TOOLS = {
       "Force-regenerate the Reference zone of 'Dev - Overview' from the Dev root markdown files listed in OVERVIEW_FILES right now, regardless of recorded mtimes (creating the note on first use). The Ideas zone is always left byte-identical. Reports which files' mirrored content changed since the last sync.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     handler: toolSyncOverview,
+  },
+  rename_note: {
+    description:
+      "Rename a note in the scoped notebook. Provide note_id or the note's exact current title to find it (scoping is enforced the same as every other tool). No-op with a plain message if new_title already matches the current title. Refuses if another note in the scoped notebook already holds new_title, or if the rename touches 'Dev Log' on either side (that title is structural and resolved by constant, not renameable). If the renamed note was the project or overview note, the id cache is updated to follow the new title. The app keeps note revision history, so a rename is recoverable even if it turns out to be a mistake.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        note_id: { type: "string", description: "Note UUID to rename." },
+        title: { type: "string", description: "Exact current title (used to find the note if note_id is omitted)." },
+        new_title: { type: "string", description: "New title for the note." },
+      },
+      required: ["new_title"],
+      additionalProperties: false,
+    },
+    handler: toolRenameNote,
   },
 };
 

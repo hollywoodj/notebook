@@ -23,29 +23,34 @@ describe("checkboxShortcutKind", () => {
 });
 
 describe("note list and checkbox commands", () => {
-  it("groups bullets, numbers, and checklist together and omits the extra checkbox control", () => {
+  it("keeps lists on the primary bar and Insert checkbox off the Format menu", () => {
+    assert.match(editorSource, /btn\(\s*"Insert"/);
+    assert.match(editorSource, /btn\("Undo"/);
+    assert.match(editorSource, /btn\("Redo"/);
+    assert.match(editorSource, /"More formatting"/);
     const bullets = editorSource.indexOf('"Bulleted list"');
     const numbers = editorSource.indexOf('"Numbered list"');
     const checklist = editorSource.indexOf('"Checklist"');
-    const checkbox = editorSource.indexOf('"Checkbox"');
-    const align = editorSource.indexOf('"Align left"');
-    const quote = editorSource.indexOf('"Quote"');
+    const checkboxTitle = editorSource.indexOf('"Checkbox"');
     assert.ok(bullets > 0);
     assert.ok(numbers > bullets);
     assert.ok(checklist > numbers);
-    assert.equal(checkbox, -1);
-    assert.ok(align > checklist);
-    assert.ok(quote > align);
+    assert.equal(checkboxTitle, -1);
     assert.match(editorSource, /toolbar-list-group/);
     assert.match(editorSource, /toggleTaskList/);
     assert.match(editorSource, /InlineCheckbox/);
-    assert.match(editorSource, /toolbar-overflow/);
+    assert.match(editorSource, /INSERT_MENU_ITEMS/);
+    assert.match(editorSource, /MORE_FORMAT_ITEMS/);
+    assert.match(editorSource, /slash-insert-menu/);
+    assert.match(editorSource, /selection-toolbar/);
     assert.match(editorSource, /setFontFamily/);
     assert.match(editorSource, /Open link/);
   });
 
   it("exposes checklist, quote, code, and justify in Format without a redundant checkbox item", () => {
-    assert.match(menuSource, /label: "Checklist"/);
+    const commandsSource = readFileSync(new URL("../commands.ts", import.meta.url), "utf8");
+    assert.match(commandsSource, /label: "Checklist"/);
+    assert.match(menuSource, /commandItem\("format.taskList"/);
     assert.equal(menuSource.includes('label: "Insert Checkbox"'), false);
     assert.match(menuSource, /label: "Quote"/);
     assert.match(menuSource, /label: "Code Block"/);
@@ -53,6 +58,7 @@ describe("note list and checkbox commands", () => {
     assert.match(menuSource, /label: "Justify"/);
     assert.match(menuSource, /label: "Superscript"/);
     assert.match(menuSource, /label: "Callout"/);
+    assert.match(menuSource, /action: "uncheckAll"/);
     assert.equal(appSource.includes("Checkbox List"), false);
   });
 

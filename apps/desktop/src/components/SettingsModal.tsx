@@ -1,3 +1,4 @@
+import { LogoMark } from "./LogoMark";
 import { ReactNode, useEffect, useState } from "react";
 import { Account, Notebook, Preferences } from "../api";
 import { Icon } from "./Icons";
@@ -639,7 +640,7 @@ export function SettingsModal({
 
             {section === "about" && (
               <div className="about-panel">
-                <div className="logo-mark large">N</div>
+                <LogoMark large />
                 <h3>Notebook</h3>
                 <p>Version {version}</p>
                 <p className="muted">

@@ -32,6 +32,9 @@ import {
  * uses a similar grace period. */
 export const SIDEBAR_FLYOUT_CLOSE_DELAY = 220;
 
+/** Require a deliberate hover before sliding the panel out. */
+export const SIDEBAR_FLYOUT_OPEN_DELAY = 300;
+
 export interface SidebarFlyoutState {
   flyout: SidebarFlyout;
   pinned: boolean;
@@ -63,6 +66,7 @@ export function createSidebarFlyout({
   };
 
   let closeHandle: number | null = null;
+  let openHandle: number | null = null;
   const listeners = new Set<() => void>();
 
   function notify(): void {
@@ -109,19 +113,31 @@ export function createSidebarFlyout({
     closeHandle = null;
   }
 
-  /** Hover previews a section unless a click already pinned one open. */
+  function cancelOpen(): void {
+    if (openHandle === null) return;
+    clock.clearTimeout(openHandle);
+    openHandle = null;
+  }
+
+  /** Briefly hovering an icon should not open or switch a panel. */
   function preview(kind: SidebarFlyoutKind): void {
     cancelClose();
-    const next = sidebarFlyoutAfterHover(state.flyout, state.pinned, kind);
-    setState({
-      flyout: next.flyout,
-      pinned: next.pinned,
-      ...withFilterResetIfSectionChanged(next.flyout),
-    });
+    cancelOpen();
+    if (state.pinned || state.flyout === kind) return;
+    openHandle = clock.setTimeout(() => {
+      openHandle = null;
+      const next = sidebarFlyoutAfterHover(state.flyout, state.pinned, kind);
+      setState({
+        flyout: next.flyout,
+        pinned: next.pinned,
+        ...withFilterResetIfSectionChanged(next.flyout),
+      });
+    }, SIDEBAR_FLYOUT_OPEN_DELAY);
   }
 
   /** Click pins a preview, switches sections, or toggles the pinned one shut. */
   function open(kind: SidebarFlyoutKind): void {
+    cancelOpen();
     cancelClose();
     const next = sidebarFlyoutAfterClick(state.flyout, state.pinned, kind);
     if (!next.flyout) {
@@ -140,6 +156,7 @@ export function createSidebarFlyout({
    * that, a menu opened within the grace period is closed again by a timer
    * the user has already stopped interacting with. */
   function reveal(kind: SidebarFlyoutKind): void {
+    cancelOpen();
     cancelClose();
     setState({ flyout: kind, pinned: true });
   }
@@ -147,6 +164,7 @@ export function createSidebarFlyout({
   /** Reveal a section with its filter box already open (the caller focuses
    * the input - this store owns no DOM). */
   function openFilter(kind: SidebarFlyoutKind): void {
+    cancelOpen();
     cancelClose();
     setState({ flyout: kind, pinned: true, filterOpen: true });
   }
@@ -173,6 +191,7 @@ export function createSidebarFlyout({
   /** Pointer left an unpinned panel: close it after the grace period. A
    * pinned panel stays until it is dismissed explicitly. */
   function scheduleClose(): void {
+    cancelOpen();
     cancelClose();
     if (state.pinned) return;
     closeHandle = clock.setTimeout(() => {
@@ -182,6 +201,7 @@ export function createSidebarFlyout({
   }
 
   function close(): void {
+    cancelOpen();
     cancelClose();
     setState({ flyout: null, pinned: false, filter: "", filterOpen: false });
   }
@@ -189,6 +209,7 @@ export function createSidebarFlyout({
   /** For the unmount effect - a timer that fires after teardown would set
    * state on a dead component. */
   function dispose(): void {
+    cancelOpen();
     cancelClose();
   }
 

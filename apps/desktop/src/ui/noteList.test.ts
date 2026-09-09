@@ -141,9 +141,9 @@ describe("parsePaneLayout", () => {
     assert.equal(noteIdByOffset(notes, "a", 3), "d");
     assert.equal(noteIdByOffset(notes, "b", -8), "a");
     assert.equal(noteIdByOffset(notes, null, -1), "d");
-    assert.equal(listCountLabel(1, 1), "1 note");
-    assert.equal(listCountLabel(5, 12), "5 notes of 12");
-    assert.equal(listCountLabel(0, 0), "0 notes");
+    assert.equal(listCountLabel(1, 1), "1");
+    assert.equal(listCountLabel(5, 12), "5 of 12");
+    assert.equal(listCountLabel(0, 0), "0");
     assert.equal(listCountLabel(0, 0, false), "");
     assert.equal(listCountLabel(3, 3, false), "");
     assert.equal(navCountLabel(undefined), "");
@@ -171,9 +171,9 @@ describe("parsePaneLayout", () => {
         visible: 0,
         total: 0,
         known: 12,
-        lastLabel: "0 notes",
+        lastLabel: "0",
       }),
-      "12 notes"
+      "12"
     );
     assert.equal(
       displayedListCount({
@@ -181,9 +181,9 @@ describe("parsePaneLayout", () => {
         visible: 0,
         total: 0,
         known: 12,
-        lastLabel: "0 notes",
+        lastLabel: "0",
       }),
-      "12 notes"
+      "12"
     );
     assert.equal(
       displayedListCount({
@@ -192,14 +192,14 @@ describe("parsePaneLayout", () => {
         total: 0,
         known: 0,
       }),
-      "0 notes"
+      "0"
     );
     assert.equal(
       displayedListCount({
         loaded: false,
         visible: 0,
         total: 0,
-        lastLabel: "0 notes",
+        lastLabel: "0",
       }),
       ""
     );

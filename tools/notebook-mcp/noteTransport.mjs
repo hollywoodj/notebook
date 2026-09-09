@@ -121,6 +121,15 @@ export function httpNoteStore(apiBase, notebookId, requestTimeoutMs = 10_000) {
     return updated;
   };
 
+  store.renameNote = async (id, title) => {
+    const updated = await fetchJson(`/api/v1/notes/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({ title }),
+    });
+    store.wrote = true;
+    return updated;
+  };
+
   store.softDeleteNote = async (id) => {
     await fetchJson(`/api/v1/notes/${id}`, { method: "DELETE" });
     store.wrote = true;

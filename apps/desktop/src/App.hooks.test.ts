@@ -117,9 +117,9 @@ describe("Evernote sidebar chrome", () => {
     assert.equal(appSource.includes('title={navIconTitle("Tags"'), false);
     assert.equal(appSource.includes('title={navIconTitle("Shortcuts"'), false);
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
-    assert.match(styles, /animation: sidebar-flyout-in 80ms/);
+    assert.match(styles, /animation: sidebar-flyout-in 200ms/);
     assert.match(styles, /\.sidebar-flyout::before/);
-    assert.equal(styles.includes("translateX(-6px)"), false);
+    assert.match(styles, /transform: translateX\(-100%\)/);
   });
 
   it("keeps tags out of the nav list now that they have their own panel", () => {
@@ -292,7 +292,7 @@ describe("menu bar, sidebar icons, and OmniClone", () => {
     const sidebarSource = readFileSync(new URL("./ui/sidebar.ts", import.meta.url), "utf8");
     const panesSource = readFileSync(new URL("./ui/panes.ts", import.meta.url), "utf8");
     assert.match(sidebarSource, /export const SIDEBAR_NAV_ICON_SIZE = 20/);
-    assert.match(panesSource, /export const SIDEBAR_RAIL_WIDTH = 56/);
+    assert.match(panesSource, /export const SIDEBAR_RAIL_WIDTH = 96/);
     assert.match(appSource, /Icon\.Notes size=\{SIDEBAR_NAV_ICON_SIZE\}/);
     assert.match(styles, /\.app-menu-bar \{[\s\S]*height: 22px/);
     assert.match(styles, /\.app-menu-trigger \{[\s\S]*height: 22px/);
@@ -327,5 +327,10 @@ describe("menu bar, sidebar icons, and OmniClone", () => {
     assert.match(editorSource, /Text style/);
     assert.match(editorSource, /NOTE_STYLE_OPTIONS/);
     assert.match(menuSource, /Large header/);
+    assert.match(editorSource, /INSERT_MENU_ITEMS/);
+    assert.match(editorSource, /slash-insert-menu/);
+    assert.match(editorSource, /selection-toolbar/);
+    assert.match(appSource, /Note history/);
+    assert.match(appSource, /Print…/);
   });
 });

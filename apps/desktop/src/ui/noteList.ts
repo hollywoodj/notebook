@@ -248,7 +248,7 @@ export function formatRelativeTime(iso: string, now = new Date()): string {
 
 export function listCountLabel(visible: number, total: number, loaded = true): string {
   if (!loaded) return "";
-  const count = visible === 1 ? "1 note" : `${visible} notes`;
+  const count = String(visible);
   if (visible === total || total <= 0) return count;
   return `${count} of ${total}`;
 }
@@ -274,7 +274,7 @@ export function displayedListCount(args: {
   }
   if (known != null) return listCountLabel(known, known, true);
   const last = args.lastLabel || "";
-  return last === "0 notes" ? "" : last;
+  return last === "0" ? "" : last;
 }
 
 export function knownViewNoteCount(

@@ -8,7 +8,30 @@
 
 import { escapeHtml, decodeEntities, findAllBalancedBlocks, parseTaskListItems, renderTaskList, markdownToHtml } from "./format.mjs";
 
-export const OVERVIEW_NOTE_TITLE = "Dev - Overview";
+export const OVERVIEW_NOTE_TITLE = "Dev: Overview";
+
+/** Transitional fallback: the overview note's title before the "Dev: " prefix
+ * migration. Notebooks not yet migrated (or the id cache missing) still
+ * resolve against this so read/sync tools keep working until renamed. */
+export const LEGACY_OVERVIEW_NOTE_TITLE = "Dev - Overview";
+
+/** Prefix every note that mirrors a MAINTAINED thing (a project, the global
+ * overview) gets in its title. One-off notes (a book summary, a reference
+ * dump) get no prefix. */
+export const PROJECT_TITLE_PREFIX = "Dev: ";
+
+/** The note title for a project's dedicated note. */
+export function projectNoteTitle(project) {
+  return `${PROJECT_TITLE_PREFIX}${project}`;
+}
+
+/** The project name encoded in a `Dev: `-prefixed title, or null if `title`
+ * doesn't start with the prefix. */
+export function projectNameFromTitle(title) {
+  return typeof title === "string" && title.startsWith(PROJECT_TITLE_PREFIX)
+    ? title.slice(PROJECT_TITLE_PREFIX.length)
+    : null;
+}
 
 /** The Dev root files mirrored into the Reference zone, in mirror order. */
 export const OVERVIEW_FILES = [
@@ -49,12 +72,20 @@ export function isDevProject(project) {
 }
 
 /** The predicate every "which notes are project notes" call site shares: a
- * note titled `devLogTitle` (the Dev Log catch-all) or OVERVIEW_NOTE_TITLE
- * (the global note) is never itself a project. Used by list_projects and by
- * read_backlog/read_reports when no project filter is given, so
- * "Dev - Overview" can never appear as a phantom project. */
+ * note is a project note only when it carries the `Dev: ` prefix AND is not
+ * `devLogTitle` (the Dev Log catch-all) AND is not the overview note (current
+ * or legacy title). This is NOT "anything that isn't Dev Log or the
+ * overview" - a one-off note with no prefix (a book summary, a reference
+ * dump) is deliberately excluded, even though it isn't Dev Log or the
+ * overview either. */
 export function isProjectNoteTitle(title, devLogTitle) {
-  return title !== devLogTitle && title !== OVERVIEW_NOTE_TITLE;
+  return (
+    typeof title === "string" &&
+    title.startsWith(PROJECT_TITLE_PREFIX) &&
+    title !== devLogTitle &&
+    title !== OVERVIEW_NOTE_TITLE &&
+    title !== LEGACY_OVERVIEW_NOTE_TITLE
+  );
 }
 
 // ---------------------------------------------------------------------------

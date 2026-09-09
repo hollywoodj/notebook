@@ -7,7 +7,7 @@ No npm dependencies, no build step, no TypeScript. `server.mjs` hand-rolls the
 MCP JSON-RPC-over-stdio protocol using Node's built-in `fetch`; `format.mjs`
 hand-rolls the HTML<->Markdown conversion (including GFM pipe tables);
 `notes.mjs` hand-rolls the Dev Log / per-project note structural parsing;
-`overview.mjs` hand-rolls the `Dev - Overview` global note's zone
+`overview.mjs` hand-rolls the `Dev: Overview` global note's zone
 parsing/generation; `sqlite.mjs` hand-rolls the offline SQLite path using
 Node's **built-in** `node:sqlite`. Node 24+ required.
 
@@ -89,7 +89,7 @@ caches resolved ids and the last-known database path:
 ```
 
 `overviewSync` records the `mtimeMs`/`size` seen for each of the Dev root
-files listed in OVERVIEW_FILES at the last successful sync of `Dev - Overview` - that's what makes the
+files listed in OVERVIEW_FILES at the last successful sync of `Dev: Overview` - that's what makes the
 sync mtime-driven rather than re-reading and re-diffing full file contents on
 every call. A file absent from `overviewSync` is treated as missing (or new).
 
@@ -110,18 +110,47 @@ claude mcp add --scope user notebook -- node "C:\Users\James\Dev\Apps\notebook\t
 **Restart Claude Code** after registering (or after any server.mjs change)
 for it to pick up the server / reload the tool list.
 
+## Note titles: the `Dev: ` prefix
+
+The rule (James's convention): a note that mirrors something **maintained** -
+a project's own note, the global overview - is titled with a `Dev: ` prefix
+(`Dev: Headquarters`, `Dev: Overview`). A **one-off** note - a book summary,
+a reference dump, anything that isn't tracking an ongoing thing - gets a
+plain title with no prefix. `Dev Log` is exempt from the prefix entirely,
+not because it's a one-off but because it's structural: it's resolved by the
+hardcoded `DEV_LOG_TITLE` constant rather than by the `Dev: ` convention, so
+don't "fix" it into `Dev: Log` - that would break resolution.
+
+This notebook genuinely holds unprefixed one-off notes now, alongside its
+structured notes. `isProjectNoteTitle` (`overview.mjs`) is the predicate
+every "which notes are projects" call site shares: a note counts as a
+project note only if it carries the `Dev: ` prefix and isn't `Dev Log` or
+the overview note (current or legacy title). A one-off note is deliberately
+excluded even though it also isn't `Dev Log` or the overview - otherwise it
+would show up in `list_projects` as a phantom project. `list_notes` has no
+such filter, so it shows one-off notes like any other.
+
 ## The note model: Dev Log + one opt-in note per project
 
-This notebook holds exactly two kinds of note: the **`Dev Log`** catch-all,
-and one note per **enabled** project, titled with just the project's name
-(e.g. `Headquarters`, `BBC`). A project's note holds *everything* for that
-project - bugs, future improvements, and architecture reviews - there's no
-separate reviews note.
+Among its structured notes, this notebook holds exactly two kinds: the
+**`Dev Log`** catch-all, and one note per **enabled** project, titled
+`Dev: <ProjectName>` (e.g. `Dev: Headquarters`, `Dev: BBC`). A project's note
+holds *everything* for that project - bugs, future improvements, and
+architecture reviews - there's no separate reviews note.
 
-**Routing**, applied by every backlog/report tool: if a note titled exactly
-`<project>` exists in the scoped notebook, that note is the target;
-otherwise the project's section inside `Dev Log` is (created on demand, and
-`Dev Log` itself is created on first write).
+**Routing**, applied by every backlog/report tool, via `findOwnProjectNote`:
+first the config cache (`config.local.json`'s `projectNotes`, accepting
+either the current or legacy title, exact or case-insensitive - a cached id
+whose live title has drifted from all of those is treated as stale); then an
+exact match on `Dev: <ProjectName>`; then a **case-insensitive** match on
+that same title, because a project name defaults to the current working
+directory's *folder name* (e.g. folder `notebook`), which won't case-match a
+human-cased note title (`Dev: Notebook`); then, as a **transitional legacy
+fallback** for notebooks not yet migrated to the `Dev: ` prefix, an exact
+match on the bare project name, then a case-insensitive match on that. First
+hit wins and re-caches; no match falls through to the project's section
+inside `Dev Log` (created on demand, and `Dev Log` itself is created on
+first write).
 
 Both shapes use the exact same three sections - Bugs, Future Improvements,
 Architecture Reviews - just at different heading levels, since a
@@ -166,11 +195,15 @@ Architecture Reviews entries are always **newest-first** (each new entry is
 unshifted). Sections and subsections are created on demand; a new project
 section is appended to the end of Dev Log.
 
-## The global `Dev - Overview` note
+## The global `Dev: Overview` note
 
 `Dev` is a **reserved project name** meaning "the global note," not an
-ordinary project. It resolves to a single note titled exactly `Dev - Overview`
-in the scoped notebook, split into two zones:
+ordinary project. It resolves to a single note titled exactly `Dev: Overview`
+in the scoped notebook (`OVERVIEW_NOTE_TITLE` in `overview.mjs`) - with
+`Dev - Overview` (`LEGACY_OVERVIEW_NOTE_TITLE`) kept as a transitional
+fallback in `findOverviewNote`, so a notebook not yet migrated to the
+`Dev: ` prefix still resolves until the note is renamed. The note is split
+into two zones:
 
 - **Ideas** (`<h2>Ideas</h2>` + a single flat task list) - a status board for
   global/cross-project ideas and conventions to settle. Claude and James both
@@ -208,13 +241,15 @@ Routing for the tools above: `read_backlog`/`update_backlog` with
 `check`/`uncheck` work exactly as elsewhere. `add_report project:"Dev"` is
 refused (architecture reviews belong to a real project), and so are
 `enable_project`/`disable_project` (`Dev` has no Dev Log section to move).
-`Dev - Overview` itself is excluded everywhere a note is treated as a
-per-project note - `list_projects`, `list_notes`, and the no-`project`
-listings in `read_backlog`/`read_reports` never show it as a phantom project.
+`Dev: Overview` itself is excluded everywhere a note is treated as a
+per-project note (per `isProjectNoteTitle` above) - `list_projects` and the
+no-`project` listings in `read_backlog`/`read_reports` never show it as a
+phantom project. `list_notes` isn't filtered at all, so it lists
+`Dev: Overview` (and any one-off notes) same as everything else.
 
-## The 13 tools
+## The 14 tools
 
-1. **`list_notes`** `{}` - lists notes in the scoped notebook (id, title, updated_at). Only ever `Dev Log`, `Dev - Overview`, plus enabled projects' notes.
+1. **`list_notes`** `{}` - lists notes in the scoped notebook (id, title, updated_at). Structurally this is `Dev Log`, `Dev: Overview`, plus enabled projects' notes - but the notebook can also hold plain one-off notes (see the naming convention above), and `list_notes` shows those too, unlike `list_projects`.
 2. **`read_note`** `{ note_id?, title? }` - reads a note as Markdown. One of `note_id`/`title` required; title lookups only search the scoped notebook.
 3. **`write_note`** `{ note_id?, title?, content_markdown, mode?, create_if_missing? }` - creates or updates a note inside the scoped notebook. `mode` is `"replace" | "append" | "prepend"` (default `"append"`).
 4. **`search_notes`** `{ query, limit? }` - full-text search scoped to the notebook; returns title, snippet, id.
@@ -222,11 +257,12 @@ listings in `read_backlog`/`read_reports` never show it as a phantom project.
 6. **`update_backlog`** `{ project, add_bugs?, add_improvements?, check?, uncheck? }` - adds new unchecked items and/or ticks/unticks existing ones (by item number from `read_backlog`, or exact item text). All references are validated before anything is written.
 7. **`read_reports`** `{ project?, limit? }` - reads a project's most recent Architecture Reviews entries, newest first (default `limit: 3`). Omit `project` for the most recent entries across every project.
 8. **`add_report`** `{ project, body_markdown, subtitle? }` - prepends a new dated Architecture Reviews entry for a project (`project: "Dev"` is refused).
-9. **`enable_project`** `{ project }` - gives a project its own note: **moves** (never copies) its Dev Log section into a new note titled with the project name, promoting heading levels. No-op if already enabled; refuses `Dev`.
+9. **`enable_project`** `{ project }` - gives a project its own note: **moves** (never copies) its Dev Log section into a new note titled `Dev: <ProjectName>`, promoting heading levels. No-op if already enabled; refuses `Dev`.
 10. **`disable_project`** `{ project }` - inverse: folds the note's content back into Dev Log as a `## project` section (demoting levels), then soft-deletes the now-empty project note. No-op if not currently enabled; refuses `Dev`.
-11. **`list_projects`** `{}` - every project known to Dev Log or holding its own note, with its enabled state and item counts. Never lists `Dev - Overview`.
-12. **`read_overview`** `{ section? }` - reads the global `Dev - Overview` note, auto-syncing first per the mtime rule above. No `section`: just the Ideas list, the Reference index table, and the list of available section names (never the full ~40-50KB mirror). `section: "STACK.md"` (or `"STACK"`, case-insensitive): just that file's mirrored content as Markdown. `section: "all"`: everything.
+11. **`list_projects`** `{}` - every project known to Dev Log or holding its own note, with its enabled state and item counts. Never lists `Dev: Overview`, and never lists a plain one-off note as a phantom project.
+12. **`read_overview`** `{ section? }` - reads the global `Dev: Overview` note, auto-syncing first per the mtime rule above. No `section`: just the Ideas list, the Reference index table, and the list of available section names (never the full ~40-50KB mirror). `section: "STACK.md"` (or `"STACK"`, case-insensitive): just that file's mirrored content as Markdown. `section: "all"`: everything.
 13. **`sync_overview`** `{}` - forces a Reference-zone regeneration regardless of mtimes; reports which files' mirrored content changed.
+14. **`rename_note`** `{ note_id?, title?, new_title }` - renames a note in the scoped notebook. One of `note_id`/`title` finds the note; refuses an empty `new_title`, refuses a collision with another note's existing title, refuses touching `Dev Log` on either side (it's structural, not renameable), and returns a no-change message if `new_title` already matches. If the renamed note was a project note or the overview note, the config id cache is updated to follow the new title. Recoverable like any other write, via the note's revision history.
 
 For `update_backlog` and `add_report`, `project` defaults to the basename of
 the server process's working directory - which now resolves to `Dev` (the
@@ -264,8 +300,11 @@ node --test        # unit tests for format.mjs / notes.mjs / overview.mjs (no li
 lists, inline formatting, and GFM pipe tables); `notes.mjs` holds the pure
 level-offset parsing/serialization for the Dev Log / per-project note
 structure, plus project-name defaulting; `overview.mjs` holds the pure
-`Dev - Overview` logic (Ideas/Reference zone splitting, heading demotion,
-relative-link flattening, Reference-zone generation); `sqlite.mjs` holds the
-offline SQLite transport (DB path resolution, `strip_html` mirror, note CRUD +
-revisions + FTS search); `server.mjs` wires all of that to the resolved
-transport, the Dev root file statting, and the MCP stdio protocol.
+`Dev: Overview` logic (Ideas/Reference zone splitting, heading demotion,
+relative-link flattening, Reference-zone generation), plus the `Dev: ` title
+convention itself - `projectNoteTitle` (name -> title), `projectNameFromTitle`
+(title -> name, or `null` if unprefixed), and `isProjectNoteTitle`; `sqlite.mjs`
+holds the offline SQLite transport (DB path resolution, `strip_html` mirror,
+note CRUD + rename + revisions + FTS search); `server.mjs` wires all of that
+to the resolved transport, the Dev root file statting, and the MCP stdio
+protocol.

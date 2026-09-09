@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import { htmlToMarkdown } from "../format.mjs";
 import {
   OVERVIEW_NOTE_TITLE,
+  LEGACY_OVERVIEW_NOTE_TITLE,
   isDevProject,
   isProjectNoteTitle,
+  projectNoteTitle,
+  projectNameFromTitle,
   flattenRelativeLinks,
   dropLeadingTitle,
   demoteHeadings,
@@ -222,18 +225,40 @@ test("Dev routing: update_backlog-style edits against Ideas round-trip through p
 // Dev - Overview excluded everywhere a note is treated as a per-project note
 // ---------------------------------------------------------------------------
 
-test("isProjectNoteTitle excludes Dev Log and Dev - Overview, includes ordinary project notes", () => {
-  assert.equal(isProjectNoteTitle("Dev Log", "Dev Log"), false);
-  assert.equal(isProjectNoteTitle(OVERVIEW_NOTE_TITLE, "Dev Log"), false);
-  assert.equal(isProjectNoteTitle("Headquarters", "Dev Log"), true);
-  assert.equal(isProjectNoteTitle("BBC", "Dev Log"), true);
+test("projectNoteTitle prefixes a project name with 'Dev: '", () => {
+  assert.equal(projectNoteTitle("Omni Suite"), "Dev: Omni Suite");
+  assert.equal(projectNoteTitle("notebook"), "Dev: notebook");
 });
 
-test("list_projects-style filtering over a note listing never yields a phantom \"Dev - Overview\" project", () => {
-  const notes = [{ title: "Dev Log" }, { title: OVERVIEW_NOTE_TITLE }, { title: "Headquarters" }, { title: "BBC" }];
+test("projectNameFromTitle strips the prefix, or returns null when it's absent", () => {
+  assert.equal(projectNameFromTitle("Dev: Omni Suite"), "Omni Suite");
+  assert.equal(projectNameFromTitle("Dev: notebook"), "notebook");
+  assert.equal(projectNameFromTitle("Omni Suite"), null); // unprefixed - not a Dev: title
+  assert.equal(projectNameFromTitle("GTD: Getting Things Done (David Allen) - Summary"), null);
+});
+
+test("isProjectNoteTitle only treats Dev:-prefixed titles as project notes - an unprefixed one-off note is never a phantom project", () => {
+  // The bug this fixes: a one-off note (a book summary, a reference dump)
+  // has no "Dev: " prefix and must not be mistaken for a project note just
+  // because it also isn't Dev Log or the overview note.
+  assert.equal(isProjectNoteTitle("GTD: Getting Things Done (David Allen) - Summary", "Dev Log"), false);
+  assert.equal(isProjectNoteTitle("Dev Log", "Dev Log"), false);
+  assert.equal(isProjectNoteTitle(OVERVIEW_NOTE_TITLE, "Dev Log"), false);
+  assert.equal(isProjectNoteTitle(LEGACY_OVERVIEW_NOTE_TITLE, "Dev Log"), false);
+  assert.equal(isProjectNoteTitle("Dev: Omni Suite", "Dev Log"), true);
+});
+
+test("list_projects-style filtering over a note listing never yields a phantom project from an unprefixed one-off note", () => {
+  const notes = [
+    { title: "Dev Log" },
+    { title: OVERVIEW_NOTE_TITLE },
+    { title: "Dev: Headquarters" },
+    { title: "Dev: BBC" },
+    { title: "GTD: Getting Things Done (David Allen) - Summary" },
+  ];
   const projectNotes = notes.filter((n) => isProjectNoteTitle(n.title, "Dev Log"));
   assert.deepEqual(
     projectNotes.map((n) => n.title).sort(),
-    ["BBC", "Headquarters"]
+    ["Dev: BBC", "Dev: Headquarters"]
   );
 });

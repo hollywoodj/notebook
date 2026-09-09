@@ -152,20 +152,27 @@ select:focus-visible {
 }
 
 .logo-mark {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
   background: var(--green);
   color: white;
   display: inline-grid;
   place-items: center;
-  font-weight: 700;
+  margin-inline: auto;
+  flex-shrink: 0;
+}
+
+.logo-mark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .logo-mark.large {
-  width: 56px;
-  height: 56px;
-  font-size: 28px;
+  width: 80px;
+  height: 80px;
+  border-radius: 16px;
   margin: 0 auto;
 }
 
@@ -419,6 +426,9 @@ select:focus-visible {
   top: 22px;
   left: 0;
   width: 268px;
+  max-height: calc(100vh - 60px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 4px;
   background: var(--panel-bg);
   border: 1px solid var(--border);
@@ -511,12 +521,12 @@ select:focus-visible {
 }
 
 /*
- * Evernote’s left sidebar is a 56px icon rail. Labels and counts live in
+ * The left sidebar uses a 96px icon rail to match the reference spacing. Labels and counts live in
  * tooltips and in the notebooks/tags/shortcuts flyout beside the rail.
  * The rail never expands; Hide Sidebar is the way to tuck it away.
  */
 .app-shell.sidebar-rail {
-  grid-template-columns: var(--sidebar-rail-width, 56px) 0 var(--list-width, 320px) 5px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-rail-width, 96px) 0 var(--list-width, 320px) 5px minmax(0, 1fr);
 }
 
 .app-shell.sidebar-rail.sidebar-collapsed {
@@ -524,7 +534,7 @@ select:focus-visible {
 }
 
 .app-shell.sidebar-rail.list-collapsed {
-  grid-template-columns: var(--sidebar-rail-width, 56px) 0 0 0 minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-rail-width, 96px) 0 0 0 minmax(0, 1fr);
 }
 
 .app-shell.sidebar-rail.sidebar-collapsed.list-collapsed {
@@ -532,7 +542,7 @@ select:focus-visible {
 }
 
 .app-shell.sidebar-rail .sidebar {
-  width: var(--sidebar-rail-width, 56px);
+  width: var(--sidebar-rail-width, 96px);
   z-index: 13;
 }
 
@@ -999,7 +1009,7 @@ select:focus-visible {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  animation: sidebar-flyout-in 80ms cubic-bezier(0.2, 0.9, 0.2, 1);
+  animation: sidebar-flyout-in 200ms cubic-bezier(0.2, 0.9, 0.2, 1);
 }
 
 /* Catch the pointer while it crosses the 1px rail border so the close timer
@@ -1015,7 +1025,12 @@ select:focus-visible {
 
 @keyframes sidebar-flyout-in {
   from {
-    opacity: 0;
+    transform: translateX(-100%);
+    clip-path: inset(0 0 0 100%);
+  }
+  to {
+    transform: translateX(0);
+    clip-path: inset(0);
   }
 }
 
@@ -1323,6 +1338,19 @@ select:focus-visible {
   background: var(--list-bg);
 }
 
+.note-list:not(.cards) .note-list-group {
+  padding: 0 8px;
+}
+
+.note-list.titles .note-card {
+  height: 64px;
+  justify-content: center;
+}
+
+.note-list.titles .note-card-extras {
+  display: none;
+}
+
 .note-card {
   width: 100%;
   margin: 0;
@@ -1331,6 +1359,10 @@ select:focus-visible {
   border-bottom: 1px solid var(--border);
   background: transparent;
   padding: 10px 16px 12px;
+  height: 152px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border-radius: 0;
   user-select: none;
 }
@@ -1340,21 +1372,30 @@ select:focus-visible {
 }
 
 .note-card.compact {
+  height: 128px;
   padding: 7px 16px 8px;
 }
 
-.note-card.selected {
-  background: var(--green-soft);
-  border-radius: 6px;
-  border-bottom-color: transparent;
-  box-shadow: inset 3px 0 0 var(--green);
+.note-card.selected,
+.note-card.card-view.selected {
+  background: var(--panel-bg);
+  border-radius: 12px;
+  border-color: transparent;
+  outline: 1px solid #8b87ff;
+  outline-offset: -1px;
+  box-shadow: none;
 }
 
 .note-card.reminder-overdue .note-card-meta {
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--danger);
 }
 
 .note-card.reminder-done .note-card-title {
+  flex-shrink: 0;
   color: var(--text-muted);
 }
 
@@ -1392,7 +1433,7 @@ select:focus-visible {
 }
 
 .note-card-title {
-  font-size: 14px;
+  flex-shrink: 0;  font-size: 14px;
   font-weight: 600;
   line-height: 20px;
   margin-bottom: 2px;
@@ -1414,8 +1455,26 @@ select:focus-visible {
   flex: 1;
 }
 
+.note-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+  min-width: 0;
+  margin-top: auto;
+  height: 30px;
+  padding-top: 8px;
+}
+
+.note-list.titles .note-card-footer {
+  height: 16px;
+  padding-top: 0;
+}
+
 .note-card-date {
   flex-shrink: 0;
+  white-space: nowrap;
   font-size: 12px;
   font-weight: 400;
   line-height: 16px;
@@ -1432,9 +1491,13 @@ select:focus-visible {
 
 .note-card-extras {
   display: flex;
-  flex-wrap: wrap;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  height: 20px;
+  overflow: hidden;
+  white-space: nowrap;
   gap: 6px;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .meta-chip {
@@ -1460,6 +1523,7 @@ select:focus-visible {
 }
 
 .note-card-thumb {
+  flex-shrink: 0;
   height: 72px;
   margin: 4px 0 8px;
   border-radius: 8px;
@@ -1501,6 +1565,8 @@ select:focus-visible {
 }
 
 .note-card-snippet {
+  min-height: 0;
+  flex-shrink: 1;
   font-size: 13px;
   color: var(--text-muted);
   line-height: 18px;
@@ -1518,15 +1584,22 @@ select:focus-visible {
 }
 
 .note-card-tags {
-  margin-top: 8px;
+  min-width: 0;
   display: flex;
+  flex-shrink: 1;
+  height: 22px;
+  overflow: hidden;
+  white-space: nowrap;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .note-card-tags span {
-  background: var(--green-soft);
-  color: var(--green-dark);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--sidebar-hover);
+  color: var(--text-muted);
   font-size: 11px;
   padding: 2px 6px;
   border-radius: 4px;
@@ -1549,7 +1622,7 @@ select:focus-visible {
 }
 
 .note-card.card-view {
-  min-height: 148px;
+  height: 280px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel-bg);
@@ -1749,10 +1822,12 @@ select:focus-visible {
 .editor-toolbar {
   display: flex;
   flex: 0 0 44px;
+  position: relative;
+  z-index: 30;
   gap: 2px;
   flex-wrap: nowrap;
   height: 44px;
-  overflow: hidden;
+  overflow: visible;
   padding: 6px 12px 6px 20px;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
@@ -1868,9 +1943,8 @@ select:focus-visible {
   color: var(--text-muted);
 }
 
-.toolbar-overflow {
+.toolbar-item[data-toolbar-item="more"] {
   margin-left: auto;
-  flex-shrink: 0;
 }
 
 .toolbar-overflow-menu {
@@ -1899,8 +1973,73 @@ select:focus-visible {
   font-size: 12px;
 }
 
-.toolbar-overflow-menu button:hover {
+.toolbar-overflow-menu button:hover,
+.toolbar-overflow-menu button:focus-visible {
   background: var(--green-soft);
+}
+
+.toolbar-overflow-menu .toolbar-overflow-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+.insert-menu {
+  left: 0;
+  right: auto;
+  min-width: 200px;
+}
+
+.slash-insert-menu,
+.selection-toolbar {
+  position: fixed;
+  z-index: 40;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.slash-insert-menu {
+  min-width: 200px;
+  max-height: 280px;
+  overflow: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+}
+
+.slash-insert-menu button {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  border-radius: 6px;
+  padding: 7px 8px;
+  font-size: 12px;
+}
+
+.slash-insert-menu button:hover,
+.slash-insert-menu button.is-active {
+  background: var(--green-soft);
+}
+
+.slash-insert-empty {
+  padding: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.selection-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  transform: translate(-50%, calc(-100% - 8px));
+}
+
+.selection-toolbar .toolbar-btn {
+  width: 28px;
+  height: 28px;
 }
 
 .toolbar-btn {
@@ -4076,7 +4215,7 @@ kbd {
 
 @media (max-width: 960px) {
   .app-shell {
-    grid-template-columns: var(--sidebar-rail-width, 56px) 0 var(--list-width, 260px) 5px minmax(0, 1fr);
+    grid-template-columns: var(--sidebar-rail-width, 96px) 0 var(--list-width, 260px) 5px minmax(0, 1fr);
   }
 }
 
@@ -4392,4 +4531,18 @@ kbd {
 .file-row:hover .icon-btn,
 .file-row.is-selected .icon-btn {
   opacity: 1;
+}
+
+.overflow-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.toolbar-overflow-menu { overscroll-behavior: contain; }
+.editor-toolbar button:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .editor-toolbar, .app-menu-dropdown { animation: none; transition: none; }
 }

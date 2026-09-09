@@ -1004,6 +1004,7 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         },
         {
           label: "Strikethrough",
+          shortcut: "Ctrl/⌘ T",
           disabled: !ctx.activeNote,
           onSelect: () => ctx.runEditorCommand({ type: "strike" }),
         },
@@ -1020,6 +1021,7 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         { type: "separator" },
         {
           label: "Highlight",
+          shortcut: "Ctrl/⌘ ⇧ H",
           disabled: !ctx.activeNote,
           children: [
             ...HIGHLIGHT_COLORS.map((swatch) => ({
@@ -1142,24 +1144,9 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           onSelect: () => ctx.runEditorCommand({ type: "insertToc" }),
         },
         { type: "separator" },
-        {
-          label: "Bulleted List",
-          shortcut: "Ctrl/⌘ ⇧ L",
-          disabled: !ctx.activeNote,
-          onSelect: () => ctx.runEditorCommand({ type: "bulletList" }),
-        },
-        {
-          label: "Numbered List",
-          shortcut: "Ctrl/⌘ ⇧ O",
-          disabled: !ctx.activeNote,
-          onSelect: () => ctx.runEditorCommand({ type: "orderedList" }),
-        },
-        {
-          label: "Checklist",
-          shortcut: "Ctrl/⌘ ⇧ C",
-          disabled: !ctx.activeNote,
-          onSelect: () => ctx.runEditorCommand({ type: "taskList" }),
-        },
+        commandItem("format.bulletList", ctx),
+        commandItem("format.orderedList", ctx),
+        commandItem("format.taskList", ctx),
         {
           label: "Check All Tasks",
           disabled: !ctx.activeNote,
@@ -1168,7 +1155,7 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         {
           label: "Uncheck All Tasks",
           disabled: !ctx.activeNote,
-          onSelect: () => ctx.runEditorCommand({ type: "inlineCheckbox" }),
+          onSelect: () => ctx.runEditorCommand({ type: "tasks", action: "uncheckAll" }),
         },
         { type: "separator" },
         {
@@ -1222,19 +1209,10 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           disabled: !ctx.activeNote,
           onSelect: () => ctx.runEditorCommand({ type: "insertTime" }),
         },
-        {
-          label: "Insert Date and Time",
-          disabled: !ctx.activeNote,
-          onSelect: () => ctx.runEditorCommand({ type: "insertDate" }),
-        },
-        {
-          label: "Insert Time",
-          disabled: !ctx.activeNote,
-          onSelect: () => ctx.runEditorCommand({ type: "insertTime" }),
-        },
         { type: "separator" },
         {
           label: "Remove Formatting",
+          shortcut: "Ctrl/⌘ ⇧ Space",
           disabled: !ctx.activeNote,
           onSelect: () => ctx.runEditorCommand({ type: "clear" }),
         },

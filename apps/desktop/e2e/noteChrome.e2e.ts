@@ -218,3 +218,200 @@ describe("Jump To and notebook search", () => {
     await page.waitForSelector(".search-dialog", { state: "detached", timeout: 5000 });
   });
 });
+
+describe("Evernote formatting toolbar", () => {
+  async function openEditableNote(): Promise<void> {
+    await reset();
+    await page.getByTitle("New note").click();
+    await page.waitForSelector(".title-input", { timeout: 10_000 });
+    await page.locator(".ProseMirror").click();
+    await page.waitForSelector(".editor-toolbar.is-visible", { timeout: 5000 });
+  }
+
+  it("shows Insert, Undo, Redo, and More instead of a kitchen-sink row", async () => {
+    await openEditableNote();
+    assert.equal(await page.getByTitle("Insert").count(), 1);
+    assert.equal(await page.getByTitle("Undo").count(), 1);
+    assert.equal(await page.getByTitle("Redo").count(), 1);
+    assert.equal(await page.getByTitle("More formatting").count(), 1);
+    assert.equal(await page.getByTitle("Large header").count(), 0);
+    assert.equal(await page.getByTitle("Strikethrough").count(), 0);
+  });
+
+  it("keeps the text-style menu above note content and applies a header", async () => {
+    await openEditableNote();
+    await page.keyboard.type("Heading");
+    await page.keyboard.press("Control+a");
+    await page.getByTitle("Text style").click();
+
+    const largeHeader = page.locator('.style-menu-item[data-style="h1"]');
+    await largeHeader.waitFor({ state: "visible" });
+    const box = await largeHeader.boundingBox();
+    assert.ok(box);
+    const menuIsTopmost = await page.evaluate(
+      ({ x, y }) => Boolean(document.elementFromPoint(x, y)?.closest(".style-menu")),
+      { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    );
+    assert.equal(menuIsTopmost, true);
+
+    await largeHeader.click();
+    assert.equal(await page.locator(".ProseMirror h1").innerText(), "Heading");
+  });
+
+  it("lists Checkbox in Insert and Strikethrough in More", async () => {
+    await openEditableNote();
+    await page.getByTitle("Insert").click();
+    await page.waitForSelector(".insert-menu", { timeout: 5000 });
+    const insert = (await page.locator(".insert-menu button").allTextContents()).map((label) =>
+      label.trim()
+    );
+    assert.equal(insert.includes("Checkbox"), true, `Insert: ${insert.join(", ")}`);
+    assert.equal(insert.includes("Table"), true);
+    assert.equal(insert.includes("Divider"), true);
+
+    await page.getByTitle("More formatting").click();
+    await page.waitForSelector(".toolbar-overflow-menu", { timeout: 5000 });
+    const more = (await page.locator(".toolbar-overflow-menu button").allTextContents()).map(
+      (label) => label.trim()
+    );
+    assert.equal(more.includes("Strikethrough"), true, `More: ${more.join(", ")}`);
+    assert.equal(more.includes("Remove formatting"), true);
+    assert.equal(more.includes("Align left"), true);
+  });
+
+  it("opens the slash insert menu and inserts a table", async () => {
+    await openEditableNote();
+    await page.locator(".ProseMirror").click();
+    await page.keyboard.type("/");
+    await page.waitForSelector(".slash-insert-menu", { timeout: 5000 });
+    await page.keyboard.type("tab");
+    const items = (await page.locator(".slash-insert-menu button").allTextContents()).map((label) =>
+      label.trim()
+    );
+    assert.equal(items.includes("Table"), true, `slash: ${items.join(", ")}`);
+    await page.keyboard.press("Enter");
+    await page.waitForSelector(".slash-insert-menu", { state: "detached", timeout: 5000 });
+    await page.waitForSelector(".ProseMirror table", { timeout: 5000 });
+  });
+
+  it("inserts a checkbox from the Insert menu", async () => {
+    await openEditableNote();
+    await page.getByTitle("Insert").click();
+    await page.waitForSelector(".insert-menu", { timeout: 5000 });
+    await page.locator(".insert-menu button", { hasText: /^Checkbox$/ }).click();
+    await page.waitForSelector(".ProseMirror input[data-inline-checkbox]", { timeout: 5000 });
+  });
+
+  it("shows a floating format bar when text is selected", async () => {
+    await openEditableNote();
+    await page.locator(".ProseMirror").click();
+    await page.keyboard.type("Hello");
+    await page.keyboard.press("Control+a");
+    await page.waitForSelector(".selection-toolbar", { timeout: 5000 });
+    assert.equal(await page.locator(".selection-toolbar").getByTitle("Bold").count(), 1);
+    assert.equal(await page.locator(".selection-toolbar").getByTitle("Highlight").count(), 1);
+  });
+
+  it("offers Print and Note history in the note ⋯ menu", async () => {
+    await openEditableNote();
+    await page.getByTitle("More", { exact: true }).click();
+    await page.waitForSelector(".menu-popover.right", { timeout: 5000 });
+    const items = (await page.locator(".menu-popover.right button").allTextContents()).map((label) =>
+      label.trim()
+    );
+    assert.equal(items.includes("Print…"), true, `note menu: ${items.join(", ")}`);
+    assert.equal(items.includes("Note history"), true);
+  });
+  it("activates formatting buttons from the keyboard", async () => {
+    await openEditableNote();
+    await page.keyboard.type("Keyboard formatting");
+    await page.keyboard.press("Control+a");
+    const bold = page.locator(".editor-toolbar").getByRole("button", { name: "Bold", exact: true });
+    await bold.focus();
+    await bold.press("Enter");
+    assert.equal(await page.locator(".ProseMirror strong").innerText(), "Keyboard formatting");
+  });
+
+  it("keeps font, size, and color controls working in a narrow toolbar", async () => {
+    await openEditableNote();
+    await page.keyboard.type("Overflow formatting");
+    await page.keyboard.press("Control+a");
+    await page.locator(".editor-toolbar").evaluate((el) => { (el as HTMLElement).style.width = "280px"; });
+    try {
+      await page.getByTitle("More formatting").click();
+      const menu = page.locator(".toolbar-overflow-menu");
+      await menu.getByLabel("Font", { exact: true }).selectOption({ index: 1 });
+      await menu.getByLabel("Font size", { exact: true }).selectOption("24");
+      await menu.getByLabel("Text color", { exact: true }).selectOption({ index: 2 });
+      const style = await page.locator(".ProseMirror span[style]").first().getAttribute("style");
+      assert.match(style || "", /font-family:/);
+      assert.match(style || "", /font-size: 24px/);
+      assert.match(style || "", /color:/);
+    } finally {
+      await page.locator(".editor-toolbar").evaluate((el) => { (el as HTMLElement).style.width = ""; });
+    }
+  });
+
+  it("does not offer slash inserts inside code blocks", async () => {
+    await openEditableNote();
+    await page.getByTitle("Insert").click();
+    await page.locator(".insert-menu").getByRole("button", { name: "Code block", exact: true }).click();
+    await page.keyboard.type("/tmp");
+    assert.equal(await page.locator(".slash-insert-menu").count(), 0);
+    assert.match(await page.locator(".ProseMirror pre").innerText(), /\/tmp/);
+  });
+
+  it("dismisses the note context menu when clicking outside, including editor controls", async () => {
+    await openEditableNote();
+    await page.keyboard.type("Context menu dismissal");
+    const editor = page.locator(".ProseMirror");
+    const menu = page.locator(".context-menu");
+    await editor.click({ button: "right" });
+    await menu.waitFor({ state: "visible" });
+    await page.locator(".editor-toolbar").getByRole("button", { name: "Bold", exact: true }).click();
+    await menu.waitFor({ state: "detached" });
+
+    await editor.click({ button: "right" });
+    await menu.waitFor({ state: "visible" });
+    await editor.click({ position: { x: 5, y: 5 } });
+    await menu.waitFor({ state: "detached" });
+
+    await editor.click({ button: "right" });
+    await menu.waitFor({ state: "visible" });
+    await menu.getByRole("menuitem", { name: "Bulleted list", exact: true }).click();
+    await menu.waitFor({ state: "detached" });
+    assert.equal(await editor.locator("ul li").innerText(), "Context menu dismissal");
+  });
+
+  it("does not format a locked note through keyboard commands", async () => {
+    await openEditableNote();
+    await page.keyboard.type("Locked content");
+    await page.keyboard.press("Control+a");
+    await page.getByTitle("Lock note", { exact: true }).click();
+    try {
+      await page.waitForSelector(".ProseMirror[contenteditable=false]");
+      const before = await page.locator(".ProseMirror").innerHTML();
+      await page.keyboard.press("Control+b");
+      assert.equal(await page.locator(".ProseMirror").innerHTML(), before);
+      assert.equal(await page.locator(".editor-toolbar.is-visible").count(), 0);
+      await page.locator(".ProseMirror").click({ button: "right" });
+      assert.equal(await page.getByRole("menuitem", { name: "Bold", exact: true }).isDisabled(), true);
+      await page.keyboard.press("Escape");
+    } finally {
+      await page.getByTitle("Unlock note", { exact: true }).click();
+    }
+  });
+  it("keeps inline checkboxes disabled while the note is locked", async () => {
+    await openEditableNote();
+    await page.getByTitle("Insert").click();
+    await page.locator(".insert-menu").getByRole("button", { name: "Checkbox", exact: true }).click();
+    await page.getByTitle("Lock note", { exact: true }).click();
+    try {
+      assert.equal(await page.locator(".ProseMirror input[data-inline-checkbox]").isDisabled(), true);
+      assert.equal(await page.locator(".ProseMirror input[data-inline-checkbox]").isChecked(), false);
+    } finally {
+      await page.getByTitle("Unlock note", { exact: true }).click();
+    }
+    assert.equal(await page.locator(".ProseMirror input[data-inline-checkbox]").isDisabled(), false);
+  });
+});

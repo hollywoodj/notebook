@@ -183,3 +183,93 @@ export function saveStateLabel(state: SaveState): string {
   if (state === "error") return "Couldn't save";
   return "All changes saved";
 }
+
+/** Insert (+) menu — Evernote’s far-left toolbar control. No Tasks or Calendar. */
+export const INSERT_MENU_ITEMS = [
+  { id: "attachment", label: "Attachment", keywords: ["file", "image", "photo", "media"] },
+  { id: "table", label: "Table", keywords: [] },
+  { id: "code", label: "Code block", keywords: ["pre"] },
+  { id: "quote", label: "Quote", keywords: ["blockquote"] },
+  { id: "checkbox", label: "Checkbox", keywords: ["tick", "box"] },
+  { id: "divider", label: "Divider", keywords: ["hr", "rule", "line"] },
+  { id: "datetime", label: "Date and time", keywords: ["stamp"] },
+  { id: "link", label: "Link", keywords: ["url", "href"] },
+  { id: "h1", label: "Large header", keywords: ["heading", "title"] },
+  { id: "h2", label: "Medium header", keywords: ["heading"] },
+  { id: "h3", label: "Small header", keywords: ["heading"] },
+  { id: "checklist", label: "Checklist", keywords: ["todo", "task", "list"] },
+] as const;
+
+export type InsertMenuId = (typeof INSERT_MENU_ITEMS)[number]["id"];
+
+export const MORE_FORMAT_ITEMS = [
+  { id: "align-left", label: "Align left" },
+  { id: "align-center", label: "Align center" },
+  { id: "align-right", label: "Align right" },
+  { id: "justify", label: "Justify" },
+  { id: "outdent", label: "Decrease indent" },
+  { id: "indent", label: "Increase indent" },
+  { id: "strike", label: "Strikethrough" },
+  { id: "superscript", label: "Superscript" },
+  { id: "subscript", label: "Subscript" },
+  { id: "clear", label: "Remove formatting" },
+] as const;
+
+export type MoreFormatId = (typeof MORE_FORMAT_ITEMS)[number]["id"];
+
+/** Always stay on the formatting bar; overflow only hides the middle controls. */
+export const PINNED_TOOLBAR_IDS = ["insert", "undo", "redo", "more"] as const;
+
+export function slashQueryFromBlock(text: string, cursorOffset: number): string | null {
+  if (cursorOffset !== text.length) return null;
+  if (!text.startsWith("/")) return null;
+  if (/\s/.test(text.slice(1))) return null;
+  return text.slice(1);
+}
+
+export function filterInsertItems(
+  query: string,
+  items: readonly (typeof INSERT_MENU_ITEMS)[number][] = INSERT_MENU_ITEMS
+): (typeof INSERT_MENU_ITEMS)[number][] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [...items];
+  return items.filter((item) => {
+    if (item.id.toLowerCase().includes(needle)) return true;
+    if (item.label.toLowerCase().includes(needle)) return true;
+    return item.keywords.some((keyword) => keyword.includes(needle));
+  });
+}
+
+export function slashConsumeRange(
+  blockStart: number,
+  text: string
+): { from: number; to: number } | null {
+  if (slashQueryFromBlock(text, text.length) === null) return null;
+  return { from: blockStart, to: blockStart + text.length };
+}
+
+export function selectionToolbarVisible(from: number, to: number, empty: boolean): boolean {
+  return !empty && Number.isFinite(from) && Number.isFinite(to) && to > from;
+}
+
+/** Keep a centered floating toolbar inside its visual container. */
+export function clampFloatingToolbarCenter(
+  preferredCenter: number,
+  toolbarWidth: number,
+  boundaryLeft: number,
+  boundaryRight: number,
+  margin = 8
+): number {
+  const boundaryCenter = (boundaryLeft + boundaryRight) / 2;
+  if (![preferredCenter, toolbarWidth, boundaryLeft, boundaryRight, margin].every(Number.isFinite)) {
+    return boundaryCenter;
+  }
+
+  const halfWidth = Math.max(0, toolbarWidth) / 2;
+  const safeMargin = Math.max(0, margin);
+  const minCenter = boundaryLeft + safeMargin + halfWidth;
+  const maxCenter = boundaryRight - safeMargin - halfWidth;
+
+  if (minCenter > maxCenter) return boundaryCenter;
+  return Math.max(minCenter, Math.min(preferredCenter, maxCenter));
+}

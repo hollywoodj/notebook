@@ -208,8 +208,8 @@ function rowToNote(row) {
 /**
  * Opens `dbPath` and returns a store object shaped like server.mjs's HTTP
  * store: listNotes/getNote/findByExactTitle/createNote/updateNote/
- * softDeleteNote/search, plus `offline: true`, a `wrote` flag the caller can
- * inspect after the call, and `close()`.
+ * renameNote/softDeleteNote/search, plus `offline: true`, a `wrote` flag the
+ * caller can inspect after the call, and `close()`.
  */
 export function createSqliteStore(dbPath, notebookId) {
   const db = new DatabaseSync(dbPath);
@@ -291,6 +291,23 @@ export function createSqliteStore(dbPath, notebookId) {
         id
       );
       insertRevision(id, existing.title, contentHtml, now);
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+    store.wrote = true;
+    return rowToNote(getNoteRow(id));
+  };
+
+  store.renameNote = async (id, title) => {
+    const existing = db.prepare("SELECT title, content FROM notes WHERE id = ?").get(id);
+    if (!existing) throw new Error(`Note ${id} not found in ${dbPath}.`);
+    const now = nowRfc3339();
+    db.exec("BEGIN");
+    try {
+      db.prepare("UPDATE notes SET title = ?, updated_at = ? WHERE id = ?").run(title, now, id);
+      insertRevision(id, title, existing.content, now);
       db.exec("COMMIT");
     } catch (err) {
       db.exec("ROLLBACK");

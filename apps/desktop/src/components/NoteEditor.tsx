@@ -40,13 +40,22 @@ import {
   EDITOR_FONT_SIZES,
   HIGHLIGHT_COLORS,
   IMAGE_SIZE_PRESETS,
+  INSERT_MENU_ITEMS,
+  MORE_FORMAT_ITEMS,
   TEXT_COLORS,
   attachmentsLabel,
+  filterInsertItems,
   formattingToolbarVisible,
   clampImageWidth,
+  clampFloatingToolbarCenter,
   insertDateStamp,
   insertTimeStamp,
   nextFontSize,
+  selectionToolbarVisible,
+  slashConsumeRange,
+  slashQueryFromBlock,
+  type InsertMenuId,
+  type MoreFormatId,
 } from "../ui/editorChrome";
 import { countWords, escapeHtml, outlineToHtml } from "../ui/noteContent";
 import { findMatchOffsets, nextMatchIndex } from "../ui/search";
@@ -68,6 +77,7 @@ import {
   titleFromFilename,
 } from "./fileAttachment";
 import { InlineCheckbox } from "./inlineCheckbox";
+import { ReadOnlyGuard } from "./readOnlyGuard";
 import { DraggableTaskItem } from "./draggableTaskItem";
 
 interface Props {
@@ -303,6 +313,7 @@ export function NoteEditor({
     window.setTimeout(() => findInputRef.current?.select(), 0);
   };
   const toolbarRef = useRef<HTMLDivElement>(null);
+  const selectionToolbarRef = useRef<HTMLDivElement>(null);
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -317,12 +328,38 @@ export function NoteEditor({
   const [showColors, setShowColors] = useState(false);
   const [showTextColors, setShowTextColors] = useState(false);
   const [showOverflow, setShowOverflow] = useState(false);
+  const [showInsertMenu, setShowInsertMenu] = useState(false);
   const [showStyleMenu, setShowStyleMenu] = useState(false);
   const [overflowIds, setOverflowIds] = useState<string[]>([]);
+  const [slashQuery, setSlashQuery] = useState<string | null>(null);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [bubblePos, setBubblePos] = useState<{ x: number; y: number } | null>(null);
+  const slashQueryRef = useRef<string | null>(null);
+  const slashIndexRef = useRef(0);
+  const slashItemsRef = useRef<(typeof INSERT_MENU_ITEMS)[number][]>([...INSERT_MENU_ITEMS]);
+  const runInsertRef = useRef<(id: InsertMenuId, consumeSlash?: boolean) => void>(() => {});
+  slashQueryRef.current = slashQuery;
+  slashIndexRef.current = slashIndex;
   const [editorMenu, setEditorMenu] = useState<{ x: number; y: number } | null>(null);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [linkDialog, setLinkDialog] = useState<{ href: string; text: string } | null>(null);
   const indentRef = useRef<(shift: boolean) => boolean>(() => false);
+
+  useLayoutEffect(() => {
+    const toolbar = selectionToolbarRef.current;
+    if (!toolbar || !bubblePos) return;
+
+    const boundary = toolbar.closest<HTMLElement>(".editor-main")?.getBoundingClientRect();
+    const left = boundary?.left ?? 0;
+    const right = boundary?.right ?? window.innerWidth;
+    const center = clampFloatingToolbarCenter(
+      bubblePos.x,
+      toolbar.getBoundingClientRect().width,
+      left,
+      right
+    );
+    toolbar.style.left = `${Math.round(center)}px`;
+  }, [bubblePos]);
 
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [editorFocused, setEditorFocused] = useState(false);
@@ -331,9 +368,32 @@ export function NoteEditor({
   pdfViewRef.current = pdfView;
   const onUseAsTitleRef = useRef(onUseAsTitle);
   onUseAsTitleRef.current = onUseAsTitle;
+  const onSelectionWordsRef = useRef(onSelectionWords);
+  onSelectionWordsRef.current = onSelectionWords;
+
+  const syncEditorChrome = (current: Editor) => {
+    const { from, to, empty, $from } = current.state.selection;
+    const selected = empty ? "" : current.state.doc.textBetween(from, to, " ");
+    onSelectionWordsRef.current?.(countWords(selected));
+    if (current.isEditable && selectionToolbarVisible(from, to, empty) && current.view.hasFocus()) {
+      const start = current.view.coordsAtPos(from);
+      const end = current.view.coordsAtPos(to);
+      setBubblePos({
+        x: Math.round((start.left + end.right) / 2),
+        y: Math.round(Math.min(start.top, end.top)),
+      });
+    } else {
+      setBubblePos(null);
+    }
+    setSlashQuery(
+      current.isEditable && empty && $from.parent.type.name === "paragraph"
+        ? slashQueryFromBlock($from.parent.textContent, $from.parentOffset) : null
+    );
+  };
 
   const editor = useEditor({
     extensions: [
+      ReadOnlyGuard,
       StarterKit.configure({
         codeBlock: { languageClassPrefix: "language-" },
       }),
@@ -342,7 +402,11 @@ export function NoteEditor({
         openOnClick: false,
         HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" },
       }),
-      Highlight.configure({ multicolor: true }),
+      Highlight.extend({
+        addKeyboardShortcuts() {
+          return {};
+        },
+      }).configure({ multicolor: true }),
       TaskList,
       DraggableTaskItem.configure({ nested: true }),
       InlineCheckbox,
@@ -366,11 +430,12 @@ export function NoteEditor({
     content,
     autofocus: false,
     editable: !readOnly,
-    onUpdate: ({ editor }) => onChange(editor.getHTML()),
+    onUpdate: ({ editor }) => {
+      onChange(editor.getHTML());
+      syncEditorChrome(editor);
+    },
     onSelectionUpdate: ({ editor }) => {
-      const { from, to } = editor.state.selection;
-      const text = from === to ? "" : editor.state.doc.textBetween(from, to, " ");
-      onSelectionWords?.(countWords(text));
+      syncEditorChrome(editor);
     },
     onFocus: () => setEditorFocused(true),
     onBlur: ({ editor: current, event }) => {
@@ -383,6 +448,10 @@ export function NoteEditor({
         setShowColors(false);
         setShowTextColors(false);
         setShowOverflow(false);
+        setShowInsertMenu(false);
+        setShowStyleMenu(false);
+        setBubblePos(null);
+        setSlashQuery(null);
       });
     },
     editorProps: {
@@ -392,6 +461,30 @@ export function NoteEditor({
           lang: spellLanguage,
         },
       handleKeyDown: (_view, event) => {
+        if (slashQueryRef.current !== null) {
+          const items = slashItemsRef.current;
+          if (event.key === "Escape") {
+            setSlashQuery(null);
+            return true;
+          }
+          if (event.key === "ArrowDown") {
+            if (!items.length) return true;
+            setSlashIndex((index) => (index + 1) % items.length);
+            return true;
+          }
+          if (event.key === "ArrowUp") {
+            if (!items.length) return true;
+            setSlashIndex((index) => (index - 1 + items.length) % items.length);
+            return true;
+          }
+          if (event.key === "Enter" || event.key === "Tab") {
+            const item = items[slashIndexRef.current];
+            if (item) {
+              runInsertRef.current(item.id, true);
+              return true;
+            }
+          }
+        }
         if (event.key !== "Tab") return false;
         return indentRef.current(event.shiftKey);
       },
@@ -448,7 +541,7 @@ export function NoteEditor({
   useEffect(() => {
     if (editor && content !== editor.getHTML()) {
       try {
-        editor.commands.setContent(content, false);
+        editor.chain().setContent(content, false).setMeta("notebook:load-content", true).run();
       } catch (err) {
         console.error(err);
       }
@@ -551,7 +644,7 @@ export function NoteEditor({
   }, [editor, findQuery, findIndex, showFind, findCaseSensitive, findWholeWord]);
 
   const replaceCurrent = () => {
-    if (!editor || !findQuery.trim()) return;
+    if (!editor?.isEditable || !findQuery.trim()) return;
     const { from, to } = editor.state.selection;
     const selected = editor.state.doc.textBetween(from, to, "");
     if (selected.toLowerCase() !== findQuery.trim().toLowerCase()) return;
@@ -560,7 +653,7 @@ export function NoteEditor({
   };
 
   const replaceAll = () => {
-    if (!editor || !findQuery.trim()) return;
+    if (!editor?.isEditable || !findQuery.trim()) return;
     const needle = findQuery.trim();
     const text = editor.state.doc.textBetween(0, editor.state.doc.content.size, "", "");
     const offsets = findMatchOffsets(text, needle);
@@ -572,7 +665,8 @@ export function NoteEditor({
   };
 
   const runEditorCommand = (command: EditorCommand) => {
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
+    if (!editor.isEditable && !["copy", "selectAll", "findNext", "findPrev"].includes(command.type)) return;
     const chain = editor.chain().focus();
     switch (command.type) {
       case "undo":
@@ -858,14 +952,21 @@ export function NoteEditor({
       measuring = true;
       try {
         const items = [...el.querySelectorAll<HTMLElement>("[data-toolbar-item]")];
-        const overflowBtn = el.querySelector<HTMLElement>(".toolbar-overflow");
-        const available = el.clientWidth - 12;
-        const visible = visibleToolbarCount(
-          available,
-          items.map(widthOf),
-          overflowBtn?.getBoundingClientRect().width || 34
-        );
-        const hiddenIds = items.slice(visible).map((item) => item.dataset.toolbarItem || "");
+        const overflowCandidates = items.filter((item) => item.dataset.toolbarPinned !== "true");
+        const pinnedWidth = items
+          .filter((item) => item.dataset.toolbarPinned === "true")
+          .reduce((sum, item) => sum + widthOf(item), 0);
+        const toolbarStyle = getComputedStyle(el);
+        const padding = parseFloat(toolbarStyle.paddingLeft) + parseFloat(toolbarStyle.paddingRight);
+        const separatorWidth = [...el.querySelectorAll<HTMLElement>(".toolbar-sep")].reduce((sum, separator) => {
+          const style = getComputedStyle(separator);
+          return sum + separator.getBoundingClientRect().width + parseFloat(style.marginLeft) + parseFloat(style.marginRight);
+        }, 0);
+        const available = el.clientWidth - padding - separatorWidth - pinnedWidth;
+        const visible = visibleToolbarCount(available, overflowCandidates.map(widthOf), 0);
+        const hiddenIds = overflowCandidates
+          .slice(visible)
+          .map((item) => item.dataset.toolbarItem || "");
         setOverflowIds((current) => {
           const next = hiddenIds.filter(Boolean);
           if (current.length === next.length && current.every((id, index) => id === next[index])) {
@@ -892,6 +993,10 @@ export function NoteEditor({
     };
   }, [editor, toolbarHidden, editorFocused]);
 
+  useEffect(() => {
+    setSlashIndex(0);
+  }, [slashQuery]);
+
   if (!editor) return null;
 
   indentRef.current = (shift) => {
@@ -901,7 +1006,7 @@ export function NoteEditor({
   };
 
   queueFilesRef.current = (files, position) => {
-    if (!files.length) return;
+    if (!editor.isEditable || !files.length) return;
     const insertionPosition = position ?? editor.state.selection.from;
     setUploading((count) => count + files.length);
     setUploadError(null);
@@ -955,25 +1060,119 @@ export function NoteEditor({
       key={label}
       type="button"
       className={active ? "toolbar-btn active" : "toolbar-btn"}
-      onMouseDown={(e) => {
-        e.preventDefault();
-        action();
-      }}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={action}
+      disabled={!editor.isEditable}
+      aria-label={label}
       title={label}
     >
       {icon ?? label}
     </button>
   );
 
-  const wrap = (id: string, node: ReactNode) => (
+  const wrap = (id: string, node: ReactNode, pinned = false) => (
     <span
       key={id}
       data-toolbar-item={id}
+      data-toolbar-pinned={pinned ? "true" : undefined}
       className={overflowIds.includes(id) ? "toolbar-item is-overflowed" : "toolbar-item"}
     >
       {node}
     </span>
   );
+
+  const runInsert = (id: InsertMenuId, consumeSlash = false) => {
+    const chain = editor.chain().focus();
+    if (consumeSlash) {
+      const { $from } = editor.state.selection;
+      const range = slashConsumeRange($from.start(), $from.parent.textContent);
+      if (range) chain.deleteRange(range);
+    }
+    switch (id) {
+      case "attachment":
+        chain.run();
+        fileRef.current?.click();
+        break;
+      case "table":
+        chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+        break;
+      case "code":
+        chain.setCodeBlock().run();
+        break;
+      case "quote":
+        chain.setBlockquote().run();
+        break;
+      case "checkbox":
+        chain.insertInlineCheckbox(false).run();
+        break;
+      case "divider":
+        chain.setHorizontalRule().run();
+        break;
+      case "datetime":
+        chain.insertContent(new Date().toLocaleString()).run();
+        break;
+      case "link":
+        chain.run();
+        setLinkDialog(openLinkDialog(editor));
+        break;
+      case "h1":
+        chain.setHeading({ level: 1 }).run();
+        break;
+      case "h2":
+        chain.setHeading({ level: 2 }).run();
+        break;
+      case "h3":
+        chain.setHeading({ level: 3 }).run();
+        break;
+      case "checklist":
+        chain.toggleTaskList().run();
+        break;
+    }
+    setSlashQuery(null);
+    setShowInsertMenu(false);
+  };
+  runInsertRef.current = runInsert;
+
+  const runMore = (id: MoreFormatId) => {
+    switch (id) {
+      case "align-left":
+        editor.chain().focus().setTextAlign("left").run();
+        break;
+      case "align-center":
+        editor.chain().focus().setTextAlign("center").run();
+        break;
+      case "align-right":
+        editor.chain().focus().setTextAlign("right").run();
+        break;
+      case "justify":
+        editor.chain().focus().setTextAlign("justify").run();
+        break;
+      case "outdent":
+        applyIndent(editor, -1);
+        break;
+      case "indent":
+        applyIndent(editor, 1);
+        break;
+      case "strike":
+        editor.chain().focus().toggleStrike().run();
+        break;
+      case "superscript":
+        editor.chain().focus().toggleSuperscript().run();
+        break;
+      case "subscript":
+        editor.chain().focus().toggleSubscript().run();
+        break;
+      case "clear":
+        editor.chain().focus().unsetAllMarks().clearNodes().run();
+        break;
+    }
+    setShowOverflow(false);
+  };
+
+  const slashItems = slashQuery !== null ? filterInsertItems(slashQuery) : [];
+  slashItemsRef.current = slashItems;
+  const slashCoords =
+    slashQuery !== null ? editor.view.coordsAtPos(editor.state.selection.from) : null;
 
   const fontClass =
     fontFamily === "serif"
@@ -983,7 +1182,7 @@ export function NoteEditor({
         : "font-sans";
 
   const fileAttachments = attachments.filter(isFileAttachment);
-  const showToolbar = formattingToolbarVisible(toolbarHidden, editorFocused);
+  const showToolbar = !readOnly && formattingToolbarVisible(toolbarHidden, editorFocused);
   const currentFontFamily = String(editor.getAttributes("textStyle").fontFamily || "");
   const currentFontSize = String(editor.getAttributes("textStyle").fontSize || "").replace("px", "");
   const applyLink = (href: string, text: string) => {
@@ -1007,36 +1206,92 @@ export function NoteEditor({
     window.open(href, "_blank", "noopener,noreferrer");
   };
 
+  const fontFamilyControl = (
+    <select
+      className="toolbar-select"
+      aria-label="Font"
+      value={EDITOR_FONTS.some((font) => font.id === currentFontFamily) ? currentFontFamily : ""}
+      onChange={(event) => {
+        const value = event.target.value;
+        if (value) editor.chain().focus().setFontFamily(value).run();
+        else editor.chain().focus().unsetFontFamily().run();
+      }}
+    >
+      {EDITOR_FONTS.map((font) => (
+        <option key={font.label} value={font.id}>
+          {font.label}
+        </option>
+      ))}
+    </select>
+  );
+  const fontSizeControl = (
+    <select
+      className="toolbar-select size"
+      aria-label="Font size"
+      value={EDITOR_FONT_SIZES.some((size) => String(size) === currentFontSize) ? currentFontSize : ""}
+      onChange={(event) => {
+        const value = event.target.value;
+        if (value) editor.chain().focus().setFontSize(`${value}px`).run();
+        else editor.chain().focus().unsetFontSize().run();
+      }}
+    >
+      <option value="">Size</option>
+      {EDITOR_FONT_SIZES.map((size) => (
+        <option key={size} value={String(size)}>
+          {size}
+        </option>
+      ))}
+    </select>
+  );
+  const codeLanguageControl = (
+    <select
+      className="toolbar-select code-lang"
+      aria-label="Code language"
+      value={String(editor.getAttributes("codeBlock").language || "")}
+      onChange={(event) => {
+        editor
+          .chain()
+          .focus()
+          .updateAttributes("codeBlock", { language: event.target.value })
+          .run();
+      }}
+    >
+      {CODE_LANGUAGES.map((language) => (
+        <option key={language.label} value={language.id}>
+          {language.label}
+        </option>
+      ))}
+    </select>
+  );
+  const overflowControls: Record<string, ReactNode> = {
+    "font-family": fontFamilyControl,
+    "font-size": fontSizeControl,
+    "code-lang": codeLanguageControl,
+    "text-style": <select className="toolbar-select" aria-label="Text style" value={String(editor.getAttributes("heading").level || 0)}
+      onChange={(event) => {
+        const level = Number(event.target.value) as 0 | 1 | 2 | 3;
+        if (level === 0) editor.chain().focus().setParagraph().run();
+        else editor.chain().focus().setHeading({ level }).run();
+      }}>
+      {NOTE_STYLE_OPTIONS.map((style) => <option key={style.id} value={style.heading}>{style.label}</option>)}
+    </select>,
+    color: <select className="toolbar-select" aria-label="Text color" value={String(editor.getAttributes("textStyle").color || "")}
+      onChange={(event) => {
+        if (event.target.value) editor.chain().focus().setColor(event.target.value).run();
+        else editor.chain().focus().unsetColor().run();
+      }}>
+      {TEXT_COLORS.map((swatch) => <option key={swatch.id} value={swatch.color || ""}>{swatch.label}</option>)}
+    </select>,
+  };
   const overflowActions: { id: string; label: string; action: () => void }[] = [
-    { id: "h1", label: "Large header", action: () => editor.chain().focus().toggleHeading({ level: 1 }).run() },
-    { id: "h2", label: "Medium header", action: () => editor.chain().focus().toggleHeading({ level: 2 }).run() },
-    { id: "h3", label: "Small header", action: () => editor.chain().focus().toggleHeading({ level: 3 }).run() },
     { id: "bold", label: "Bold", action: () => editor.chain().focus().toggleBold().run() },
     { id: "italic", label: "Italic", action: () => editor.chain().focus().toggleItalic().run() },
     { id: "underline", label: "Underline", action: () => editor.chain().focus().toggleUnderline().run() },
-    { id: "strike", label: "Strikethrough", action: () => editor.chain().focus().toggleStrike().run() },
     { id: "highlight", label: "Highlight", action: () => editor.chain().focus().toggleHighlight().run() },
-    { id: "color", label: "Text color", action: () => setShowTextColors(true) },
     { id: "bullets", label: "Bulleted list", action: () => editor.chain().focus().toggleBulletList().run() },
     { id: "numbers", label: "Numbered list", action: () => editor.chain().focus().toggleOrderedList().run() },
     { id: "checklist", label: "Checklist", action: () => editor.chain().focus().toggleTaskList().run() },
-    { id: "align-left", label: "Align left", action: () => editor.chain().focus().setTextAlign("left").run() },
-    { id: "align-center", label: "Align center", action: () => editor.chain().focus().setTextAlign("center").run() },
-    { id: "align-right", label: "Align right", action: () => editor.chain().focus().setTextAlign("right").run() },
-    { id: "justify", label: "Justify", action: () => editor.chain().focus().setTextAlign("justify").run() },
-    { id: "outdent", label: "Decrease indent", action: () => applyIndent(editor, -1) },
-    { id: "indent", label: "Increase indent", action: () => applyIndent(editor, 1) },
-    { id: "quote", label: "Quote", action: () => editor.chain().focus().toggleBlockquote().run() },
-    { id: "code", label: "Code block", action: () => editor.chain().focus().toggleCodeBlock().run() },
-    { id: "inline-code", label: "Inline code", action: () => editor.chain().focus().toggleCode().run() },
-    { id: "divider", label: "Divider", action: () => editor.chain().focus().setHorizontalRule().run() },
-    { id: "date", label: "Insert date and time", action: () => editor.chain().focus().insertContent(new Date().toLocaleString()).run() },
     { id: "link", label: "Link", action: () => setLinkDialog(openLinkDialog(editor)) },
-    { id: "table", label: "Insert table", action: () => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
-    { id: "superscript", label: "Superscript", action: () => editor.chain().focus().toggleSuperscript().run() },
-    { id: "subscript", label: "Subscript", action: () => editor.chain().focus().toggleSubscript().run() },
-    { id: "callout", label: "Info box", action: () => editor.chain().focus().setCallout("info").run() },
-    { id: "attach", label: "Insert media or file", action: () => fileRef.current?.click() },
   ];
 
   const editorMenuItems: ContextMenuEntry[] = [
@@ -1346,6 +1601,42 @@ export function NoteEditor({
         aria-hidden={!showToolbar}
       >
         {wrap(
+          "insert",
+          <div className="highlight-picker">
+            {btn(
+              "Insert",
+              () => {
+                setShowInsertMenu((open) => !open);
+                setShowOverflow(false);
+                setShowStyleMenu(false);
+              },
+              showInsertMenu,
+              <Icon.Plus size={16} />
+            )}
+            {showInsertMenu && (
+              <div className="toolbar-overflow-menu insert-menu" onMouseDown={(event) => event.preventDefault()}>
+                {INSERT_MENU_ITEMS.map((item) => (
+                  <button key={item.id} type="button" onClick={() => runInsert(item.id)}>
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>,
+          true
+        )}
+        {wrap(
+          "undo",
+          btn("Undo", () => editor.chain().focus().undo().run(), false, <Icon.Undo size={16} />),
+          true
+        )}
+        {wrap(
+          "redo",
+          btn("Redo", () => editor.chain().focus().redo().run(), false, <Icon.Redo size={16} />),
+          true
+        )}
+        <span className="toolbar-sep" />
+        {wrap(
           "text-style",
           <div className="style-picker">
             {btn(
@@ -1400,84 +1691,39 @@ export function NoteEditor({
             )}
           </div>
         )}
+        {wrap("font-family", fontFamilyControl)}
+        {wrap("font-size", fontSizeControl)}
         {wrap(
-          "font-family",
-          <select
-            className="toolbar-select"
-            aria-label="Font"
-            value={EDITOR_FONTS.some((font) => font.id === currentFontFamily) ? currentFontFamily : ""}
-            onChange={(event) => {
-              const value = event.target.value;
-              if (value) editor.chain().focus().setFontFamily(value).run();
-              else editor.chain().focus().unsetFontFamily().run();
-            }}
-          >
-            {EDITOR_FONTS.map((font) => (
-              <option key={font.label} value={font.id}>
-                {font.label}
-              </option>
-            ))}
-          </select>
+          "color",
+          <div className="highlight-picker">
+          {btn(
+            "Text color",
+            () => setShowTextColors((open) => !open),
+            Boolean(editor.getAttributes("textStyle").color),
+            <Icon.Color size={16} />
+          )}
+          {showTextColors && (
+            <div className="highlight-colors" onMouseDown={(event) => event.preventDefault()}>
+              {TEXT_COLORS.map((swatch) => (
+                <button
+                  key={swatch.id}
+                  type="button"
+                  title={swatch.label}
+                  className={swatch.color ? "highlight-swatch" : "ghost-btn small"}
+                  style={swatch.color ? { background: swatch.color } : undefined}
+                  onClick={() => {
+                    if (swatch.color) editor.chain().focus().setColor(swatch.color).run();
+                    else editor.chain().focus().unsetColor().run();
+                    setShowTextColors(false);
+                  }}
+                >
+                  {swatch.color ? "" : "Aa"}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         )}
-        {wrap(
-          "font-size",
-          <select
-            className="toolbar-select size"
-            aria-label="Font size"
-            value={EDITOR_FONT_SIZES.some((size) => String(size) === currentFontSize) ? currentFontSize : ""}
-            onChange={(event) => {
-              const value = event.target.value;
-              if (value) editor.chain().focus().setFontSize(`${value}px`).run();
-              else editor.chain().focus().unsetFontSize().run();
-            }}
-          >
-            <option value="">Size</option>
-            {EDITOR_FONT_SIZES.map((size) => (
-              <option key={size} value={String(size)}>
-                {size}
-              </option>
-            ))}
-          </select>
-        )}
-        {wrap(
-          "font-smaller",
-          btn(
-            "Decrease font size",
-            () =>
-              editor.chain().focus().setFontSize(nextFontSize(currentFontSize, -1)).run(),
-            false,
-            <span className="toolbar-text">A−</span>
-          )
-        )}
-        {wrap(
-          "font-larger",
-          btn(
-            "Increase font size",
-            () =>
-              editor.chain().focus().setFontSize(nextFontSize(currentFontSize, 1)).run(),
-            false,
-            <span className="toolbar-text">A+</span>
-          )
-        )}
-        <span className="toolbar-sep" />
-        {wrap("h1", btn(
-          "Large header",
-          () => editor.chain().focus().toggleHeading({ level: 1 }).run(),
-          editor.isActive("heading", { level: 1 }),
-          <Icon.Heading size={16} />
-        ))}
-        {wrap("h2", btn(
-          "Medium header",
-          () => editor.chain().focus().toggleHeading({ level: 2 }).run(),
-          editor.isActive("heading", { level: 2 }),
-          <span className="toolbar-text">H2</span>
-        ))}
-        {wrap("h3", btn(
-          "Small header",
-          () => editor.chain().focus().toggleHeading({ level: 3 }).run(),
-          editor.isActive("heading", { level: 3 }),
-          <span className="toolbar-text">H3</span>
-        ))}
         <span className="toolbar-sep" />
         {wrap("bold", btn(
           "Bold",
@@ -1496,12 +1742,6 @@ export function NoteEditor({
           () => editor.chain().focus().toggleUnderline().run(),
           editor.isActive("underline"),
           <Icon.Underline size={16} />
-        ))}
-        {wrap("strike", btn(
-          "Strikethrough",
-          () => editor.chain().focus().toggleStrike().run(),
-          editor.isActive("strike"),
-          <Icon.Strike size={16} />
         ))}
         {wrap(
           "highlight",
@@ -1541,37 +1781,6 @@ export function NoteEditor({
           )}
         </div>
         )}
-        {wrap(
-          "color",
-          <div className="highlight-picker">
-          {btn(
-            "Text color",
-            () => setShowTextColors((open) => !open),
-            Boolean(editor.getAttributes("textStyle").color),
-            <Icon.Color size={16} />
-          )}
-          {showTextColors && (
-            <div className="highlight-colors" onMouseDown={(event) => event.preventDefault()}>
-              {TEXT_COLORS.map((swatch) => (
-                <button
-                  key={swatch.id}
-                  type="button"
-                  title={swatch.label}
-                  className={swatch.color ? "highlight-swatch" : "ghost-btn small"}
-                  style={swatch.color ? { background: swatch.color } : undefined}
-                  onClick={() => {
-                    if (swatch.color) editor.chain().focus().setColor(swatch.color).run();
-                    else editor.chain().focus().unsetColor().run();
-                    setShowTextColors(false);
-                  }}
-                >
-                  {swatch.color ? "" : "Aa"}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-        )}
         <span className="toolbar-sep" />
         <span className="toolbar-list-group" role="group" aria-label="Lists">
           {wrap("bullets", btn(
@@ -1594,151 +1803,63 @@ export function NoteEditor({
           ))}
         </span>
         <span className="toolbar-sep" />
-        {wrap("align-left", btn(
-          "Align left",
-          () => editor.chain().focus().setTextAlign("left").run(),
-          editor.isActive({ textAlign: "left" }) || (!editor.isActive({ textAlign: "center" }) && !editor.isActive({ textAlign: "right" }) && !editor.isActive({ textAlign: "justify" })),
-          <Icon.AlignLeft size={16} />
-        ))}
-        {wrap("align-center", btn(
-          "Align center",
-          () => editor.chain().focus().setTextAlign("center").run(),
-          editor.isActive({ textAlign: "center" }),
-          <Icon.AlignCenter size={16} />
-        ))}
-        {wrap("align-right", btn(
-          "Align right",
-          () => editor.chain().focus().setTextAlign("right").run(),
-          editor.isActive({ textAlign: "right" }),
-          <Icon.AlignRight size={16} />
-        ))}
-        {wrap("justify", btn(
-          "Justify",
-          () => editor.chain().focus().setTextAlign("justify").run(),
-          editor.isActive({ textAlign: "justify" }),
-          <Icon.AlignJustify size={16} />
-        ))}
-        {wrap("outdent", btn(
-          "Decrease indent",
-          () => applyIndent(editor, -1),
-          false,
-          <Icon.Outdent size={16} />
-        ))}
-        {wrap("indent", btn(
-          "Increase indent",
-          () => applyIndent(editor, 1),
-          false,
-          <Icon.Indent size={16} />
-        ))}
-        <span className="toolbar-sep" />
-        {wrap("quote", btn(
-          "Quote",
-          () => editor.chain().focus().toggleBlockquote().run(),
-          editor.isActive("blockquote"),
-          <Icon.Quote size={16} />
-        ))}
-        {wrap("code", btn(
-          "Code block",
-          () => editor.chain().focus().toggleCodeBlock().run(),
-          editor.isActive("codeBlock"),
-          <Icon.Code size={16} />
-        ))}
-        {editor.isActive("codeBlock") &&
-          wrap(
-            "code-lang",
-            <select
-              className="toolbar-select code-lang"
-              aria-label="Code language"
-              value={String(editor.getAttributes("codeBlock").language || "")}
-              onChange={(event) => {
-                editor
-                  .chain()
-                  .focus()
-                  .updateAttributes("codeBlock", { language: event.target.value })
-                  .run();
-              }}
-            >
-              {CODE_LANGUAGES.map((language) => (
-                <option key={language.label} value={language.id}>
-                  {language.label}
-                </option>
-              ))}
-            </select>
-          )}
-        {wrap("inline-code", btn(
-          "Inline code",
-          () => editor.chain().focus().toggleCode().run(),
-          editor.isActive("code"),
-          <span className="toolbar-text">{"<>"}</span>
-        ))}
-        {wrap("divider", btn(
-          "Divider",
-          () => editor.chain().focus().setHorizontalRule().run(),
-          false,
-          <span className="toolbar-text">—</span>
-        ))}
-        {wrap("date", btn(
-          "Insert date and time",
-          () => editor.chain().focus().insertContent(new Date().toLocaleString()).run(),
-          false,
-          <span className="toolbar-text">Date</span>
-        ))}
         {wrap("link", btn(
           "Link",
           () => setLinkDialog(openLinkDialog(editor)),
           editor.isActive("link"),
           <Icon.Link size={16} />
         ))}
-        {wrap("table", btn(
-          "Insert table",
-          () => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
-          editor.isActive("table"),
-          <Icon.Table size={16} />
-        ))}
-        {wrap("superscript", btn(
-          "Superscript",
-          () => editor.chain().focus().toggleSuperscript().run(),
-          editor.isActive("superscript"),
-          <span className="toolbar-text">x²</span>
-        ))}
-        {wrap("subscript", btn(
-          "Subscript",
-          () => editor.chain().focus().toggleSubscript().run(),
-          editor.isActive("subscript"),
-          <span className="toolbar-text">x₂</span>
-        ))}
-        {wrap("callout", btn(
-          "Info box",
-          () => {
-            if (editor.isActive("callout")) editor.chain().focus().unsetCallout().run();
-            else editor.chain().focus().setCallout("info").run();
-          },
-          editor.isActive("callout"),
-          <span className="toolbar-text">i</span>
-        ))}
-        {wrap("attach", btn("Insert media or file", () => fileRef.current?.click(), false, <Icon.Attach size={16} />))}
-        {overflowIds.length > 0 && (
+        {editor.isActive("codeBlock") &&
+          wrap("code-lang", codeLanguageControl)}
+        {wrap(
+          "more",
           <div className="highlight-picker toolbar-overflow">
-            {btn("More formatting", () => setShowOverflow((open) => !open), showOverflow, <span className="toolbar-text">…</span>)}
+            {btn(
+              "More formatting",
+              () => {
+                setShowOverflow((open) => !open);
+                setShowInsertMenu(false);
+                setShowStyleMenu(false);
+              },
+              showOverflow,
+              <span className="toolbar-text">…</span>
+            )}
             {showOverflow && (
-              <div className="toolbar-overflow-menu" onMouseDown={(event) => event.preventDefault()}>
-                {overflowActions
-                  .filter((item) => overflowIds.includes(item.id))
-                  .map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => {
-                        item.action();
-                        setShowOverflow(false);
-                      }}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
+              <div className="toolbar-overflow-menu" onMouseDown={(event) => { if (!(event.target instanceof HTMLSelectElement)) event.preventDefault(); }}>
+                {MORE_FORMAT_ITEMS.map((item) => (
+                  <button key={item.id} type="button" onClick={() => runMore(item.id)}>
+                    {item.label}
+                  </button>
+                ))}
+                {overflowIds.length > 0 && (
+                  <>
+                    <div className="toolbar-overflow-sep" />
+                    {overflowIds.filter((id) => overflowControls[id]).map((id) => (
+                      <label className="overflow-control" key={id}>
+                        {id === "font-family" ? "Font" : id === "font-size" ? "Font size" : id === "text-style" ? "Text style" : id === "code-lang" ? "Code language" : "Text color"}
+                        {overflowControls[id]}
+                      </label>
+                    ))}
+                    {overflowActions
+                      .filter((item) => overflowIds.includes(item.id))
+                      .map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => {
+                            item.action();
+                            setShowOverflow(false);
+                          }}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                  </>
+                )}
               </div>
             )}
-          </div>
+          </div>,
+          true
         )}
         {uploading > 0 && (
           <span className="upload-status">
@@ -1903,7 +2024,11 @@ export function NoteEditor({
         <ContextMenu
           x={editorMenu.x}
           y={editorMenu.y}
-          items={editorMenuItems}
+          items={editorMenuItems.map((item) => item.type === "separator" || !readOnly ? item : {
+            ...item,
+            disabled: item.disabled || !["Copy", "Open link", "Copy link", "View image", "Copy image address", "Save image as…"].includes(item.label),
+            children: undefined,
+          })}
           onClose={() => setEditorMenu(null)}
         />
       )}
@@ -1930,6 +2055,67 @@ export function NoteEditor({
           <button type="button" className="image-lightbox-close" onClick={() => setLightboxSrc(null)}>
             Close
           </button>
+        </div>
+      )}
+      {slashQuery !== null && slashCoords && (
+        <div
+          className="slash-insert-menu"
+          style={{ left: slashCoords.left, top: slashCoords.bottom + 6 }}
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          {slashItems.length === 0 ? (
+            <div className="slash-insert-empty">No matching inserts</div>
+          ) : (
+            slashItems.map((item, index) => (
+              <button
+                key={item.id}
+                type="button"
+                className={index === slashIndex ? "is-active" : ""}
+                onClick={() => runInsert(item.id, true)}
+              >
+                {item.label}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+      {bubblePos && (
+        <div
+          ref={selectionToolbarRef}
+          className="selection-toolbar"
+          style={{ left: bubblePos.x, top: bubblePos.y }}
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          {btn(
+            "Bold",
+            () => editor.chain().focus().toggleBold().run(),
+            editor.isActive("bold"),
+            <Icon.Bold size={16} />
+          )}
+          {btn(
+            "Italic",
+            () => editor.chain().focus().toggleItalic().run(),
+            editor.isActive("italic"),
+            <Icon.Italic size={16} />
+          )}
+          {btn(
+            "Underline",
+            () => editor.chain().focus().toggleUnderline().run(),
+            editor.isActive("underline"),
+            <Icon.Underline size={16} />
+          )}
+          {btn(
+            "Highlight",
+            () => editor.chain().focus().toggleHighlight({ color: HIGHLIGHT_COLORS[0].color }).run(),
+            editor.isActive("highlight"),
+            <span className="toolbar-text hl">HL</span>
+          )}
+          {btn(
+            "Link",
+            () => setLinkDialog(openLinkDialog(editor)),
+            editor.isActive("link"),
+            <Icon.Link size={16} />
+          )}
         </div>
       )}
     </div>

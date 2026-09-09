@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { attachmentsLabel, formattingToolbarVisible, HIGHLIGHT_COLORS, insertDateStamp, insertTimeStamp, nextFontSize, nextLineHeight, nextZoom, parseEditorChrome, parseLineHeight, saveStateLabel, windowTitleForNote } from "./editorChrome.ts";
+import { attachmentsLabel, clampFloatingToolbarCenter, filterInsertItems, formattingToolbarVisible, HIGHLIGHT_COLORS, INSERT_MENU_ITEMS, insertDateStamp, insertTimeStamp, MORE_FORMAT_ITEMS, nextFontSize, nextLineHeight, nextZoom, parseEditorChrome, parseLineHeight, PINNED_TOOLBAR_IDS, saveStateLabel, selectionToolbarVisible, slashConsumeRange, slashQueryFromBlock, windowTitleForNote } from "./editorChrome.ts";
 import { parseRecentNotes, rememberRecentNote } from "./navigation.ts";
 import { parsePaneLayout } from "./panes.ts";
 
@@ -79,5 +79,76 @@ describe("parsePaneLayout", () => {
     assert.equal(saveStateLabel("saved"), "All changes saved");
     assert.equal(saveStateLabel("saving"), "Saving…");
     assert.equal(saveStateLabel("error"), "Couldn't save");
+  });
+});
+
+describe("insert menu and slash commands", () => {
+  it("opens slash matching only on a leading / with the caret at the end", () => {
+    assert.equal(slashQueryFromBlock("/", 1), "");
+    assert.equal(slashQueryFromBlock("/tab", 4), "tab");
+    assert.equal(slashQueryFromBlock("/tab", 2), null);
+    assert.equal(slashQueryFromBlock("hello", 5), null);
+    assert.equal(slashQueryFromBlock("/table more", 11), null);
+    assert.equal(slashQueryFromBlock("", 0), null);
+  });
+
+  it("filters insert items the way Evernote’s / menu does", () => {
+    assert.equal(filterInsertItems("").length, INSERT_MENU_ITEMS.length);
+    assert.deepEqual(
+      filterInsertItems("tab").map((item) => item.id),
+      ["table"]
+    );
+    assert.ok(filterInsertItems("head").some((item) => item.id === "h1"));
+    assert.ok(filterInsertItems("file").some((item) => item.id === "attachment"));
+    assert.deepEqual(filterInsertItems("zzz").map((item) => item.id), []);
+  });
+
+  it("deletes the /query block before inserting", () => {
+    assert.deepEqual(slashConsumeRange(1, "/table"), { from: 1, to: 7 });
+    assert.equal(slashConsumeRange(1, "table"), null);
+  });
+
+  it("keeps Insert extras and More-format extras in Evernote’s buckets", () => {
+    assert.deepEqual(
+      INSERT_MENU_ITEMS.map((item) => item.id),
+      [
+        "attachment",
+        "table",
+        "code",
+        "quote",
+        "checkbox",
+        "divider",
+        "datetime",
+        "link",
+        "h1",
+        "h2",
+        "h3",
+        "checklist",
+      ]
+    );
+    assert.deepEqual(
+      MORE_FORMAT_ITEMS.map((item) => item.id),
+      [
+        "align-left",
+        "align-center",
+        "align-right",
+        "justify",
+        "outdent",
+        "indent",
+        "strike",
+        "superscript",
+        "subscript",
+        "clear",
+      ]
+    );
+    assert.deepEqual([...PINNED_TOOLBAR_IDS], ["insert", "undo", "redo", "more"]);
+    assert.equal(selectionToolbarVisible(1, 8, false), true);
+    assert.equal(selectionToolbarVisible(1, 1, true), false);
+  });
+
+  it("keeps the text-selection toolbar clear of the editor edges", () => {
+    assert.equal(clampFloatingToolbarCenter(40, 160, 24, 824), 112);
+    assert.equal(clampFloatingToolbarCenter(400, 160, 24, 824), 400);
+    assert.equal(clampFloatingToolbarCenter(810, 160, 24, 824), 736);
   });
 });

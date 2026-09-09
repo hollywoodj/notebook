@@ -42,6 +42,11 @@ export function ContextMenu({
 
   useEffect(() => {
     const close = () => onClose();
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !menuRef.current?.contains(event.target)) close();
+    };
+    // Capture runs even when editor controls stop the bubbling mouse event.
+    window.addEventListener("pointerdown", onPointerDown, true);
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
     };
@@ -50,6 +55,7 @@ export function ContextMenu({
     window.addEventListener("scroll", close, true);
     window.addEventListener("keydown", onKeyDown);
     return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
       window.removeEventListener("blur", close);
       window.removeEventListener("resize", close);
       window.removeEventListener("scroll", close, true);

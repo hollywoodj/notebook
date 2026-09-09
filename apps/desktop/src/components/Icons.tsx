@@ -384,4 +384,16 @@ export const Icon = {
       <path d="M4 5h16l-6 7v5l-4 2v-7z" />
     </I>
   ),
+  Undo: (p: IconProps) => (
+    <I {...p}>
+      <path d="M9 14H5v-4" />
+      <path d="M5 10a7 7 0 1 1 2 5" />
+    </I>
+  ),
+  Redo: (p: IconProps) => (
+    <I {...p}>
+      <path d="M15 14h4v-4" />
+      <path d="M19 10a7 7 0 1 0-2 5" />
+    </I>
+  ),
 };

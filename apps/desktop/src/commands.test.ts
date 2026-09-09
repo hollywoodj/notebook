@@ -218,6 +218,22 @@ describe("command registry", () => {
       matchCommand(fakeEvent("m", { ctrlKey: true }), stubContext())?.id,
       "window.minimize"
     );
+    assert.equal(
+      matchCommand(fakeEvent("h", { ctrlKey: true, shiftKey: true }), ctxWithNote)?.id,
+      "format.highlight"
+    );
+    assert.equal(
+      matchCommand(fakeEvent("t", { ctrlKey: true }), ctxWithNote)?.id,
+      "format.strike"
+    );
+    assert.equal(
+      matchCommand(fakeEvent("b", { ctrlKey: true, shiftKey: true }), ctxWithNote)?.id,
+      "format.bulletList"
+    );
+    assert.equal(
+      matchCommand(fakeEvent(" ", { ctrlKey: true, shiftKey: true }), ctxWithNote)?.id,
+      "format.clear"
+    );
   });
 
   it("skips a matched command whose enabled() is false", () => {

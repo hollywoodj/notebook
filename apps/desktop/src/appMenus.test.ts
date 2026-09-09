@@ -208,6 +208,8 @@ describe("buildMenuBar", () => {
     assert.equal(top.includes("Insert Date"), true);
     assert.equal(top.includes("Remove Link"), true);
     assert.equal(top.includes("Insert Table of Contents"), true);
+    const times = top.filter((label) => label === "Insert Time");
+    assert.equal(times.length, 1);
     const align = format.items.find((item) => "label" in item && item.label === "Align");
     assert.ok(align && "children" in align && align.children);
     assert.equal(labels(align.children).includes("Justify"), true);

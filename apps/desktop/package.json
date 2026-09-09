@@ -16,6 +16,7 @@
     "electron:dev": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:1420 && electron .\"",
     "build:electron": "cross-env ELECTRON=true tsc && cross-env ELECTRON=true vite build",
     "electron:prepare": "node scripts/prepare-electron-resources.mjs",
+    "electron:pack": "npm run build:electron && npm run electron:prepare && electron-builder --dir --publish never",
     "electron:build": "npm run build:electron && npm run electron:prepare && electron-builder",
     "electron:build:win": "npm run build:electron && npm run electron:prepare && electron-builder --win",
     "electron:build:mac": "npm run build:electron && npm run electron:prepare && electron-builder --mac",

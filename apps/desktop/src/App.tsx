@@ -1,3 +1,4 @@
+import { LogoMark } from "./components/LogoMark";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   Account,
@@ -67,8 +68,8 @@ import { matchCommand, paletteActions, runCommandById } from "./commands";
 import { isPdfFile, titleFromFilename } from "./components/fileAttachment";
 import { EDITOR_CHROME_KEY, parseEditorChrome, saveStateLabel, windowTitleForNote } from "./ui/editorChrome";
 import { LAST_SESSION_KEY, RECENT_NOTES_KEY, parseLastSession, parseRecentNotes, rememberRecentNote, viewTitleForFilter } from "./ui/navigation";
-import { LOCKED_NOTES_KEY, NOTE_COLORS, NOTE_COLORS_KEY, checklistProgressLabel, countCharacters, countWords, htmlToMarkdown, htmlToPlainText, parseIdList, parseNoteColorMap, readingTimeLabel, resolveThumbnailUrl, setNoteColor as applyNoteColor } from "./ui/noteContent";
-import { NOTE_DRAG_TYPE, adjacentNoteId, attachmentCountLabel, decodeNoteDrag, displayedListCount, encodeNoteDrag, formatRelativeTime, groupNotesByNotebook, groupNotesForList, hasActiveListFilters, knownViewNoteCount, listFilterCount, navCountLabel, noteCardNotebookName, resolveListView, stickyNavCount, trashToastCopy, type ListView } from "./ui/noteList";
+import { LOCKED_NOTES_KEY, NOTE_COLORS, NOTE_COLORS_KEY, countCharacters, countWords, htmlToMarkdown, htmlToPlainText, parseIdList, parseNoteColorMap, readingTimeLabel, resolveThumbnailUrl, setNoteColor as applyNoteColor } from "./ui/noteContent";
+import { NOTE_DRAG_TYPE, adjacentNoteId, attachmentCountLabel, decodeNoteDrag, displayedListCount, encodeNoteDrag, formatRelativeTime, groupNotesByNotebook, groupNotesForList, hasActiveListFilters, knownViewNoteCount, listFilterCount, navCountLabel, resolveListView, stickyNavCount, trashToastCopy, type ListView } from "./ui/noteList";
 import { noteFontStyleVars, parseNoteFontStyles } from "./ui/noteFonts.ts";
 import { LIST_MAX, LIST_MIN, PANE_LAYOUT_KEY, SIDEBAR_RAIL_WIDTH, clampPaneWidth, isNoteExpanded, parsePaneLayout, revealNoteBrowser, toggleNoteExpanded, toggleNoteListHidden, toggleSidebarHidden } from "./ui/panes";
 import { COMPLETED_REMINDERS_KEY, formatReminderLabel, fromDatetimeLocalValue, groupRemindersForList, isReminderDone, isReminderOverdue, isoDayKey, parseCompletedReminders, reminderFallsOnDay, reminderFromPreset, reminderFromSnooze, toDatetimeLocalValue, toggleCompletedReminder, type ReminderPreset, type SnoozePreset } from "./ui/reminders";
@@ -1084,7 +1085,7 @@ const saveNote = useCallback(
   if (!ready || !account) {
     return (
       <div className="boot-screen">
-        <div className="logo-mark">N</div>
+        <LogoMark />
         <p>Starting Notebook…</p>
       </div>
     );
@@ -2531,22 +2532,8 @@ const saveNote = useCallback(
                   {note.is_template && <Icon.Templates size={13} />}
                   {note.title || "Untitled"}
                 </span>
-                <span
-                  className="note-card-date"
-                  title={formatDate(note.updated_at, prefs.date_format)}
-                >
-                  {formatRelativeTime(note.updated_at)}
-                </span>
               </div>
-              {listView !== "titles" &&
-                noteCardNotebookName(note.notebook_name, filter) && (
-                  <div className="note-card-meta">
-                    {noteCardNotebookName(note.notebook_name, filter)}
-                  </div>
-                )}
-              {(note.reminder_at ||
-                note.attachment_count > 0 ||
-                (note.checklist_total || 0) > 0) && (
+              {(note.reminder_at || note.attachment_count > 0) && (
                 <div className="note-card-extras">
                   {note.reminder_at && (
                     <span
@@ -2566,12 +2553,6 @@ const saveNote = useCallback(
                     <span className="meta-chip">
                       <Icon.Attach size={12} />
                       {attachmentCountLabel(note.attachment_count)}
-                    </span>
-                  )}
-                  {checklistProgressLabel(note.checklist_done || 0, note.checklist_total || 0) && (
-                    <span className="meta-chip">
-                      <Icon.Checklist size={12} />
-                      {checklistProgressLabel(note.checklist_done || 0, note.checklist_total || 0)}
                     </span>
                   )}
                 </div>
@@ -2601,13 +2582,21 @@ const saveNote = useCallback(
                     : note.snippet}
                 </div>
               )}
-              {listView !== "titles" && note.tag_names.length > 0 && (
-                <div className="note-card-tags">
-                  {note.tag_names.map((t) => (
-                    <span key={t}>#{t}</span>
-                  ))}
-                </div>
-              )}
+              <div className="note-card-footer">
+                <span
+                  className="note-card-date"
+                  title={formatDate(note.updated_at, prefs.date_format)}
+                >
+                  {formatRelativeTime(note.updated_at)}
+                </span>
+                {listView !== "titles" && note.tag_names.length > 0 && (
+                  <div className="note-card-tags">
+                    {note.tag_names.map((tag) => (
+                      <span key={tag} title={tag}>{tag}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
             </button>
               ))}
             </div>
@@ -2835,6 +2824,22 @@ const saveNote = useCallback(
                     </button>
                     {showNoteMenu && (
                       <div className="menu-popover right">
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            printActiveNote();
+                          }}
+                        >
+                          Print…
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            setShowInfo(true);
+                          }}
+                        >
+                          Note history
+                        </button>
                         <button
                           onClick={() => {
                             setShowNoteMenu(false);
@@ -3213,7 +3218,7 @@ const saveNote = useCallback(
           </div>
         ) : (
           <div className="empty-editor">
-            <div className="logo-mark large">N</div>
+            <LogoMark large />
             <h2>{paneLayout.listCollapsed ? "Your notes are one click away" : "Select a note"}</h2>
             <p>
               {paneLayout.listCollapsed

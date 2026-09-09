@@ -168,10 +168,11 @@ const ARROW_LABELS: Record<string, string> = {
   ArrowRight: "→",
 };
 
-const VERBATIM_KEYS = new Set([",", "/", "[", "]", "+", "-", "0", "F11", "'"]);
+const VERBATIM_KEYS = new Set([",", "/", "[", "]", "+", "-", "0", "F11", "'", ">", "<", "."]);
 
 function keyLabel(key: string): string {
   if (ARROW_LABELS[key]) return ARROW_LABELS[key];
+  if (key === " " || key === "Space") return "Space";
   if (VERBATIM_KEYS.has(key)) return key;
   return key.length === 1 ? key.toUpperCase() : key;
 }
@@ -481,7 +482,7 @@ export const COMMANDS: Command[] = [
   {
     id: "format.bulletList",
     label: "Bulleted List",
-    keys: [{ key: "l", mod: true, shift: true }],
+    keys: [{ key: "b", mod: true, shift: true }],
     enabled: (ctx) => !!ctx.activeNote,
     run: (ctx) => ctx.runEditorCommand({ type: "bulletList" }),
   },
@@ -498,6 +499,50 @@ export const COMMANDS: Command[] = [
     keys: [{ key: "c", mod: true, shift: true }],
     enabled: (ctx) => !!ctx.activeNote,
     run: (ctx) => ctx.runEditorCommand({ type: "taskList" }),
+  },
+  {
+    id: "format.highlight",
+    label: "Highlight",
+    keys: [{ key: "h", mod: true, shift: true }],
+    enabled: (ctx) => !!ctx.activeNote,
+    run: (ctx) => ctx.runEditorCommand({ type: "highlight", color: "#fff3a0" }),
+  },
+  {
+    id: "format.strike",
+    label: "Strikethrough",
+    keys: [{ key: "t", mod: true }],
+    enabled: (ctx) => !!ctx.activeNote,
+    run: (ctx) => ctx.runEditorCommand({ type: "strike" }),
+  },
+  {
+    id: "format.clear",
+    label: "Remove Formatting",
+    keys: [
+      { key: " ", mod: true, shift: true },
+      { key: "Space", mod: true, shift: true },
+    ],
+    enabled: (ctx) => !!ctx.activeNote,
+    run: (ctx) => ctx.runEditorCommand({ type: "clear" }),
+  },
+  {
+    id: "format.fontLarger",
+    label: "Increase Size",
+    keys: [
+      { key: ">", mod: true, shift: true },
+      { key: ".", mod: true, shift: true },
+    ],
+    enabled: (ctx) => !!ctx.activeNote,
+    run: (ctx) => ctx.runEditorCommand({ type: "fontSizeStep", direction: 1 }),
+  },
+  {
+    id: "format.fontSmaller",
+    label: "Decrease Size",
+    keys: [
+      { key: "<", mod: true, shift: true },
+      { key: ",", mod: true, shift: true },
+    ],
+    enabled: (ctx) => !!ctx.activeNote,
+    run: (ctx) => ctx.runEditorCommand({ type: "fontSizeStep", direction: -1 }),
   },
 ];
 

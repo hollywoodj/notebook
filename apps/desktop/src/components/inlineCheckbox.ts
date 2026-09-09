@@ -91,9 +91,12 @@ export const InlineCheckbox = Node.create({
       input.dataset.inlineCheckbox = "true";
       input.checked = Boolean(node.attrs.checked);
       input.title = "Checkbox";
+      const syncEditable = () => { input.disabled = !editor.isEditable; };
+      syncEditable();
+      editor.on("update", syncEditable);
       input.addEventListener("mousedown", (event) => event.preventDefault());
       input.addEventListener("change", () => {
-        if (typeof getPos !== "function") return;
+        if (!editor.isEditable || typeof getPos !== "function") return;
         editor
           .chain()
           .command(({ tr }) => {
@@ -106,6 +109,7 @@ export const InlineCheckbox = Node.create({
       });
       return {
         dom: input,
+        destroy: () => editor.off("update", syncEditable),
         update: (updated) => {
           if (updated.type.name !== this.name) return false;
           input.checked = Boolean(updated.attrs.checked);

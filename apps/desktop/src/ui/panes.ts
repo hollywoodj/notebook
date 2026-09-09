@@ -4,7 +4,7 @@ export const LIST_MIN = 220;
 export const LIST_MAX = 560;
 export const DEFAULT_SIDEBAR_WIDTH = 248;
 export const DEFAULT_LIST_WIDTH = 320;
-export const SIDEBAR_RAIL_WIDTH = 56;
+export const SIDEBAR_RAIL_WIDTH = 96;
 export const PANE_LAYOUT_KEY = "notebook.paneLayout";
 
 export interface PaneLayout {

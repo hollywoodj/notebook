@@ -231,6 +231,20 @@ Visible chrome on existing surfaces only. No Tasks, Calendar, or Daily note.
 
 Find in note already showed `N of M`; the count uses tabular numbers so it stays readable.
 
+### Pass 18 (this session)
+Formatting toolbar match. No Tasks, Calendar, or Daily note.
+
+1. **Insert (+)** menu on the far left of the formatting toolbar
+2. **Undo / Redo** arrows next to Insert
+3. **Compact primary row**: Aa, font, size, color, B/I/U, highlight, lists, link — headings, align, extras moved out
+4. **More (…)** always visible with align, indent, strikethrough, super/sub, remove formatting
+5. **Slash commands** (`/` on a new line) open the Insert menu
+6. **Checkbox** in Insert (static box, not a checklist)
+7. **Print…** and **Note history** in the note ⋯ menu
+8. **Evernote format shortcuts**: Highlight Ctrl/⌘ Shift H, Strikethrough Ctrl/⌘ T, bullets Ctrl/⌘ Shift B, remove formatting Ctrl/⌘ Shift Space, font size Ctrl/⌘ Shift > / <
+9. **Format menu**: Uncheck All Tasks actually unchecks; duplicate Insert Date/Time rows removed
+10. **Floating selection toolbar** (Bold / Italic / Underline / Highlight / Link)
+
 ## Where to look
 
 - Chrome helpers and tests: `apps/desktop/src/ui/editorChrome.ts`, `apps/desktop/src/ui/noteFonts.ts`
@@ -251,6 +265,7 @@ wired to the command it claims. It starts Vite if it is not already running, use
 (`cargo build --release -p notebook-api`) because that is what the dev app spawns. The script
 runs files one at a time (`--test-concurrency=1`) so they do not race two Vite servers.
 `e2e/sidebarFlyout.e2e.ts` covers the rail flyout; `e2e/noteChrome.e2e.ts` covers Hide Sidebar,
+the Window menu, Jump To templates, Search in this notebook, and the Insert / More / slash toolbar.
 the Window menu, Jump To templates, and Search in this notebook. Neither
 runner takes a glob: a new `e2e/*.e2e.ts` file does not run until it is added to the
 `test:e2e` script, exactly like `src/**/*.test.ts` and `test`.
@@ -289,7 +304,7 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 - ArrowUp/ArrowDown with a single note cannot prove non-wrapping selection
 - Table Tab vs indent: indent yields to the table extension; re-test nested lists inside table cells
 - Toolbar hide + attach: media button is in the toolbar; drag-and-drop still works when hidden
-- Toolbar overflow should be re-checked in a narrow window; font dropdowns take extra width
+- Toolbar overflow should be re-checked in a narrow window; font dropdowns take extra width. Pass 18’s always-visible More menu now holds overflowed primary controls plus align/indent/strike.
 - Card thumbnails depend on the first image attachment or an `<img>` in the note body
 
 ## Intentionally out of scope for the clone passes
@@ -300,3 +315,17 @@ Prioritize items that a user can see or click. Skip cloud/AI/sharing unless the 
 - iOS/Android clients (API-first is already in the README)
 
 When closing the next ten, keep stacking on this branch style: helpers in `uiChrome.ts` with tests, visible chrome in `App.tsx` / `NoteEditor.tsx` / `styles.css`, and a short PR list of the items.
+
+
+## Recovery verified — 2026-09-08
+
+The September 7 Pass 18 session finished successfully. Its 230 unit tests, typecheck, and 20 real Electron UI tests pass again. The latest release backend and desktop UI have been packaged into apps/desktop/release/win-unpacked. The taskbar shortcut now uses the shared launcher so later source changes are rebuilt. The launcher checks app.asar freshness and uses electron:pack for everyday local builds.
+
+An abandoned Cursor debug API was occupying port 8799. It was stopped. The e2e harness now refuses to run while that port is occupied, preventing a test window from connecting to another database despite its temporary profile. All 20 e2e tests were rerun with the port free. Close the normal app before running e2e tests.
+
+
+## Code review — 2026-09-08
+
+Working overflow controls and toolbar sizing; keyboard formatting; unclipped/scrolling menus; locked-note transaction guard, context-menu protection, and locked checkboxes; slash commands excluded from code blocks. 230 unit tests, 89 Rust tests, 25 Electron UI tests, typecheck/unused-code checks, and final Windows package smoke checks pass.
+
+Full review: C:/Users/James/Dev/Scripts/app-code-review-2026-09-08/REVIEW.md

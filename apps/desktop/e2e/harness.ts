@@ -33,6 +33,7 @@ import { _electron as electron, type ElectronApplication, type Page } from "play
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
+import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -126,6 +127,13 @@ export interface LaunchedApp {
 
 export async function launchApp(): Promise<LaunchedApp> {
   preflight();
+  // A different backend answering /health would silently connect these tests
+  // to its database, even though Electron has a throwaway user-data directory.
+  await new Promise<void>((resolve, reject) => {
+    const probe = createServer();
+    probe.once("error", () => reject(new Error("Notebook API port 8799 is occupied. Close Notebook and any dev API before running e2e tests; refusing to use an existing database.")));
+    probe.listen(8799, "127.0.0.1", () => probe.close((error) => error ? reject(error) : resolve()));
+  });
   const vite = await ensureViteServer();
 
   const userDataDir = mkdtempSync(path.join(os.tmpdir(), "notebook-e2e-"));
