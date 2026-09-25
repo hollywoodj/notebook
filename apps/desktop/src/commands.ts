@@ -121,6 +121,7 @@ export type CommandContext = {
   copyActiveNoteLink: () => void;
   setListView: (view: ListView) => void;
   importNotes: () => void;
+  importNotesFolder: () => void;
   setNotebookDefault: (notebook: Notebook) => void | Promise<void>;
   setNotebookStack: (notebookId: string, stackId: string | null) => void | Promise<void>;
   deleteNotebook: (notebook: Notebook) => void | Promise<void>;

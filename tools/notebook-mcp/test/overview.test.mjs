@@ -20,6 +20,11 @@ import {
   extractIndexTableHtml,
   resolveSectionName,
 } from "../overview.mjs";
+import { applyIdeaEdits } from "../notes.mjs";
+
+function noEdits(overrides = {}) {
+  return { addBugs: [], addImprovements: [], checkRefs: [], uncheckRefs: [], removeRefs: [], ...overrides };
+}
 
 function fakeStat(name, content) {
   return { name, exists: true, mtimeMs: 1_725_000_000_000, size: content.length, content };
@@ -219,6 +224,30 @@ test("Dev routing: update_backlog-style edits against Ideas round-trip through p
   ]);
   // Reference zone (a different note area entirely) was never touched by any of this.
   assert.equal(zones.referenceZoneHtml, referenceZoneHtml);
+});
+
+// ---------------------------------------------------------------------------
+// applyIdeaEdits: the flat Ideas list has no `list` field on its entries, so
+// removal splices `items` directly - exercise that path (shared with
+// applyBacklogEdits's project-block path, tested in notes.test.mjs).
+// ---------------------------------------------------------------------------
+
+test("applyIdeaEdits removes an idea by number, then by exact text", () => {
+  const items = [
+    { text: "idea one", checked: false },
+    { text: "idea two", checked: false },
+    { text: "idea three", checked: false },
+  ];
+
+  const summary = applyIdeaEdits(items, noEdits({ removeRefs: [2] }));
+  assert.deepEqual(items, [
+    { text: "idea one", checked: false },
+    { text: "idea three", checked: false },
+  ]);
+  assert.match(summary, /removed 1 idea\(s\)/);
+
+  applyIdeaEdits(items, noEdits({ removeRefs: ["idea one"] }));
+  assert.deepEqual(items, [{ text: "idea three", checked: false }]);
 });
 
 // ---------------------------------------------------------------------------

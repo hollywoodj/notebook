@@ -203,7 +203,7 @@ describe("createNoteStore", () => {
     assert.deepEqual(calls.pop(), { method: "search", args: "hello" });
   });
 
-  it("loadNotes sorts pinned-first, honors sort_by, and reminders ascending", async () => {
+  it("loadNotes honors sort_by and reminders ascending, ignoring pin order outside a notebook", async () => {
     const api = fakeApi({
       listNotes: async () => [
         note({ id: "a", is_pinned: false, title: "Banana", created_at: "2024-01-01", updated_at: "2024-01-03" }),
@@ -213,10 +213,10 @@ describe("createNoteStore", () => {
     });
 
     const updated = await loadNotes(api, { filter: { type: "all" }, sortBy: "updated", searchScope: null });
-    assert.deepEqual(updated.map((n) => n.id), ["b", "a", "c"]);
+    assert.deepEqual(updated.map((n) => n.id), ["a", "c", "b"]);
 
     const created = await loadNotes(api, { filter: { type: "all" }, sortBy: "created", searchScope: null });
-    assert.deepEqual(created.map((n) => n.id), ["b", "c", "a"]);
+    assert.deepEqual(created.map((n) => n.id), ["c", "b", "a"]);
 
     const title = await loadNotes(api, { filter: { type: "all" }, sortBy: "title", searchScope: null });
     assert.deepEqual(title.map((n) => n.id), ["b", "c", "a"]);
@@ -234,6 +234,26 @@ describe("createNoteStore", () => {
       searchScope: null,
     });
     assert.deepEqual(reminders.map((n) => n.id), ["r2", "r1"]);
+  });
+
+  it("loadNotes bubbles pinned notes first only within a notebook view", async () => {
+    const api = fakeApi({
+      listNotes: async () => [
+        note({ id: "a", is_pinned: false, updated_at: "2024-01-03" }),
+        note({ id: "b", is_pinned: true, updated_at: "2024-01-01" }),
+        note({ id: "c", is_pinned: false, updated_at: "2024-01-02" }),
+      ],
+    });
+
+    const notebookView = await loadNotes(api, {
+      filter: { type: "notebook", id: "nb1" },
+      sortBy: "updated",
+      searchScope: null,
+    });
+    assert.deepEqual(notebookView.map((n) => n.id), ["b", "a", "c"]);
+
+    const allView = await loadNotes(api, { filter: { type: "all" }, sortBy: "updated", searchScope: null });
+    assert.deepEqual(allView.map((n) => n.id), ["a", "c", "b"]);
   });
 
   it("loadNotes narrows a search to the given searchScope notebook", async () => {

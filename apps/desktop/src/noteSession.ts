@@ -11,7 +11,7 @@
  * binding.
  *
  * This is an external store with SYNCHRONOUS mutation, not a `useReducer`.
- * `ignoreNav`, `skipNextSave`, `navSeeded`, `navCurrent` and
+ * `ignoreNav`, `skipNextSaveCount`, `navSeeded`, `navCurrent` and
  * `lastClickedNoteId` are plain closure variables - never part of the
  * reactive snapshot - because their correctness depends on being read/set
  * synchronously between `await` boundaries. Putting any of them into React
@@ -64,7 +64,14 @@ export function createNoteSession({ api }: { api: NoteSessionApi }) {
   // Non-reactive internals - direct replacements for the old mirror refs.
   // Never read through getSnapshot(); never put into React state.
   let lastClickedNoteId: string | null = null;
-  let skipNextSave = false;
+  // A counter, not a boolean: `loadNoteInto` calls can overlap (fast
+  // sidebar clicks each fire an async `getNote`, and an earlier click can
+  // resolve after a later one). Each call that expects a skip must claim
+  // its own credit, or one resolving out of order silently uses up the
+  // skip meant for another and lets a same-content autosave slip through -
+  // which is exactly what bumped `updated_at` (and reordered the
+  // date-sorted list) on a plain click with no edit.
+  let skipNextSaveCount = 0;
   let ignoreNav = false;
   let navSeeded = false;
   let navCurrent: NavLocation = { filter: { type: "all" }, noteId: null };
@@ -116,13 +123,13 @@ export function createNoteSession({ api }: { api: NoteSessionApi }) {
   };
 
   function consumeSkipNextSave(): boolean {
-    const value = skipNextSave;
-    skipNextSave = false;
-    return value;
+    if (skipNextSaveCount <= 0) return false;
+    skipNextSaveCount -= 1;
+    return true;
   }
 
   function markSkipNextSave(): void {
-    skipNextSave = true;
+    skipNextSaveCount += 1;
   }
 
   // ---- Plain setters (mirror the useState setters they replace) --------
@@ -216,13 +223,13 @@ export function createNoteSession({ api }: { api: NoteSessionApi }) {
   }
 
   function clearNote(): void {
-    skipNextSave = true;
+    markSkipNextSave();
     lastClickedNoteId = null;
     setState({ activeNote: null, selectedNoteIds: new Set() });
   }
 
   async function loadNoteInto(id: string, tabId?: string): Promise<void> {
-    skipNextSave = true;
+    markSkipNextSave();
     const note = await api.getNote(id);
     openNote(note, tabId);
   }

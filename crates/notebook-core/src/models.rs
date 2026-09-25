@@ -267,6 +267,8 @@ pub struct EnexImportRequest {
 pub struct EnexImportResult {
     pub imported: u32,
     pub skipped: u32,
+    #[serde(default)]
+    pub duplicates: u32,
     pub notebook_id: Uuid,
     pub notebook_name: String,
     #[serde(default)]

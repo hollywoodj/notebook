@@ -489,6 +489,7 @@ export const api = {
       return res.json() as Promise<{
         imported: number;
         skipped: number;
+        duplicates?: number;
         notebook_id: string;
         notebook_name: string;
         notebook_count?: number;
@@ -500,6 +501,7 @@ export const api = {
       return request<{
         imported: number;
         skipped: number;
+        duplicates?: number;
         notebook_id: string;
         notebook_name: string;
         notebook_count?: number;

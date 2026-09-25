@@ -75,7 +75,8 @@ import { LIST_MAX, LIST_MIN, PANE_LAYOUT_KEY, SIDEBAR_RAIL_WIDTH, clampPaneWidth
 import { COMPLETED_REMINDERS_KEY, formatReminderLabel, fromDatetimeLocalValue, groupRemindersForList, isReminderDone, isReminderOverdue, isoDayKey, parseCompletedReminders, reminderFallsOnDay, reminderFromPreset, reminderFromSnooze, toDatetimeLocalValue, toggleCompletedReminder, type ReminderPreset, type SnoozePreset } from "./ui/reminders";
 import { RECENT_SEARCHES_KEY, SAVED_SEARCHES_KEY, deleteSavedSearch, noteMatchesDateRange, noteMatchesFacets, parseRecentSearches, parseSavedSearches, rememberSearch, renameSavedSearch, snippetParts, toggleListFacet, type DateRangeFacet, type NoteListFacet, upsertSavedSearch } from "./ui/search";
 import { copyTextToClipboard, downloadTextFile, noteAppLink, noteMailtoHref, notesToEnex, safeFilename } from "./ui/share";
-import { COLLAPSED_STACKS_KEY, SIDEBAR_NAV_ICON_SIZE, SIDEBAR_SECTIONS_KEY, SidebarSectionId, collapseAllIds, hasVisibleSidebarNotebooks, matchesSidebarFilter, navIconTitle, notebooksMatchingFilter, parseCollapsedStacks, parseSidebarSections, sidebarFilterLabel, sidebarFlyoutTitle, toggleCollapsedId, type SidebarFlyoutKind } from "./ui/sidebar";
+import { filterTopLevelEnexFiles } from "./ui/enexFolderImport";
+import { COLLAPSED_STACKS_KEY, SIDEBAR_NAV_ICON_SIZE, SIDEBAR_SECTIONS_KEY, SidebarSectionId, collapseAllIds, hasVisibleSidebarNotebooks, matchesSidebarFilter, navIconTitle, notebooksMatchingFilter, parseCollapsedStacks, parseSidebarSections, partitionSidebarSections, sidebarFilterLabel, sidebarFlyoutTitle, toggleCollapsedId, type SidebarFlyoutKind } from "./ui/sidebar";
 import { closeAllUnpinnedTabIds, closeOtherTabIds, closeTabsToTheRight, noteTabLabel, pinTabById, popClosedTab, rememberClosedTab } from "./ui/tabs";
 
 
@@ -173,6 +174,9 @@ export default function App() {
   const [listFiltersOpen, setListFiltersOpen] = useState(false);
   const [notebookPicker, setNotebookPicker] = useState<"move" | "copy" | null>(null);
   const [showReminderMenu, setShowReminderMenu] = useState(false);
+  const [showNoteColorMenu, setShowNoteColorMenu] = useState(false);
+  const [showTagMenu, setShowTagMenu] = useState(false);
+  const [showNotebookCrumbMenu, setShowNotebookCrumbMenu] = useState(false);
   const [editorChrome, setEditorChrome] = useState(() =>
     parseEditorChrome(
       typeof localStorage === "undefined" ? null : localStorage.getItem(EDITOR_CHROME_KEY)
@@ -192,6 +196,7 @@ export default function App() {
   const [showGallery, setShowGallery] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showNoteMenu, setShowNoteMenu] = useState(false);
+  const [showListSortMenu, setShowListSortMenu] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextTarget | null>(null);
   const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null);
   const [newNotebookStackId, setNewNotebookStackId] = useState<string | null>(null);
@@ -232,6 +237,7 @@ export default function App() {
   const filesLoaded = filesStore.loaded;
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
+  const importFolderRef = useRef<HTMLInputElement>(null);
   const sidebarFilterRef = useRef<HTMLInputElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const tagInputRef = useRef<HTMLInputElement>(null);
@@ -267,6 +273,70 @@ export default function App() {
   // refreshMeta()?" for specific mutations.
   const refreshMeta = useCallback(() => noteStore.invalidate("meta"), []);
   const refreshNotes = useCallback(() => noteStore.invalidate("notes"), []);
+
+  const importEnexFiles = async (
+    files: File[],
+    options?: { source?: "files" | "folder" }
+  ) => {
+    try {
+      setImportStatus("Importing…");
+      let totalImported = 0;
+      let totalSkipped = 0;
+      let totalDuplicates = 0;
+      let lastNotebookId: string | undefined;
+      let lastNotebookName: string | undefined;
+      let notebookCount = 0;
+      const importErrors: { title?: string; message: string }[] = [];
+      for (const file of files) {
+        const result = await api.importEnex(file, {
+          notebookName: file.name.replace(/\.enex$/i, ""),
+        });
+        totalImported += result.imported;
+        totalSkipped += result.skipped;
+        totalDuplicates += result.duplicates ?? 0;
+        lastNotebookId = result.notebook_id;
+        lastNotebookName = result.notebook_name;
+        notebookCount = Math.max(notebookCount, result.notebook_count ?? 1);
+        importErrors.push(...(result.errors ?? []));
+      }
+      const singleNotebookTarget =
+        files.length === 1 && notebookCount <= 1 && lastNotebookId && lastNotebookName
+          ? { id: lastNotebookId, name: lastNotebookName }
+          : null;
+      const firstError = importErrors[0];
+      const errorHint = firstError
+        ? ` — ${firstError.title ? `${firstError.title}: ` : ""}${firstError.message}` +
+          (importErrors.length > 1 ? ` (+${importErrors.length - 1} more)` : "")
+        : "";
+      const summary =
+        options?.source === "folder"
+          ? `Imported ${totalImported} note${totalImported === 1 ? "" : "s"} from ${
+              files.length
+            } file${files.length === 1 ? "" : "s"}`
+          : `Imported ${totalImported} note${totalImported === 1 ? "" : "s"}${
+              singleNotebookTarget ? ` into “${singleNotebookTarget.name}”` : ""
+            }`;
+      setImportStatus(
+        summary +
+          (totalSkipped ? ` (${totalSkipped} skipped)` : "") +
+          (totalDuplicates ? ` (${totalDuplicates} already imported)` : "") +
+          errorHint
+      );
+      await refreshMeta();
+      await refreshNotes();
+      if (singleNotebookTarget) {
+        noteSession.setFilter({
+          type: "notebook",
+          id: singleNotebookTarget.id,
+          name: singleNotebookTarget.name,
+        });
+      } else {
+        noteSession.setFilter({ type: "all" });
+      }
+    } catch (err) {
+      setImportStatus(err instanceof Error ? err.message : "Import failed");
+    }
+  };
 
   // Keep the store's notes fetcher pointed at the current view. A no-op when
   // nothing actually changed, so calling it every render is cheap.
@@ -1010,13 +1080,8 @@ const saveNote = useCallback(
     if (filter.type === "search") {
       return groupNotesByNotebook(visibleNotes);
     }
-    return groupNotesForList(
-      visibleNotes,
-      prefs.sort_by === "title" || prefs.sort_by === "created" || prefs.sort_by === "reminder"
-        ? prefs.sort_by
-        : "updated"
-    );
-  }, [visibleNotes, prefs.sort_by, filter.type, completedReminders]);
+    return groupNotesForList(visibleNotes, filter.type === "notebook");
+  }, [visibleNotes, filter.type, completedReminders]);
 
   const visibleTags = useMemo(
     () => tags.filter((tag) => matchesSidebarFilter(tag.name, sidebarFilter)),
@@ -1251,6 +1316,7 @@ const saveNote = useCallback(
     searchInNotebook,
     setListView,
     importNotes: () => importRef.current?.click(),
+    importNotesFolder: () => importFolderRef.current?.click(),
     setNotebookDefault: async (notebook) => {
       await api.updateNotebook(notebook.id, { is_default: true });
       const next = await api.updateSettings({
@@ -1323,7 +1389,10 @@ const saveNote = useCallback(
     openCommandPalette: () => setShowPalette(true),
     isReminderCompleted: (id) => isReminderDone(completedReminders, id),
     openGlobalSearch,
-    focusTagInput: () => tagInputRef.current?.focus(),
+    focusTagInput: () => {
+      setShowTagMenu(true);
+      requestAnimationFrame(() => tagInputRef.current?.focus());
+    },
     tags,
     addTagToSelected: (tagId) => void addTagToSelected(tagId),
     openJump: (mode = "all") => {
@@ -1458,6 +1527,204 @@ const saveNote = useCallback(
   const contextMenuItems = (target: ContextTarget) => buildContextMenu(target, menuCtx);
   const menuGroups = buildMenuBar(menuCtx);
 
+  const renderSidebarSection = (section: SidebarSectionId) => {
+    if (section === "notes") {
+      return (
+        <button
+          key="notes"
+          className={filter.type === "all" ? "nav-item active" : "nav-item"}
+          title={navIconTitle("Notes", counts?.notes)}
+          onClick={() => showAllNotes()}
+        >
+          <Icon.Notes size={SIDEBAR_NAV_ICON_SIZE} />
+          <span className="nav-label">Notes</span>
+          <span className="nav-count">{navCountLabel(counts?.notes)}</span>
+        </button>
+      );
+    }
+    if (section === "shortcuts") {
+      return prefs.show_shortcuts ? (
+        <button
+          key="shortcuts"
+          className={
+            filter.type === "shortcuts" || sidebarFlyout === "shortcuts"
+              ? "nav-item active"
+              : "nav-item"
+          }
+          aria-label={navIconTitle("Shortcuts", shortcutNotes.length)}
+          aria-haspopup="dialog"
+          aria-expanded={sidebarFlyout === "shortcuts"}
+          onMouseEnter={() => previewSidebarFlyout("shortcuts")}
+          onMouseLeave={scheduleSidebarFlyoutClose}
+          onFocus={() => previewSidebarFlyout("shortcuts")}
+          onBlur={scheduleSidebarFlyoutClose}
+          onClick={() => {
+            openSidebarFlyout("shortcuts");
+            noteSession.setFilter({ type: "shortcuts" });
+            revealNoteList();
+          }}
+        >
+          <Icon.Shortcuts size={SIDEBAR_NAV_ICON_SIZE} />
+          <span className="nav-label">Shortcuts</span>
+          <span className="nav-count">
+            {navCountLabel(stickyNavCount(shortcutNotes.length, lastShortcutsCountRef.current))}
+          </span>
+        </button>
+      ) : null;
+    }
+    if (section === "reminders") {
+      return prefs.show_reminders ? (
+        <button
+          key="reminders"
+          className={filter.type === "reminders" ? "nav-item active" : "nav-item"}
+          title={navIconTitle("Reminders", counts?.reminders)}
+          onClick={() => showListFilter({ type: "reminders" })}
+        >
+          <Icon.Reminder size={SIDEBAR_NAV_ICON_SIZE} />
+          <span className="nav-label">Reminders</span>
+          <span className="nav-count">{navCountLabel(counts?.reminders)}</span>
+        </button>
+      ) : null;
+    }
+    if (section === "notebooks") {
+      return prefs.show_notebooks ? (
+        <button
+          key="notebooks"
+          className={
+            filter.type === "notebook" || sidebarFlyout === "notebooks"
+              ? "nav-item active"
+              : "nav-item"
+          }
+          aria-label={navIconTitle("Notebooks", notebooks.length)}
+          aria-haspopup="dialog"
+          aria-expanded={sidebarFlyout === "notebooks"}
+          onMouseEnter={() => previewSidebarFlyout("notebooks")}
+          onMouseLeave={scheduleSidebarFlyoutClose}
+          onFocus={() => previewSidebarFlyout("notebooks")}
+          onBlur={scheduleSidebarFlyoutClose}
+          onClick={() => openSidebarFlyout("notebooks")}
+        >
+          <Icon.Notebooks size={SIDEBAR_NAV_ICON_SIZE} />
+          <span className="nav-label">Notebooks</span>
+          <span className="nav-count">
+            {navCountLabel(stickyNavCount(notebooks.length, lastNotebooksCountRef.current))}
+          </span>
+        </button>
+      ) : null;
+    }
+    if (section === "tags") {
+      return prefs.show_tags ? (
+        <button
+          key="tags"
+          className={
+            filter.type === "tag" || sidebarFlyout === "tags"
+              ? "nav-item active"
+              : "nav-item"
+          }
+          aria-label={navIconTitle("Tags", tags.length)}
+          aria-haspopup="dialog"
+          aria-expanded={sidebarFlyout === "tags"}
+          onMouseEnter={() => previewSidebarFlyout("tags")}
+          onMouseLeave={scheduleSidebarFlyoutClose}
+          onFocus={() => previewSidebarFlyout("tags")}
+          onBlur={scheduleSidebarFlyoutClose}
+          onClick={() => openSidebarFlyout("tags")}
+        >
+          <Icon.Tags size={SIDEBAR_NAV_ICON_SIZE} />
+          <span className="nav-label">Tags</span>
+          <span className="nav-count">
+            {navCountLabel(stickyNavCount(tags.length, lastTagsCountRef.current))}
+          </span>
+        </button>
+      ) : null;
+    }
+    if (section === "templates") {
+      return prefs.show_templates ? (
+        <button
+          key="templates"
+          className={filter.type === "templates" ? "nav-item active" : "nav-item"}
+          title={navIconTitle("Templates", counts?.templates)}
+          onClick={() => showListFilter({ type: "templates" })}
+        >
+          <Icon.Templates size={SIDEBAR_NAV_ICON_SIZE} />
+          <span className="nav-label">Templates</span>
+          <span className="nav-count">{navCountLabel(counts?.templates)}</span>
+        </button>
+      ) : null;
+    }
+    if (section === "files") {
+      return prefs.show_files ? (
+        <button
+          key="files"
+          className={filter.type === "files" ? "nav-item active" : "nav-item"}
+          title={navIconTitle("Files", counts?.files)}
+          onClick={() => showListFilter({ type: "files" })}
+        >
+          <Icon.Files size={SIDEBAR_NAV_ICON_SIZE} />
+          <span className="nav-label">Files</span>
+          <span className="nav-count">{navCountLabel(counts?.files)}</span>
+        </button>
+      ) : null;
+    }
+    if (section === "archived") {
+      return (
+        <button
+          key="archived"
+          className={filter.type === "archived" ? "nav-item active" : "nav-item"}
+          title="Archived"
+          onClick={() => showListFilter({ type: "archived" })}
+        >
+          <Icon.Archive size={SIDEBAR_NAV_ICON_SIZE} />
+          <span className="nav-label">Archived</span>
+        </button>
+      );
+    }
+    if (section === "saved") {
+      return savedSearches.length > 0 ? (
+        <div key="saved" className="saved-search-nav" aria-label="Saved searches">
+          {savedSearches.slice(0, 8).map((search) => (
+            <button
+              key={search.id}
+              className={
+                filter.type === "search" && filter.query === search.query
+                  ? "nav-item active"
+                  : "nav-item"
+              }
+              title={search.name}
+              onClick={() => {
+                closeSidebarFlyout();
+                setSearchInput(search.query);
+                noteSession.setFilter({ type: "search", query: search.query });
+                setSearchOpen(true);
+                revealNoteList();
+              }}
+            >
+              <Icon.Search size={SIDEBAR_NAV_ICON_SIZE} />
+              <span className="nav-label">{search.name}</span>
+            </button>
+          ))}
+        </div>
+      ) : null;
+    }
+    if (section === "trash") {
+      return prefs.show_trash ? (
+        <button
+          key="trash"
+          className={filter.type === "trash" ? "nav-item active" : "nav-item"}
+          title={navIconTitle("Trash", counts?.trash)}
+          onClick={() => showListFilter({ type: "trash" })}
+        >
+          <Icon.Trash size={SIDEBAR_NAV_ICON_SIZE} />
+          <span className="nav-label">Trash</span>
+          <span className="nav-count">{navCountLabel(counts?.trash)}</span>
+        </button>
+      ) : null;
+    }
+    return null;
+  };
+  const { top: topSidebarSections, bottom: bottomSidebarSections } =
+    partitionSidebarSections(sidebarSections);
+
   return (
     <div
       className={
@@ -1481,6 +1748,10 @@ const saveNote = useCallback(
         setShowNewMenu(false);
         setShowNoteMenu(false);
         setShowReminderMenu(false);
+        setShowNoteColorMenu(false);
+        setShowTagMenu(false);
+        setShowNotebookCrumbMenu(false);
+        setShowListSortMenu(false);
         hideHoverPreview();
         setContextMenu(null);
         if (!(event.target as HTMLElement).closest(".sidebar")) {
@@ -1643,201 +1914,12 @@ const saveNote = useCallback(
         </div>
 
         <nav className="sidebar-nav scroll-pane">
-          {sidebarSections.map((section) => {
-            if (section === "notes") {
-              return (
-                <button
-                  key="notes"
-                  className={filter.type === "all" ? "nav-item active" : "nav-item"}
-                  title={navIconTitle("Notes", counts?.notes)}
-                  onClick={() => showAllNotes()}
-                >
-                  <Icon.Notes size={SIDEBAR_NAV_ICON_SIZE} />
-                  <span className="nav-label">Notes</span>
-                  <span className="nav-count">{navCountLabel(counts?.notes)}</span>
-                </button>
-              );
-            }
-            if (section === "shortcuts") {
-              return prefs.show_shortcuts ? (
-                <button
-                  key="shortcuts"
-                  className={
-                    filter.type === "shortcuts" || sidebarFlyout === "shortcuts"
-                      ? "nav-item active"
-                      : "nav-item"
-                  }
-                  aria-label={navIconTitle("Shortcuts", shortcutNotes.length)}
-                  aria-haspopup="dialog"
-                  aria-expanded={sidebarFlyout === "shortcuts"}
-                  onMouseEnter={() => previewSidebarFlyout("shortcuts")}
-                  onMouseLeave={scheduleSidebarFlyoutClose}
-                  onFocus={() => previewSidebarFlyout("shortcuts")}
-                  onBlur={scheduleSidebarFlyoutClose}
-                  onClick={() => {
-                    openSidebarFlyout("shortcuts");
-                    noteSession.setFilter({ type: "shortcuts" });
-                    revealNoteList();
-                  }}
-                >
-                  <Icon.Shortcuts size={SIDEBAR_NAV_ICON_SIZE} />
-                  <span className="nav-label">Shortcuts</span>
-                  <span className="nav-count">
-                    {navCountLabel(stickyNavCount(shortcutNotes.length, lastShortcutsCountRef.current))}
-                  </span>
-                </button>
-              ) : null;
-            }
-            if (section === "reminders") {
-              return prefs.show_reminders ? (
-                <button
-                  key="reminders"
-                  className={filter.type === "reminders" ? "nav-item active" : "nav-item"}
-                  title={navIconTitle("Reminders", counts?.reminders)}
-                  onClick={() => showListFilter({ type: "reminders" })}
-                >
-                  <Icon.Reminder size={SIDEBAR_NAV_ICON_SIZE} />
-                  <span className="nav-label">Reminders</span>
-                  <span className="nav-count">{navCountLabel(counts?.reminders)}</span>
-                </button>
-              ) : null;
-            }
-            if (section === "notebooks") {
-              return prefs.show_notebooks ? (
-                <button
-                  key="notebooks"
-                  className={
-                    filter.type === "notebook" || sidebarFlyout === "notebooks"
-                      ? "nav-item active"
-                      : "nav-item"
-                  }
-                  aria-label={navIconTitle("Notebooks", notebooks.length)}
-                  aria-haspopup="dialog"
-                  aria-expanded={sidebarFlyout === "notebooks"}
-                  onMouseEnter={() => previewSidebarFlyout("notebooks")}
-                  onMouseLeave={scheduleSidebarFlyoutClose}
-                  onFocus={() => previewSidebarFlyout("notebooks")}
-                  onBlur={scheduleSidebarFlyoutClose}
-                  onClick={() => openSidebarFlyout("notebooks")}
-                >
-                  <Icon.Notebooks size={SIDEBAR_NAV_ICON_SIZE} />
-                  <span className="nav-label">Notebooks</span>
-                  <span className="nav-count">
-                    {navCountLabel(stickyNavCount(notebooks.length, lastNotebooksCountRef.current))}
-                  </span>
-                </button>
-              ) : null;
-            }
-            if (section === "tags") {
-              return prefs.show_tags ? (
-                <button
-                  key="tags"
-                  className={
-                    filter.type === "tag" || sidebarFlyout === "tags"
-                      ? "nav-item active"
-                      : "nav-item"
-                  }
-                  aria-label={navIconTitle("Tags", tags.length)}
-                  aria-haspopup="dialog"
-                  aria-expanded={sidebarFlyout === "tags"}
-                  onMouseEnter={() => previewSidebarFlyout("tags")}
-                  onMouseLeave={scheduleSidebarFlyoutClose}
-                  onFocus={() => previewSidebarFlyout("tags")}
-                  onBlur={scheduleSidebarFlyoutClose}
-                  onClick={() => openSidebarFlyout("tags")}
-                >
-                  <Icon.Tags size={SIDEBAR_NAV_ICON_SIZE} />
-                  <span className="nav-label">Tags</span>
-                  <span className="nav-count">
-                    {navCountLabel(stickyNavCount(tags.length, lastTagsCountRef.current))}
-                  </span>
-                </button>
-              ) : null;
-            }
-            if (section === "templates") {
-              return prefs.show_templates ? (
-                <button
-                  key="templates"
-                  className={filter.type === "templates" ? "nav-item active" : "nav-item"}
-                  title={navIconTitle("Templates", counts?.templates)}
-                  onClick={() => showListFilter({ type: "templates" })}
-                >
-                  <Icon.Templates size={SIDEBAR_NAV_ICON_SIZE} />
-                  <span className="nav-label">Templates</span>
-                  <span className="nav-count">{navCountLabel(counts?.templates)}</span>
-                </button>
-              ) : null;
-            }
-            if (section === "files") {
-              return prefs.show_files ? (
-                <button
-                  key="files"
-                  className={filter.type === "files" ? "nav-item active" : "nav-item"}
-                  title={navIconTitle("Files", counts?.files)}
-                  onClick={() => showListFilter({ type: "files" })}
-                >
-                  <Icon.Files size={SIDEBAR_NAV_ICON_SIZE} />
-                  <span className="nav-label">Files</span>
-                  <span className="nav-count">{navCountLabel(counts?.files)}</span>
-                </button>
-              ) : null;
-            }
-            if (section === "archived") {
-              return (
-                <button
-                  key="archived"
-                  className={filter.type === "archived" ? "nav-item active" : "nav-item"}
-                  title="Archived"
-                  onClick={() => showListFilter({ type: "archived" })}
-                >
-                  <Icon.Archive size={SIDEBAR_NAV_ICON_SIZE} />
-                  <span className="nav-label">Archived</span>
-                </button>
-              );
-            }
-            if (section === "saved") {
-              return savedSearches.length > 0 ? (
-                <div key="saved" className="saved-search-nav" aria-label="Saved searches">
-                  {savedSearches.slice(0, 8).map((search) => (
-                    <button
-                      key={search.id}
-                      className={
-                        filter.type === "search" && filter.query === search.query
-                          ? "nav-item active"
-                          : "nav-item"
-                      }
-                      title={search.name}
-                      onClick={() => {
-                        closeSidebarFlyout();
-                        setSearchInput(search.query);
-                        noteSession.setFilter({ type: "search", query: search.query });
-                        setSearchOpen(true);
-                        revealNoteList();
-                      }}
-                    >
-                      <Icon.Search size={SIDEBAR_NAV_ICON_SIZE} />
-                      <span className="nav-label">{search.name}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null;
-            }
-            if (section === "trash") {
-              return prefs.show_trash ? (
-                <button
-                  key="trash"
-                  className={filter.type === "trash" ? "nav-item active" : "nav-item"}
-                  title={navIconTitle("Trash", counts?.trash)}
-                  onClick={() => showListFilter({ type: "trash" })}
-                >
-                  <Icon.Trash size={SIDEBAR_NAV_ICON_SIZE} />
-                  <span className="nav-label">Trash</span>
-                  <span className="nav-count">{navCountLabel(counts?.trash)}</span>
-                </button>
-              ) : null;
-            }
-            return null;
-          })}
+          <div className="sidebar-nav-group">
+            {topSidebarSections.map(renderSidebarSection)}
+          </div>
+          <div className="sidebar-nav-group sidebar-nav-bottom">
+            {bottomSidebarSections.map(renderSidebarSection)}
+          </div>
         </nav>
         {sidebarFlyout && (
           <div
@@ -1975,7 +2057,7 @@ const saveNote = useCallback(
                             });
                           }}
                         >
-                          <Icon.Chevron size={12} />
+                          <Icon.Chevron size={16} />
                           {stack.name}
                         </button>
                         {!collapsedStacks.includes(stack.id) && stacked.map((nb) => (
@@ -2107,61 +2189,31 @@ const saveNote = useCallback(
             const files = Array.from(e.target.files ?? []);
             e.target.value = "";
             if (!files.length) return;
-            try {
-              setImportStatus("Importing…");
-              let totalImported = 0;
-              let totalSkipped = 0;
-              let lastNotebookId: string | undefined;
-              let lastNotebookName: string | undefined;
-              let notebookCount = 0;
-              const importErrors: { title?: string; message: string }[] = [];
-              for (const file of files) {
-                const result = await api.importEnex(file, {
-                  notebookName: file.name.replace(/\.enex$/i, ""),
-                });
-                totalImported += result.imported;
-                totalSkipped += result.skipped;
-                lastNotebookId = result.notebook_id;
-                lastNotebookName = result.notebook_name;
-                notebookCount = Math.max(notebookCount, result.notebook_count ?? 1);
-                importErrors.push(...(result.errors ?? []));
-              }
-              const target =
-                files.length === 1 &&
-                notebookCount <= 1 &&
-                lastNotebookId &&
-                lastNotebookName
-                  ? ` into “${lastNotebookName}”`
-                  : "";
-              const firstError = importErrors[0];
-              const errorHint = firstError
-                ? ` — ${firstError.title ? `${firstError.title}: ` : ""}${firstError.message}` +
-                  (importErrors.length > 1 ? ` (+${importErrors.length - 1} more)` : "")
-                : "";
-              setImportStatus(
-                `Imported ${totalImported} note${totalImported === 1 ? "" : "s"}${target}` +
-                  (totalSkipped ? ` (${totalSkipped} skipped)` : "") +
-                  errorHint
-              );
-              await refreshMeta();
-              await refreshNotes();
-              if (
-                files.length === 1 &&
-                notebookCount <= 1 &&
-                lastNotebookId &&
-                lastNotebookName
-              ) {
-                noteSession.setFilter({
-                  type: "notebook",
-                  id: lastNotebookId,
-                  name: lastNotebookName,
-                });
-              } else {
-                noteSession.setFilter({ type: "all" });
-              }
-            } catch (err) {
-              setImportStatus(err instanceof Error ? err.message : "Import failed");
+            await importEnexFiles(files);
+          }}
+        />
+        <input
+          ref={importFolderRef}
+          type="file"
+          hidden
+          {...({ webkitdirectory: "true", directory: "true" } as Record<string, string>)}
+          onChange={async (e) => {
+            const files = Array.from(e.target.files ?? []);
+            e.target.value = "";
+            if (!files.length) return;
+            const enexFiles = filterTopLevelEnexFiles(
+              files.map((file) => ({
+                file,
+                name: file.name,
+                webkitRelativePath: (file as File & { webkitRelativePath: string })
+                  .webkitRelativePath,
+              }))
+            ).map((entry) => entry.file);
+            if (!enexFiles.length) {
+              setImportStatus("No .enex files found in that folder");
+              return;
             }
+            await importEnexFiles(enexFiles, { source: "folder" });
           }}
         />
       </aside>
@@ -2169,13 +2221,13 @@ const saveNote = useCallback(
 
       <section className="note-list-panel">
         <div className="panel-header">
-          <div>
+          <div className="panel-header-title">
             <h2>{viewTitle}</h2>
             <span className="count" title="Notes in this view">
               {listCount}
             </span>
           </div>
-          <div className="panel-tools">
+          <div className="panel-header-tools">
             {filter.type === "notebook" && (
               <button
                 type="button"
@@ -2213,92 +2265,110 @@ const saveNote = useCallback(
                 Empty
               </button>
             )}
-            {filter.type !== "trash" && (
-              <button
-                type="button"
-                className={
-                  "list-filters-btn" +
-                  (listFiltersOpen || hasActiveListFilters(listFacets, listDateRange)
-                    ? " active"
-                    : "")
-                }
-                aria-expanded={listFiltersOpen}
-                aria-label="Filter notes"
-                onClick={() => setListFiltersOpen((open) => !open)}
-              >
-                <Icon.Filter size={14} />
-                Filters
-                {listFilterCount(listFacets, listDateRange) > 0 && (
-                  <span className="list-filter-count">
-                    {listFilterCount(listFacets, listDateRange)}
-                  </span>
+            <div className="panel-header-icons">
+              {filter.type !== "trash" && (
+                <button
+                  type="button"
+                  className={
+                    "list-tool-btn" +
+                    (listFiltersOpen || hasActiveListFilters(listFacets, listDateRange)
+                      ? " active"
+                      : "")
+                  }
+                  aria-expanded={listFiltersOpen}
+                  aria-label="Filter notes"
+                  title="Filter notes"
+                  onClick={() => setListFiltersOpen((open) => !open)}
+                >
+                  <Icon.Filter size={14} />
+                  {listFilterCount(listFacets, listDateRange) > 0 && (
+                    <span className="list-filter-count">
+                      {listFilterCount(listFacets, listDateRange)}
+                    </span>
+                  )}
+                </button>
+              )}
+              <div className="menu-anchor" onMouseDown={(e) => e.stopPropagation()}>
+                <button
+                  type="button"
+                  className={showListSortMenu ? "list-tool-btn active" : "list-tool-btn"}
+                  aria-expanded={showListSortMenu}
+                  aria-label="Sort notes"
+                  title="Sort notes"
+                  onClick={() => setShowListSortMenu((v) => !v)}
+                >
+                  <Icon.Sort size={14} />
+                </button>
+                {showListSortMenu && (
+                  <div className="menu-popover list-sort-popover">
+                    {(
+                      [
+                        { key: "updated", label: "Updated" },
+                        { key: "created", label: "Created" },
+                        { key: "title", label: "Title" },
+                        { key: "reminder", label: "Reminder" },
+                      ] as const
+                    ).map((option) => (
+                      <button
+                        key={option.key}
+                        type="button"
+                        className={
+                          prefs.sort_by === option.key ? "menu-check-item is-active" : "menu-check-item"
+                        }
+                        onClick={() => {
+                          const sort_by = option.key as Preferences["sort_by"];
+                          setPrefs((p) => ({ ...p, sort_by }));
+                          api.updateSettings({ sort_by }).catch(console.error);
+                          setShowListSortMenu(false);
+                        }}
+                      >
+                        {option.label}
+                        {prefs.sort_by === option.key && <Icon.Check size={14} />}
+                      </button>
+                    ))}
+                    <div className="menu-popover-separator" role="separator" />
+                    <button
+                      type="button"
+                      className={prefs.sort_descending ? "menu-check-item is-active" : "menu-check-item"}
+                      onClick={() => {
+                        const sort_descending = !prefs.sort_descending;
+                        setPrefs((p) => ({ ...p, sort_descending }));
+                        api.updateSettings({ sort_descending }).catch(console.error);
+                        setShowListSortMenu(false);
+                      }}
+                    >
+                      Newest first
+                      {prefs.sort_descending && <Icon.Check size={14} />}
+                    </button>
+                  </div>
                 )}
-              </button>
-            )}
-            <select
-              className="list-sort"
-              aria-label="Sort notes by"
-              value={prefs.sort_by}
-              onChange={(e) => {
-                const sort_by = e.target.value as Preferences["sort_by"];
-                setPrefs((p) => ({ ...p, sort_by }));
-                api.updateSettings({ sort_by }).catch(console.error);
-              }}
-            >
-              <option value="updated">Updated</option>
-              <option value="created">Created</option>
-              <option value="title">Title</option>
-              <option value="reminder">Reminder</option>
-            </select>
-            <button
-              type="button"
-              className={prefs.sort_descending ? "icon-btn active" : "icon-btn"}
-              title={prefs.sort_descending ? "Newest first" : "Reverse sort"}
-              onClick={() => {
-                const sort_descending = !prefs.sort_descending;
-                setPrefs((p) => ({ ...p, sort_descending }));
-                api.updateSettings({ sort_descending }).catch(console.error);
-              }}
-            >
-              <Icon.Sort size={14} />
-            </button>
-            <button
-              type="button"
-              className={prefs.list_density === "compact" ? "icon-btn active" : "icon-btn"}
-              title={prefs.list_density === "compact" ? "Comfortable density" : "Compact density"}
-              onClick={() => {
-                const list_density = prefs.list_density === "compact" ? "comfortable" : "compact";
-                setPrefs((p) => ({ ...p, list_density }));
-                api.updateSettings({ list_density }).catch(console.error);
-              }}
-            >
-              <Icon.Compact size={14} />
-            </button>
-            <div className="view-toggle" role="group" aria-label="Note list view">
-              <button
-                type="button"
-                className={listView === "snippets" ? "active" : ""}
-                title="Snippets"
-                onClick={() => setListView("snippets")}
-              >
-                <Icon.Snippets size={14} />
-              </button>
-              <button
-                type="button"
-                className={listView === "titles" ? "active" : ""}
-                title="Titles"
-                onClick={() => setListView("titles")}
-              >
-                <Icon.Titles size={14} />
-              </button>
-              <button
-                type="button"
-                className={listView === "cards" ? "active" : ""}
-                title="Cards"
-                onClick={() => setListView("cards")}
-              >
-                <Icon.Cards size={14} />
-              </button>
+              </div>
+              <div className="view-toggle" role="group" aria-label="Note list view">
+                <button
+                  type="button"
+                  className={listView === "titles" ? "active" : ""}
+                  title="Titles"
+                  onClick={() => setListView("titles")}
+                >
+                  <Icon.Titles size={14} />
+                </button>
+                <button
+                  type="button"
+                  className={listView === "snippets" ? "active" : ""}
+                  title="Snippets"
+                  onClick={() => setListView("snippets")}
+                >
+                  <Icon.Snippets size={14} />
+                </button>
+                <button
+                  type="button"
+                  className={listView === "cards" ? "active" : ""}
+                  title="Cards"
+                  onClick={() => setListView("cards")}
+                >
+                  <Icon.Cards size={14} />
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -2528,7 +2598,7 @@ const saveNote = useCallback(
             >
               <div className="note-card-title">
                 <span className="note-card-title-text">
-                  {note.is_pinned && <Icon.Pin size={13} />}
+                  {note.is_pinned && <Icon.Pin size={17} className="note-card-pin" />}
                   {note.is_template && <Icon.Templates size={13} />}
                   {note.title || "Untitled"}
                 </span>
@@ -2567,7 +2637,7 @@ const saveNote = useCallback(
                     aria-hidden="true"
                   />
                 )}
-              {listView !== "titles" && prefs.show_snippets && (
+              {listView !== "titles" && listView !== "cards" && prefs.show_snippets && (
                 <div className="note-card-snippet">
                   {searchQuery
                     ? snippetParts(note.snippet, searchQuery).map((part, index) =>
@@ -2644,33 +2714,469 @@ const saveNote = useCallback(
 
       <main className="editor-panel">
         <div className="note-chrome">
-          <button
-            type="button"
-            className={paneLayout.sidebarCollapsed ? "icon-btn active" : "icon-btn"}
-            title={paneLayout.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
-            onClick={() => {
-              closeSidebarFlyout();
-              persistPaneLayout(toggleSidebarHidden(paneLayout));
-            }}
-          >
-            <Icon.Sidebar size={16} />
-          </button>
-          <button
-            type="button"
-            className={paneLayout.listCollapsed ? "icon-btn active" : "icon-btn"}
-            title={paneLayout.listCollapsed ? "Show note list" : "Hide note list"}
-            onClick={() => persistPaneLayout(toggleNoteListHidden(paneLayout))}
-          >
-            <Icon.HideList size={16} />
-          </button>
-          <button
-            type="button"
-            className={isNoteExpanded(paneLayout) ? "icon-btn active" : "icon-btn"}
-            title={isNoteExpanded(paneLayout) ? "Restore panes" : "Expand note"}
-            onClick={() => persistPaneLayout(toggleNoteExpanded(paneLayout))}
-          >
-            <Icon.ExpandNote size={16} />
-          </button>
+          <div className="note-chrome-panes">
+            <button
+              type="button"
+              className={paneLayout.sidebarCollapsed ? "icon-btn active" : "icon-btn"}
+              title={paneLayout.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
+              onClick={() => {
+                closeSidebarFlyout();
+                persistPaneLayout(toggleSidebarHidden(paneLayout));
+              }}
+            >
+              <Icon.Sidebar size={16} />
+            </button>
+            <button
+              type="button"
+              className={paneLayout.listCollapsed ? "icon-btn active" : "icon-btn"}
+              title={paneLayout.listCollapsed ? "Show note list" : "Hide note list"}
+              onClick={() => persistPaneLayout(toggleNoteListHidden(paneLayout))}
+            >
+              <Icon.HideList size={16} />
+            </button>
+            <button
+              type="button"
+              className={isNoteExpanded(paneLayout) ? "icon-btn active" : "icon-btn"}
+              title={isNoteExpanded(paneLayout) ? "Restore panes" : "Expand note"}
+              onClick={() => persistPaneLayout(toggleNoteExpanded(paneLayout))}
+            >
+              <Icon.ExpandNote size={16} />
+            </button>
+          </div>
+          {activeNote && (
+            <>
+              <nav className="note-breadcrumb">
+                <div className="menu-anchor" onMouseDown={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="note-breadcrumb-notebook"
+                    onClick={() => setShowNotebookCrumbMenu((v) => !v)}
+                  >
+                    {notebooks.find((nb) => nb.id === activeNote.notebook_id)?.name || "Notebook"}
+                  </button>
+                  {showNotebookCrumbMenu && (
+                    <div className="menu-popover">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const notebook = notebooks.find((item) => item.id === activeNote.notebook_id);
+                          setShowNotebookCrumbMenu(false);
+                          if (!notebook) return;
+                          closeSidebarFlyout();
+                          noteSession.setFilter({ type: "notebook", id: notebook.id, name: notebook.name });
+                        }}
+                      >
+                        Show notes in this notebook
+                      </button>
+                      <div className="menu-popover-separator" role="separator" />
+                      {notebooks.map((nb) => (
+                        <button
+                          key={nb.id}
+                          type="button"
+                          className={
+                            nb.id === activeNote.notebook_id ? "menu-check-item is-active" : "menu-check-item"
+                          }
+                          onClick={() => {
+                            saveNote({ ...activeNote, notebook_id: nb.id });
+                            setShowNotebookCrumbMenu(false);
+                          }}
+                        >
+                          {nb.name}
+                          {nb.id === activeNote.notebook_id && <Icon.Check size={14} />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <span className="note-breadcrumb-sep">›</span>
+                <span className="note-breadcrumb-title">{activeNote.title || "Untitled"}</span>
+              </nav>
+              <div className="note-chrome-actions">
+                <button
+                  type="button"
+                  className={isShortcut ? "icon-btn active" : "icon-btn"}
+                  title={isShortcut ? "Remove from shortcuts" : "Add to shortcuts"}
+                  onClick={async () => {
+                    if (isShortcut) await api.removeShortcut(activeNote.id);
+                    else await api.addShortcut(activeNote.id);
+                    await refreshMeta();
+                  }}
+                >
+                  <Icon.Shortcuts size={16} />
+                </button>
+                <button
+                  type="button"
+                  className={activeNote.is_pinned ? "icon-btn active" : "icon-btn"}
+                  title={activeNote.is_pinned ? "Unpin" : "Pin to top"}
+                  onClick={() =>
+                    saveNote({ ...activeNote, is_pinned: !activeNote.is_pinned })
+                  }
+                >
+                  <Icon.Pin size={16} />
+                </button>
+                <div className="menu-anchor" onMouseDown={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    className={activeNote.tag_ids.length > 0 ? "icon-btn active" : "icon-btn"}
+                    title="Tags"
+                    onClick={() => setShowTagMenu((v) => !v)}
+                  >
+                    <Icon.Tags size={16} />
+                  </button>
+                  {showTagMenu && (
+                    <div className="menu-popover note-tag-popover" role="group" aria-label="Tags">
+                      <NoteTagBar
+                        tags={tags}
+                        selectedIds={activeNote.tag_ids}
+                        inputRef={tagInputRef}
+                        onChange={(tagIds) => void saveNote({ tag_ids: tagIds })}
+                        onCreateTag={async (name) => {
+                          const tag = await api.createTag(name);
+                          await refreshMeta();
+                          await saveNote({ tag_ids: [...activeNote.tag_ids, tag.id] });
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className={lockedNoteIds.includes(activeNote.id) ? "icon-btn active" : "icon-btn"}
+                  title={lockedNoteIds.includes(activeNote.id) ? "Unlock note" : "Lock note"}
+                  onClick={() => {
+                    const next = toggleCollapsedId(lockedNoteIds, activeNote.id);
+                    setLockedNoteIds(next);
+                    localStorage.setItem(LOCKED_NOTES_KEY, JSON.stringify(next));
+                  }}
+                >
+                  <Icon.Lock size={16} />
+                </button>
+                <div className="menu-anchor" onMouseDown={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="note-color-trigger"
+                    title="Note colour"
+                    onClick={() => setShowNoteColorMenu((v) => !v)}
+                  >
+                    <span
+                      className="note-color-trigger-swatch"
+                      style={{
+                        background:
+                          NOTE_COLORS.find(
+                            (color) => color.id === (noteColors[activeNote.id] || "")
+                          )?.swatch || "transparent",
+                      }}
+                    />
+                  </button>
+                  {showNoteColorMenu && (
+                    <div className="menu-popover note-color-popover" role="group" aria-label="Note color">
+                      {NOTE_COLORS.map((color) => (
+                        <button
+                          key={color.id || "none"}
+                          type="button"
+                          className={
+                            (noteColors[activeNote.id] || "") === color.id
+                              ? "note-color-dot is-active"
+                              : "note-color-dot"
+                          }
+                          style={{ background: color.swatch }}
+                          title={color.label}
+                          onClick={() => {
+                            const next = applyNoteColor(noteColors, activeNote.id, color.id);
+                            setNoteColors(next);
+                            localStorage.setItem(NOTE_COLORS_KEY, JSON.stringify(next));
+                            setShowNoteColorMenu(false);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="menu-anchor" onMouseDown={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    className={activeNote.reminder_at ? "icon-btn active" : "icon-btn"}
+                    onClick={() => setShowReminderMenu((open) => !open)}
+                    title="Remind me"
+                  >
+                    <Icon.Reminder size={16} />
+                  </button>
+                  {showReminderMenu && (
+                    <div className="menu-popover right reminder-popover">
+                      {activeNote.reminder_at && (
+                        <>
+                          <button onClick={() => void snoozeReminder("laterToday")}>
+                            Later today
+                          </button>
+                          <button onClick={() => void snoozeReminder("tomorrowMorning")}>
+                            Tomorrow morning
+                          </button>
+                          <button onClick={() => toggleReminderDone(activeNote.id)}>
+                            {isReminderDone(completedReminders, activeNote.id)
+                              ? "Restore reminder"
+                              : "Mark reminder done"}
+                          </button>
+                        </>
+                      )}
+                      <button onClick={() => void setReminderPreset("tonight")}>Tonight</button>
+                      <button onClick={() => void setReminderPreset("tomorrow")}>Tomorrow</button>
+                      <button onClick={() => void setReminderPreset("nextWeek")}>Next week</button>
+                      <label className="reminder-custom">
+                        Pick date & time
+                        <input
+                          type="datetime-local"
+                          value={toDatetimeLocalValue(activeNote.reminder_at)}
+                          onChange={(event) => {
+                            saveNote({
+                              reminder_at: fromDatetimeLocalValue(event.target.value),
+                            });
+                            setShowReminderMenu(false);
+                          }}
+                        />
+                      </label>
+                      {activeNote.reminder_at && (
+                        <button onClick={() => void setReminderPreset("clear")}>
+                          Clear reminder
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className={showInfo ? "icon-btn active" : "icon-btn"}
+                  onClick={() => setShowInfo((open) => !open)}
+                  title="Note info"
+                >
+                  <Icon.Info size={16} />
+                </button>
+                <div className="menu-anchor" onMouseDown={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => setShowNoteMenu((v) => !v)}
+                    title="More"
+                  >
+                    <Icon.More size={16} />
+                  </button>
+                  {showNoteMenu && (
+                    <div className="menu-popover right">
+                      <button
+                        onClick={() => {
+                          setShowNoteMenu(false);
+                          printActiveNote();
+                        }}
+                      >
+                        Print…
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowNoteMenu(false);
+                          setShowInfo(true);
+                        }}
+                      >
+                        Note history
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowNoteMenu(false);
+                          void openInNewTab(activeNote.id);
+                        }}
+                      >
+                        Open in New Tab
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowNoteMenu(false);
+                          void emailActiveNote(activeNote.id);
+                        }}
+                      >
+                        Email note…
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowNoteMenu(false);
+                          void sendToOmniClone("note");
+                        }}
+                      >
+                        Send to OmniClone
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowNoteMenu(false);
+                          void sendToOmniClone("checklists");
+                        }}
+                      >
+                        Send Checkboxes to OmniClone
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowNoteMenu(false);
+                          void copyActiveNoteLink();
+                        }}
+                      >
+                        Copy note link
+                      </button>
+                      {!activeNote.is_template && (
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            saveNote({
+                              ...activeNote,
+                              is_template: true,
+                              template_category: "My templates",
+                            });
+                            noteSession.setFilter({ type: "templates" });
+                          }}
+                        >
+                          Save as template
+                        </button>
+                      )}
+                      {activeNote.is_template && (
+                        <button
+                          onClick={() => {
+                            setShowNoteMenu(false);
+                            saveNote({ ...activeNote, is_template: false });
+                          }}
+                        >
+                          Convert to note
+                        </button>
+                      )}
+                      <button
+                        onClick={() => {
+                          setShowNoteMenu(false);
+                          saveNote({
+                            ...activeNote,
+                            is_archived: !activeNote.is_archived,
+                          });
+                        }}
+                      >
+                        {activeNote.is_archived ? "Unarchive" : "Archive"}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowNoteMenu(false);
+                          setNotebookPicker("move");
+                        }}
+                      >
+                        Move to notebook…
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowNoteMenu(false);
+                          setNotebookPicker("copy");
+                        }}
+                      >
+                        Copy to notebook…
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowNoteMenu(false);
+                          void copyActiveNoteAs("rich");
+                        }}
+                      >
+                        Copy as rich text
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowNoteMenu(false);
+                          void copyActiveNoteAs("plain");
+                        }}
+                      >
+                        Copy as plain text
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowNoteMenu(false);
+                          void copyActiveNoteAs("markdown");
+                        }}
+                      >
+                        Copy as Markdown
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowNoteMenu(false);
+                          void exportSelectedNotes("markdown");
+                        }}
+                      >
+                        Export as Markdown…
+                      </button>
+                      {activeNote.reminder_at && (
+                        <>
+                          <button
+                            onClick={() => {
+                              setShowNoteMenu(false);
+                              void snoozeReminder("laterToday");
+                            }}
+                          >
+                            Snooze until later today
+                          </button>
+                          <button
+                            onClick={() => {
+                              setShowNoteMenu(false);
+                              void snoozeReminder("tomorrowMorning");
+                            }}
+                          >
+                            Snooze until tomorrow morning
+                          </button>
+                        </>
+                      )}
+                      {filter.type === "trash" ? (
+                        <>
+                          <button
+                            onClick={async () => {
+                              await api.restoreNote(activeNote.id);
+                              noteSession.setActiveNote(null);
+                              await noteStore.afterNoteChange();
+                            }}
+                          >
+                            Restore
+                          </button>
+                          <button
+                            className="danger-text"
+                            onClick={async () => {
+                              if (
+                                !(await confirm("Delete this note forever?", {
+                                  confirmLabel: "Delete",
+                                  danger: true,
+                                }))
+                              ) {
+                                return;
+                              }
+                              await api.permanentlyDeleteNote(activeNote.id);
+                              noteSession.setActiveNote(null);
+                              await noteStore.afterNoteChange();
+                            }}
+                          >
+                            Delete forever
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          className="danger-text"
+                          onClick={async () => {
+                            if (
+                              !(await confirm("Move this note to Trash?", {
+                                confirmLabel: "Move to Trash",
+                                danger: true,
+                              }))
+                            ) {
+                              return;
+                            }
+                            await api.deleteNote(activeNote.id);
+                            noteSession.setActiveNote(null);
+                            await noteStore.afterNoteChange();
+                          }}
+                        >
+                          Move to trash
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </div>
         {activeNote ? (
           <div
@@ -2699,376 +3205,8 @@ const saveNote = useCallback(
               </div>
             )}
             <div className="editor-header">
-              <div className="editor-header-row editor-header-tools">
-                <div className="editor-actions">
-                  <button
-                    type="button"
-                    className={activeNote.is_pinned ? "icon-btn active" : "icon-btn"}
-                    title={activeNote.is_pinned ? "Unpin" : "Pin to top"}
-                    onClick={() =>
-                      saveNote({ ...activeNote, is_pinned: !activeNote.is_pinned })
-                    }
-                  >
-                    <Icon.Pin size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    className={lockedNoteIds.includes(activeNote.id) ? "icon-btn active" : "icon-btn"}
-                    title={lockedNoteIds.includes(activeNote.id) ? "Unlock note" : "Lock note"}
-                    onClick={() => {
-                      const next = toggleCollapsedId(lockedNoteIds, activeNote.id);
-                      setLockedNoteIds(next);
-                      localStorage.setItem(LOCKED_NOTES_KEY, JSON.stringify(next));
-                    }}
-                  >
-                    <Icon.Lock size={16} />
-                  </button>
-                  <div className="note-color-swatches" role="group" aria-label="Note color">
-                    {NOTE_COLORS.map((color) => (
-                      <button
-                        key={color.id || "none"}
-                        type="button"
-                        className={
-                          (noteColors[activeNote.id] || "") === color.id
-                            ? "note-color-dot is-active"
-                            : "note-color-dot"
-                        }
-                        style={{ background: color.swatch }}
-                        title={color.label}
-                        onClick={() => {
-                          const next = applyNoteColor(noteColors, activeNote.id, color.id);
-                          setNoteColors(next);
-                          localStorage.setItem(NOTE_COLORS_KEY, JSON.stringify(next));
-                        }}
-                      />
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    className={isShortcut ? "icon-btn active" : "icon-btn"}
-                    title={isShortcut ? "Remove from shortcuts" : "Add to shortcuts"}
-                    onClick={async () => {
-                      if (isShortcut) await api.removeShortcut(activeNote.id);
-                      else await api.addShortcut(activeNote.id);
-                      await refreshMeta();
-                    }}
-                  >
-                    <Icon.Shortcuts size={16} />
-                  </button>
-                  <div className="menu-anchor" onMouseDown={(e) => e.stopPropagation()}>
-                    <button
-                      type="button"
-                      className={activeNote.reminder_at ? "icon-btn active" : "icon-btn"}
-                      onClick={() => setShowReminderMenu((open) => !open)}
-                      title="Remind me"
-                    >
-                      <Icon.Reminder size={16} />
-                    </button>
-                    {showReminderMenu && (
-                      <div className="menu-popover right reminder-popover">
-                        {activeNote.reminder_at && (
-                          <>
-                            <button onClick={() => void snoozeReminder("laterToday")}>
-                              Later today
-                            </button>
-                            <button onClick={() => void snoozeReminder("tomorrowMorning")}>
-                              Tomorrow morning
-                            </button>
-                            <button onClick={() => toggleReminderDone(activeNote.id)}>
-                              {isReminderDone(completedReminders, activeNote.id)
-                                ? "Restore reminder"
-                                : "Mark reminder done"}
-                            </button>
-                          </>
-                        )}
-                        <button onClick={() => void setReminderPreset("tonight")}>Tonight</button>
-                        <button onClick={() => void setReminderPreset("tomorrow")}>Tomorrow</button>
-                        <button onClick={() => void setReminderPreset("nextWeek")}>Next week</button>
-                        <label className="reminder-custom">
-                          Pick date & time
-                          <input
-                            type="datetime-local"
-                            value={toDatetimeLocalValue(activeNote.reminder_at)}
-                            onChange={(event) => {
-                              saveNote({
-                                reminder_at: fromDatetimeLocalValue(event.target.value),
-                              });
-                              setShowReminderMenu(false);
-                            }}
-                          />
-                        </label>
-                        {activeNote.reminder_at && (
-                          <button onClick={() => void setReminderPreset("clear")}>
-                            Clear reminder
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    className={showInfo ? "icon-btn active" : "icon-btn"}
-                    onClick={() => setShowInfo((open) => !open)}
-                    title="Note info"
-                  >
-                    <Icon.Info size={16} />
-                  </button>
-                  <div className="menu-anchor" onMouseDown={(e) => e.stopPropagation()}>
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      onClick={() => setShowNoteMenu((v) => !v)}
-                      title="More"
-                    >
-                      <Icon.More size={16} />
-                    </button>
-                    {showNoteMenu && (
-                      <div className="menu-popover right">
-                        <button
-                          onClick={() => {
-                            setShowNoteMenu(false);
-                            printActiveNote();
-                          }}
-                        >
-                          Print…
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowNoteMenu(false);
-                            setShowInfo(true);
-                          }}
-                        >
-                          Note history
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowNoteMenu(false);
-                            void openInNewTab(activeNote.id);
-                          }}
-                        >
-                          Open in New Tab
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowNoteMenu(false);
-                            void emailActiveNote(activeNote.id);
-                          }}
-                        >
-                          Email note…
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowNoteMenu(false);
-                            void sendToOmniClone("note");
-                          }}
-                        >
-                          Send to OmniClone
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowNoteMenu(false);
-                            void sendToOmniClone("checklists");
-                          }}
-                        >
-                          Send Checkboxes to OmniClone
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowNoteMenu(false);
-                            void copyActiveNoteLink();
-                          }}
-                        >
-                          Copy note link
-                        </button>
-                        {!activeNote.is_template && (
-                          <button
-                            onClick={() => {
-                              setShowNoteMenu(false);
-                              saveNote({
-                                ...activeNote,
-                                is_template: true,
-                                template_category: "My templates",
-                              });
-                              noteSession.setFilter({ type: "templates" });
-                            }}
-                          >
-                            Save as template
-                          </button>
-                        )}
-                        {activeNote.is_template && (
-                          <button
-                            onClick={() => {
-                              setShowNoteMenu(false);
-                              saveNote({ ...activeNote, is_template: false });
-                            }}
-                          >
-                            Convert to note
-                          </button>
-                        )}
-                        <button
-                          onClick={() => {
-                            setShowNoteMenu(false);
-                            saveNote({
-                              ...activeNote,
-                              is_archived: !activeNote.is_archived,
-                            });
-                          }}
-                        >
-                          {activeNote.is_archived ? "Unarchive" : "Archive"}
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowNoteMenu(false);
-                            setNotebookPicker("move");
-                          }}
-                        >
-                          Move to notebook…
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowNoteMenu(false);
-                            setNotebookPicker("copy");
-                          }}
-                        >
-                          Copy to notebook…
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowNoteMenu(false);
-                            void copyActiveNoteAs("rich");
-                          }}
-                        >
-                          Copy as rich text
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowNoteMenu(false);
-                            void copyActiveNoteAs("plain");
-                          }}
-                        >
-                          Copy as plain text
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowNoteMenu(false);
-                            void copyActiveNoteAs("markdown");
-                          }}
-                        >
-                          Copy as Markdown
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowNoteMenu(false);
-                            void exportSelectedNotes("markdown");
-                          }}
-                        >
-                          Export as Markdown…
-                        </button>
-                        {activeNote.reminder_at && (
-                          <>
-                            <button
-                              onClick={() => {
-                                setShowNoteMenu(false);
-                                void snoozeReminder("laterToday");
-                              }}
-                            >
-                              Snooze until later today
-                            </button>
-                            <button
-                              onClick={() => {
-                                setShowNoteMenu(false);
-                                void snoozeReminder("tomorrowMorning");
-                              }}
-                            >
-                              Snooze until tomorrow morning
-                            </button>
-                          </>
-                        )}
-                        {filter.type === "trash" ? (
-                          <>
-                            <button
-                              onClick={async () => {
-                                await api.restoreNote(activeNote.id);
-                                noteSession.setActiveNote(null);
-                                await noteStore.afterNoteChange();
-                              }}
-                            >
-                              Restore
-                            </button>
-                            <button
-                              className="danger-text"
-                              onClick={async () => {
-                                if (
-                                  !(await confirm("Delete this note forever?", {
-                                    confirmLabel: "Delete",
-                                    danger: true,
-                                  }))
-                                ) {
-                                  return;
-                                }
-                                await api.permanentlyDeleteNote(activeNote.id);
-                                noteSession.setActiveNote(null);
-                                await noteStore.afterNoteChange();
-                              }}
-                            >
-                              Delete forever
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            className="danger-text"
-                            onClick={async () => {
-                              if (
-                                !(await confirm("Move this note to Trash?", {
-                                  confirmLabel: "Move to Trash",
-                                  danger: true,
-                                }))
-                              ) {
-                                return;
-                              }
-                              await api.deleteNote(activeNote.id);
-                              noteSession.setActiveNote(null);
-                              await noteStore.afterNoteChange();
-                            }}
-                          >
-                            Move to trash
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="editor-header-meta">
-                <label className="notebook-crumb">
-                  <button
-                    type="button"
-                    className="notebook-crumb-open"
-                    title="Show notes in this notebook"
-                    onClick={() => {
-                      const notebook = notebooks.find((item) => item.id === activeNote.notebook_id);
-                      if (!notebook) return;
-                      closeSidebarFlyout();
-                      noteSession.setFilter({ type: "notebook", id: notebook.id, name: notebook.name });
-                    }}
-                  >
-                    <Icon.Notebooks size={14} />
-                  </button>
-                  <select
-                    value={activeNote.notebook_id}
-                    aria-label="Notebook"
-                    onChange={(e) =>
-                      saveNote({ ...activeNote, notebook_id: e.target.value })
-                    }
-                  >
-                    {notebooks.map((nb) => (
-                      <option key={nb.id} value={nb.id}>
-                        {nb.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {activeNote.reminder_at && (
+              {activeNote.reminder_at && (
+                <div className="editor-header-meta">
                   <span
                     className={
                       isReminderDone(completedReminders, activeNote.id)
@@ -3083,8 +3221,8 @@ const saveNote = useCallback(
                       ? "Done"
                       : formatReminderLabel(activeNote.reminder_at, prefs.date_format)}
                   </span>
-                )}
-              </div>
+                </div>
+              )}
               <input
                 ref={titleRef}
                 className="title-input"
@@ -3156,17 +3294,6 @@ const saveNote = useCallback(
                   );
                 }
                 return attachment;
-              }}
-            />
-            <NoteTagBar
-              tags={tags}
-              selectedIds={activeNote.tag_ids}
-              inputRef={tagInputRef}
-              onChange={(tagIds) => void saveNote({ tag_ids: tagIds })}
-              onCreateTag={async (name) => {
-                const tag = await api.createTag(name);
-                await refreshMeta();
-                await saveNote({ tag_ids: [...activeNote.tag_ids, tag.id] });
               }}
             />
             {!editorChrome.statusBarHidden && (
@@ -3410,6 +3537,10 @@ const saveNote = useCallback(
           onImport={() => {
             setShowSettings(false);
             importRef.current?.click();
+          }}
+          onImportFolder={() => {
+            setShowSettings(false);
+            importFolderRef.current?.click();
           }}
           onEmptyTrash={async () => {
             if (

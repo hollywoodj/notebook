@@ -416,6 +416,7 @@ fn import(
                             Some(mut acc) => {
                                 acc.imported += result.imported;
                                 acc.skipped += result.skipped;
+                                acc.duplicates += result.duplicates;
                                 acc.notebook_count = acc.notebook_count.max(result.notebook_count);
                                 acc.errors.extend(result.errors);
                                 acc
@@ -432,10 +433,15 @@ fn import(
             if json_out {
                 writeln!(out, "{}", serde_json::to_string_pretty(&results)?)?;
             } else {
+                let duplicates_suffix = if results.duplicates > 0 {
+                    format!(", {} already imported", results.duplicates)
+                } else {
+                    String::new()
+                };
                 writeln!(
                     out,
-                    "Imported {} notes into '{}' ({} skipped)",
-                    results.imported, results.notebook_name, results.skipped
+                    "Imported {} notes into '{}' ({} skipped{})",
+                    results.imported, results.notebook_name, results.skipped, duplicates_suffix
                 )?;
                 for err in &results.errors {
                     writeln!(out, "  error[{}]: {}", err.index, err.message)?;
@@ -669,6 +675,7 @@ mod tests {
             EnexImportResult {
                 imported: 2,
                 skipped: 1,
+                duplicates: 0,
                 notebook_id: Uuid::new_v4(),
                 notebook_name: "Imported".to_string(),
                 notebook_count: 1,
@@ -684,6 +691,7 @@ mod tests {
             EnexImportResult {
                 imported: 5,
                 skipped: 0,
+                duplicates: 0,
                 notebook_id: Uuid::new_v4(),
                 notebook_name: "Imported".to_string(),
                 notebook_count: 3,
@@ -707,7 +715,42 @@ mod tests {
         assert_eq!(calls.len(), 2);
 
         assert!(output.contains("Imported 7 notes into 'Imported' (1 skipped)"));
+        assert!(!output.contains("already imported"));
         assert!(output.contains("boom"));
+    }
+
+    #[test]
+    fn import_enex_directory_reports_duplicates_when_present() {
+        let dir = TempDir::new("notebook-cli-import-dup-test").unwrap();
+        std::fs::write(dir.path().join("a.enex"), b"<a/>").unwrap();
+
+        let backend = FakeBackend::new();
+        backend.set_enex_result(
+            "a.enex",
+            EnexImportResult {
+                imported: 5,
+                skipped: 0,
+                duplicates: 3,
+                notebook_id: Uuid::new_v4(),
+                notebook_name: "Music".to_string(),
+                notebook_count: 1,
+                errors: vec![],
+            },
+        );
+
+        let output = run_text(
+            &backend,
+            &Commands::Import {
+                action: ImportActionCli::Enex {
+                    path: dir.path().to_path_buf(),
+                    notebook: None,
+                    notebook_name: None,
+                    stack: None,
+                },
+            },
+        );
+
+        assert!(output.contains("Imported 5 notes into 'Music' (0 skipped, 3 already imported)"));
     }
 
     #[test]

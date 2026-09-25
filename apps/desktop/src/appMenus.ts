@@ -489,6 +489,10 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           onSelect: ctx.importNotes,
         },
         {
+          label: "Import Notes Folder…",
+          onSelect: ctx.importNotesFolder,
+        },
+        {
           label: "Export as HTML…",
           disabled: ctx.targetNoteIds().length === 0,
           onSelect: () => void ctx.exportSelectedNotes("html"),
@@ -704,12 +708,12 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
           onSelect: ctx.openCommandPalette,
         },
         {
-          label: "Snippets View",
-          onSelect: () => ctx.setListView("snippets"),
-        },
-        {
           label: "Titles View",
           onSelect: () => ctx.setListView("titles"),
+        },
+        {
+          label: "Snippets View",
+          onSelect: () => ctx.setListView("snippets"),
         },
         {
           label: "Cards View",
@@ -1232,6 +1236,10 @@ export function buildMenuBar(ctx: AppMenuContext): MenuBarGroup[] {
         {
           label: "Import from Evernote…",
           onSelect: ctx.importNotes,
+        },
+        {
+          label: "Import Evernote Folder…",
+          onSelect: ctx.importNotesFolder,
         },
         {
           label: "OmniClone Integration…",

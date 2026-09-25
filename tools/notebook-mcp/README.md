@@ -11,16 +11,32 @@ hand-rolls the HTML<->Markdown conversion (including GFM pipe tables);
 parsing/generation; `sqlite.mjs` hand-rolls the offline SQLite path using
 Node's **built-in** `node:sqlite`. Node 24+ required.
 
-## Why it's scoped to one notebook
+## Why it's scoped to two notebooks
 
-This server is hard-scoped to a single notebook (the "Dev" notebook by
-default). Every read and write verifies the target note's `notebook_id`
-matches the scoped notebook and refuses otherwise. There is **no tool that
-lists other notebooks, moves notes between notebooks, or permanently
-deletes notes** - the blast radius of anything Claude does through this
-server is "notes inside one notebook," never anything else in your Notebook
-data. Deletes (`disable_project`) are always soft deletes (trash), never
-permanent.
+This server is scoped to exactly two notebooks: **Dev** (the original,
+structured notebook) and **Reports** (a notebook for freeform one-off report
+notes). Every read and write verifies the target note's `notebook_id` is one
+of those two and refuses otherwise. There is **no tool that lists other
+notebooks, moves notes between notebooks, or permanently deletes notes** -
+the blast radius of anything Claude does through this server is "notes
+inside Dev or Reports," never anything else in your Notebook data. Deletes
+(`disable_project`) are always soft deletes (trash), never permanent.
+
+The scoping is deliberately asymmetric - **read-wide, write-narrow**:
+
+- **Read/visibility** (`list_notes`, `read_note`, `search_notes`, and the
+  `getNoteScoped` guard) covers **both** notebooks.
+- **All structured/title-resolved machinery stays pinned to Dev only**: the
+  `Dev Log` note, the `Dev - Overview` note, project notes, `list_projects`,
+  `enable_project`, `disable_project`, `read_backlog`, `update_backlog`,
+  `read_reports`, `add_report`. These resolve notes by exact title match
+  (`findByExactTitle` / `getNoteInDev`) - if they were allowed to match a
+  Reports note, a report titled e.g. `Dev: Notebook` could silently be
+  adopted as that project's note and split its history. Reports holds
+  freeform one-off report notes only, written with `write_note` and
+  `notebook:"reports"`; `add_report` is unrelated to Reports notebook writes
+  and keeps writing dated Architecture Review entries into Dev project notes,
+  exactly as before.
 
 Every write goes through the app's normal update path (online) or writes a
 `note_revisions` row itself (offline) - so it's captured in that note's
@@ -70,7 +86,8 @@ Nothing extra is added in HTTP mode.
 | Variable | Default | Purpose |
 |---|---|---|
 | `NOTEBOOK_API` | `http://127.0.0.1:8799` | Base URL of the running `notebook-api`, used for the health check and HTTP mode. |
-| `NOTEBOOK_MCP_NOTEBOOK_ID` | `3634580e-8510-409a-9f1d-efba851586da` (the "Dev" notebook) | The one notebook this server is allowed to touch. |
+| `NOTEBOOK_MCP_NOTEBOOK_ID` | `3634580e-8510-409a-9f1d-efba851586da` (the "Dev" notebook) | The Dev notebook - default write target, and where all structured/title-resolved tooling operates. |
+| `NOTEBOOK_MCP_REPORTS_NOTEBOOK_ID` | `e92e2eb9-651e-454b-8a66-1ba5c854d81e` (the "Reports" notebook) | The Reports notebook - read-visible and a `write_note` target (`notebook:"reports"`), but never touched by structured/title-resolved tooling. |
 | `NOTEBOOK_DB` | (unset) | SQLite database file path, checked first in offline DB-path resolution. |
 | `NOTEBOOK_MCP_FORCE_SQLITE` | (unset) | Set to `1` to force offline (SQLite) mode even when the API is reachable. |
 | `DEV_ROOT` | `C:\Users\James\Dev` | Where `read_overview`/`sync_overview` look for the Dev root markdown files listed in OVERVIEW_FILES. |
@@ -199,7 +216,7 @@ section is appended to the end of Dev Log.
 
 `Dev` is a **reserved project name** meaning "the global note," not an
 ordinary project. It resolves to a single note titled exactly `Dev: Overview`
-in the scoped notebook (`OVERVIEW_NOTE_TITLE` in `overview.mjs`) - with
+in Dev (`OVERVIEW_NOTE_TITLE` in `overview.mjs`) - with
 `Dev - Overview` (`LEGACY_OVERVIEW_NOTE_TITLE`) kept as a transitional
 fallback in `findOverviewNote`, so a notebook not yet migrated to the
 `Dev: ` prefix still resolves until the note is renamed. The note is split
@@ -249,12 +266,12 @@ phantom project. `list_notes` isn't filtered at all, so it lists
 
 ## The 14 tools
 
-1. **`list_notes`** `{}` - lists notes in the scoped notebook (id, title, updated_at). Structurally this is `Dev Log`, `Dev: Overview`, plus enabled projects' notes - but the notebook can also hold plain one-off notes (see the naming convention above), and `list_notes` shows those too, unlike `list_projects`.
-2. **`read_note`** `{ note_id?, title? }` - reads a note as Markdown. One of `note_id`/`title` required; title lookups only search the scoped notebook.
-3. **`write_note`** `{ note_id?, title?, content_markdown, mode?, create_if_missing? }` - creates or updates a note inside the scoped notebook. `mode` is `"replace" | "append" | "prepend"` (default `"append"`).
-4. **`search_notes`** `{ query, limit? }` - full-text search scoped to the notebook; returns title, snippet, id.
+1. **`list_notes`** `{}` - lists notes across both Dev and Reports (id, title, updated_at), grouped by notebook. Structurally Dev holds `Dev Log`, `Dev: Overview`, plus enabled projects' notes - but either notebook can also hold plain one-off notes (see the naming convention above), and `list_notes` shows those too, unlike `list_projects`.
+2. **`read_note`** `{ note_id?, title? }` - reads a note as Markdown. One of `note_id`/`title` required; title lookups search both Dev and Reports.
+3. **`write_note`** `{ note_id?, title?, content_markdown, mode?, create_if_missing?, notebook? }` - creates or updates a note inside Dev or Reports. `notebook` is `"dev"` (default) or `"reports"` - selects the notebook on create and pins title lookups to it; when omitted and a title matches in both notebooks, the call refuses rather than guessing. `mode` is `"replace" | "append" | "prepend"` (default `"append"`).
+4. **`search_notes`** `{ query, limit? }` - full-text search across both Dev and Reports; returns title, notebook, snippet, id.
 5. **`read_backlog`** `{ project? }` - reads a project's Bugs / Future Improvements checklists (routed per above; `project: "Dev"` reads the Ideas list instead). Omit `project` to read every project known to Dev Log or holding its own note.
-6. **`update_backlog`** `{ project, add_bugs?, add_improvements?, check?, uncheck? }` - adds new unchecked items and/or ticks/unticks existing ones (by item number from `read_backlog`, or exact item text). All references are validated before anything is written.
+6. **`update_backlog`** `{ project, add_bugs?, add_improvements?, check?, uncheck?, remove? }` - adds new unchecked items, ticks/unticks existing ones, and/or removes items outright (each by item number from `read_backlog`, or exact item text). All references are validated before anything is written - if any check/uncheck/remove reference doesn't match, the whole call fails with no changes made. Within one call, check/uncheck is applied first, then remove, then add. Removal is permanent in the note body; recover via the note's revision history, not the trash.
 7. **`read_reports`** `{ project?, limit? }` - reads a project's most recent Architecture Reviews entries, newest first (default `limit: 3`). Omit `project` for the most recent entries across every project.
 8. **`add_report`** `{ project, body_markdown, subtitle? }` - prepends a new dated Architecture Reviews entry for a project (`project: "Dev"` is refused).
 9. **`enable_project`** `{ project }` - gives a project its own note: **moves** (never copies) its Dev Log section into a new note titled `Dev: <ProjectName>`, promoting heading levels. No-op if already enabled; refuses `Dev`.
@@ -262,7 +279,7 @@ phantom project. `list_notes` isn't filtered at all, so it lists
 11. **`list_projects`** `{}` - every project known to Dev Log or holding its own note, with its enabled state and item counts. Never lists `Dev: Overview`, and never lists a plain one-off note as a phantom project.
 12. **`read_overview`** `{ section? }` - reads the global `Dev: Overview` note, auto-syncing first per the mtime rule above. No `section`: just the Ideas list, the Reference index table, and the list of available section names (never the full ~40-50KB mirror). `section: "STACK.md"` (or `"STACK"`, case-insensitive): just that file's mirrored content as Markdown. `section: "all"`: everything.
 13. **`sync_overview`** `{}` - forces a Reference-zone regeneration regardless of mtimes; reports which files' mirrored content changed.
-14. **`rename_note`** `{ note_id?, title?, new_title }` - renames a note in the scoped notebook. One of `note_id`/`title` finds the note; refuses an empty `new_title`, refuses a collision with another note's existing title, refuses touching `Dev Log` on either side (it's structural, not renameable), and returns a no-change message if `new_title` already matches. If the renamed note was a project note or the overview note, the config id cache is updated to follow the new title. Recoverable like any other write, via the note's revision history.
+14. **`rename_note`** `{ note_id?, title?, new_title }` - renames a note in Dev or Reports. One of `note_id`/`title` finds the note; refuses an empty `new_title`, refuses a collision with another note's existing title, refuses touching `Dev Log` on either side (it's structural, not renameable), and returns a no-change message if `new_title` already matches. If the renamed note was a project note or the overview note, the config id cache is updated to follow the new title. Recoverable like any other write, via the note's revision history.
 
 For `update_backlog` and `add_report`, `project` defaults to the basename of
 the server process's working directory - which now resolves to `Dev` (the

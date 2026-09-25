@@ -9,8 +9,8 @@ use quick_xml::Reader;
 
 use crate::content::html::{escape_attr, escape_html};
 use crate::content::{
-    basename, decode_xml_entities, default_attachment_name, file_attachment_html, looks_like_pdf,
-    sniff_mime,
+    basename, decode_xml_entities, decode_xml_entities_once, default_attachment_name,
+    file_attachment_html, looks_like_pdf, sniff_mime,
 };
 use crate::error::{NotebookError, Result};
 
@@ -94,7 +94,15 @@ pub fn parse_enex(data: &[u8]) -> Result<EnexExport> {
             Ok(Event::Text(e)) => {
                 let raw = String::from_utf8_lossy(e.as_ref()).into_owned();
                 let text = if current_field == "content" {
-                    raw
+                    // Content is normally CDATA (see the Event::CData arm,
+                    // which deliberately stays undecoded), but some
+                    // exporters (Joplin, Apple Notes, Notion) escape the
+                    // ENML instead. That escaped text arrives here via
+                    // Event::Text and must be decoded exactly once - not
+                    // with decode_xml_entities, which double-decodes and
+                    // would corrupt legitimate `&amp;amp;` or materialise
+                    // real tags.
+                    decode_xml_entities_once(&raw)
                 } else {
                     decode_xml_entities(&raw)
                 };
@@ -137,12 +145,6 @@ pub fn parse_enex(data: &[u8]) -> Result<EnexExport> {
                         }
                         "source-url" => note.source_url = Some(text.trim().to_string()),
                         "reminder-time" => note.reminder_at = parse_evernote_datetime(text.trim()),
-                        _ if in_note_attributes && current_field == "source-url" => {
-                            note.source_url = Some(text.trim().to_string())
-                        }
-                        _ if in_note_attributes && current_field == "reminder-time" => {
-                            note.reminder_at = parse_evernote_datetime(text.trim())
-                        }
                         _ => {}
                     }
                 }
@@ -368,6 +370,9 @@ const HTML_TAGS: &[&str] = &[
     "b",
     "i",
     "u",
+    "s",
+    "strike",
+    "del",
     "strong",
     "em",
     "h1",
@@ -386,6 +391,8 @@ const HTML_TAGS: &[&str] = &[
     "thead",
     "tbody",
 ];
+
+const HEADING_TAGS: &[&str] = &["h1", "h2", "h3", "h4", "h5", "h6"];
 
 #[derive(Clone, Debug)]
 enum HtmlNode {
@@ -447,6 +454,11 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
                         append_child(&mut stack, HtmlNode::Raw(raw));
                     }
                     "br" => append_child(&mut stack, HtmlNode::element("br", Vec::new())),
+                    "hr" => append_child(&mut stack, HtmlNode::element("hr", Vec::new())),
+                    "font" => push_element(&mut stack, "span", font_style_attrs(&e)),
+                    name if HEADING_TAGS.contains(&name) => {
+                        push_element(&mut stack, name, copy_heading_attrs(&e));
+                    }
                     name if HTML_TAGS.contains(&name) => {
                         push_element(&mut stack, name, copy_html_attrs(&e));
                     }
@@ -456,7 +468,7 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
             Ok(Event::End(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 match name.as_str() {
-                    "en-note" | "en-todo" => pop_element(&mut stack),
+                    "en-note" | "en-todo" | "font" => pop_element(&mut stack),
                     name if HTML_TAGS.contains(&name) && name != "br" => pop_element(&mut stack),
                     _ => {}
                 }
@@ -471,6 +483,7 @@ pub fn enml_to_html(enml: &str, resources: &[EnexResource]) -> Result<String> {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 match name.as_str() {
                     "br" => append_child(&mut stack, HtmlNode::element("br", Vec::new())),
+                    "hr" => append_child(&mut stack, HtmlNode::element("hr", Vec::new())),
                     "en-media" => {
                         let mut raw = String::new();
                         render_en_media(&mut raw, &e, &resource_map);
@@ -546,7 +559,13 @@ fn copy_html_attrs(e: &quick_xml::events::BytesStart<'_>) -> Vec<(String, String
         .flatten()
         .filter_map(|attr| {
             let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
-            if key == "style" || key == "href" || key == "class" {
+            if key == "style"
+                || key == "href"
+                || key == "class"
+                || key == "colspan"
+                || key == "rowspan"
+                || key == "start"
+            {
                 Some((key, attr_value(&attr)))
             } else {
                 None
@@ -557,6 +576,111 @@ fn copy_html_attrs(e: &quick_xml::events::BytesStart<'_>) -> Vec<(String, String
 
 fn attr_value(attr: &quick_xml::events::attributes::Attribute<'_>) -> String {
     decode_xml_entities(&String::from_utf8_lossy(&attr.value))
+}
+
+// Headings get their own attr copy so Evernote's private
+// `--en-isCollapsed` CSS property can be translated into a `data-collapsed`
+// attribute that survives the TipTap schema, instead of relying on the raw
+// style property round-tripping unopened. Every other `--en-*` property
+// (`--en-todo`, `--en-checked`, ...) must stay untouched on non-heading
+// elements - checklist.rs reads them straight off `<ul>`/`<li>` style text.
+fn copy_heading_attrs(e: &quick_xml::events::BytesStart<'_>) -> Vec<(String, String)> {
+    let mut collapsed = false;
+    let mut out = Vec::new();
+    for (key, value) in copy_html_attrs(e) {
+        if key == "style" {
+            collapsed = style_has_en_collapsed_true(&value);
+            let cleaned = strip_en_style_declarations(&value);
+            if !cleaned.is_empty() {
+                out.push(("style".to_string(), cleaned));
+            }
+        } else {
+            out.push((key, value));
+        }
+    }
+    if collapsed {
+        out.push(("data-collapsed".to_string(), "true".to_string()));
+    }
+    out
+}
+
+fn style_has_en_collapsed_true(style: &str) -> bool {
+    style.split(';').any(|decl| {
+        let mut parts = decl.splitn(2, ':');
+        let prop = parts.next().unwrap_or("").trim();
+        let value = parts.next().unwrap_or("").trim();
+        prop.eq_ignore_ascii_case("--en-isCollapsed") && value.eq_ignore_ascii_case("true")
+    })
+}
+
+// Real Evernote exports carry `--en-viewAs:attachment;` on an `<en-media>`
+// occurrence to force a normally-inline image to render as a file
+// attachment in that specific spot in the note body. Other observed values
+// (`pdf-pageByPage`, `youtube-video-small`) don't change how we render, so
+// this only looks for the `attachment` value. This is per-occurrence, not
+// per-resource: the same resource can appear elsewhere without the style
+// and should still render inline.
+fn style_has_en_view_as_attachment(style: &str) -> bool {
+    style.split(';').any(|decl| {
+        let mut parts = decl.splitn(2, ':');
+        let prop = parts.next().unwrap_or("").trim();
+        let value = parts.next().unwrap_or("").trim();
+        prop.eq_ignore_ascii_case("--en-viewAs") && value.eq_ignore_ascii_case("attachment")
+    })
+}
+
+fn strip_en_style_declarations(style: &str) -> String {
+    style
+        .split(';')
+        .map(str::trim)
+        .filter(|decl| !decl.is_empty())
+        .filter(|decl| {
+            let prop = decl.split(':').next().unwrap_or("").trim();
+            !prop.to_ascii_lowercase().starts_with("--en-")
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+// Legacy `<font color face size>` has no TipTap equivalent, so it is
+// converted into a `<span style="...">` whose declarations the desktop
+// editor's fontMarks.ts already knows how to parse (color, font-family,
+// font-size). `size` uses Evernote's legacy 1-7 point scale; any value
+// outside that (e.g. the relative forms "+1"/"-1") is dropped intentionally.
+fn font_style_attrs(e: &quick_xml::events::BytesStart<'_>) -> Vec<(String, String)> {
+    let mut declarations = Vec::new();
+    for attr in e.attributes().flatten() {
+        let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+        let value = attr_value(&attr);
+        match key.as_str() {
+            "color" => declarations.push(format!("color: {value}")),
+            "face" => declarations.push(format!("font-family: {value}")),
+            "size" => {
+                if let Some(px) = legacy_font_size_px(value.trim()) {
+                    declarations.push(format!("font-size: {px}"));
+                }
+            }
+            _ => {}
+        }
+    }
+    if declarations.is_empty() {
+        Vec::new()
+    } else {
+        vec![("style".to_string(), declarations.join("; "))]
+    }
+}
+
+fn legacy_font_size_px(size: &str) -> Option<&'static str> {
+    match size {
+        "1" => Some("10px"),
+        "2" => Some("13px"),
+        "3" => Some("16px"),
+        "4" => Some("18px"),
+        "5" => Some("24px"),
+        "6" => Some("32px"),
+        "7" => Some("48px"),
+        _ => None,
+    }
 }
 
 fn en_todo_checked(e: &quick_xml::events::BytesStart<'_>) -> bool {
@@ -809,8 +933,8 @@ fn write_html(out: &mut String, node: &HtmlNode) {
             attrs,
             children,
         } => {
-            if name == "br" && children.is_empty() {
-                out.push_str("<br/>");
+            if (name == "br" || name == "hr") && children.is_empty() {
+                out.push_str(if name == "br" { "<br/>" } else { "<hr/>" });
                 return;
             }
             out.push('<');
@@ -842,12 +966,17 @@ fn render_en_media(
     let mut mime = None;
     let mut width: Option<i32> = None;
     let mut height: Option<i32> = None;
+    let mut view_as_attachment = false;
     for attr in e.attributes().flatten() {
         match attr.key.as_ref() {
             b"hash" => hash = Some(String::from_utf8_lossy(&attr.value).to_string()),
             b"type" => mime = Some(String::from_utf8_lossy(&attr.value).to_string()),
             b"width" => width = String::from_utf8_lossy(&attr.value).parse().ok(),
             b"height" => height = String::from_utf8_lossy(&attr.value).parse().ok(),
+            b"style" => {
+                view_as_attachment =
+                    style_has_en_view_as_attachment(&String::from_utf8_lossy(&attr.value));
+            }
             _ => {}
         }
     }
@@ -862,7 +991,8 @@ fn render_en_media(
             .as_deref()
             .filter(|name| !name.is_empty())
             .unwrap_or("attachment");
-        if is_inline_image(resource)
+        if !view_as_attachment
+            && is_inline_image(resource)
             && use_mime.to_ascii_lowercase().starts_with("image/")
             && !looks_like_pdf(&use_mime, resource.filename.as_deref(), &resource.data)
         {
@@ -1590,5 +1720,368 @@ mod tests {
         let note = imported_note(&service, result.notebook_id);
         assert_eq!(note.title, "UTF16");
         assert!(note.content.contains("Hello from UTF-16"));
+    }
+
+    #[test]
+    fn converts_evernote_collapsed_heading_marker_to_data_collapsed() {
+        let enml = r#"<en-note><h1 style="--en-isCollapsed:true; --en-nodeId:abc;"><b>Amps</b></h1></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert!(html.contains(r#"data-collapsed="true""#), "got: {html}");
+        assert!(!html.contains("--en-"), "got: {html}");
+    }
+
+    #[test]
+    fn drops_uncollapsed_heading_marker_without_data_collapsed() {
+        let enml = r#"<en-note><h1 style="--en-isCollapsed:false; --en-nodeId:abc;"><b>Amps</b></h1></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert!(!html.contains("data-collapsed"), "got: {html}");
+        assert!(!html.contains("--en-"), "got: {html}");
+    }
+
+    #[test]
+    fn keeps_real_heading_style_declarations_while_dropping_en_properties() {
+        let enml = r#"<en-note><h2 style="font-size: 25px; --en-nodeId:x;">Title</h2></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert!(html.contains("font-size: 25px"), "got: {html}");
+        assert!(!html.contains("--en-"), "got: {html}");
+    }
+
+    #[test]
+    fn leaves_checklist_en_todo_style_untouched_on_non_heading_elements() {
+        // Regression guard: copy_heading_attrs must only apply to h1..h6.
+        // checklist.rs's normalize_evernote_checklist_html reads --en-todo
+        // and --en-checked straight off <ul>/<li> style text, so
+        // enml_to_html must keep passing those through copy_html_attrs
+        // verbatim rather than the new heading-only stripping helper.
+        let enml = r#"<en-note><ul style="--en-todo:true;"><li style="--en-checked:true;"><div>Done</div></li></ul></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert!(html.contains(r#"style="--en-todo:true;""#), "got: {html}");
+        assert!(html.contains(r#"style="--en-checked:true;""#), "got: {html}");
+        assert!(html.contains("Done"), "got: {html}");
+    }
+
+    #[test]
+    fn converts_self_closing_hr_divider_between_blocks() {
+        let enml =
+            r#"<en-note><div>Ingredients</div><hr/><div>Directions</div></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert!(html.contains("<hr/>"), "got: {html}");
+        let hr_pos = html.find("<hr/>").unwrap();
+        assert!(
+            html[..hr_pos].contains("Ingredients"),
+            "expected Ingredients before <hr/>, got: {html}"
+        );
+        assert!(
+            html[hr_pos..].contains("Directions"),
+            "expected Directions after <hr/>, got: {html}"
+        );
+    }
+
+    #[test]
+    fn converts_open_close_hr_spelling_without_swallowing_content() {
+        let enml = r#"<en-note><div>Before</div><hr></hr><div>After</div></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert_eq!(
+            html.matches("<hr/>").count(),
+            1,
+            "expected exactly one <hr/>, got: {html}"
+        );
+        assert!(html.contains("Before"), "got: {html}");
+        assert!(html.contains("After"), "got: {html}");
+        assert!(
+            !html.contains("<hr>Before</hr>") && !html.contains("<hr>After</hr>"),
+            "hr should not have swallowed sibling content, got: {html}"
+        );
+    }
+
+    #[test]
+    fn keeps_strikethrough_s_tag() {
+        let html = enml_to_html(r#"<en-note><s>gone</s></en-note>"#, &[]).unwrap();
+        assert!(html.contains("<s>gone</s>"), "got: {html}");
+    }
+
+    #[test]
+    fn converts_font_color_and_size_to_span_style() {
+        let html = enml_to_html(
+            r##"<en-note><font color="#ff0000" size="5">Red</font></en-note>"##,
+            &[],
+        )
+        .unwrap();
+        assert!(html.contains("<span"), "got: {html}");
+        assert!(html.contains("color: #ff0000"), "got: {html}");
+        assert!(html.contains("font-size: 24px"), "got: {html}");
+        assert!(html.contains("Red"), "got: {html}");
+        assert!(!html.contains("<font"), "got: {html}");
+    }
+
+    #[test]
+    fn converts_font_face_to_font_family_style() {
+        let html = enml_to_html(
+            r#"<en-note><font face="Georgia">Serif</font></en-note>"#,
+            &[],
+        )
+        .unwrap();
+        assert!(html.contains("<span"), "got: {html}");
+        assert!(html.contains("font-family: Georgia"), "got: {html}");
+        assert!(html.contains("Serif"), "got: {html}");
+    }
+
+    #[test]
+    fn font_with_no_recognized_attrs_keeps_text_without_corrupting_structure() {
+        let html = enml_to_html(
+            r#"<en-note><div>Before <font lang="en">Middle</font> After</div></en-note>"#,
+            &[],
+        )
+        .unwrap();
+        assert!(html.contains("Before"), "got: {html}");
+        assert!(html.contains("Middle"), "got: {html}");
+        assert!(html.contains("After"), "got: {html}");
+        assert!(html.contains("<span>Middle</span>"), "got: {html}");
+    }
+
+    #[test]
+    fn en_media_with_view_as_attachment_style_renders_as_file_not_image() {
+        let hash = "f03c1c2d96bc67eda02968c8b5af9008";
+        let resource = EnexResource {
+            data: vec![0x89, 0x50, 0x4e, 0x47],
+            mime: "image/png".to_string(),
+            filename: Some("photo.png".to_string()),
+            width: None,
+            height: None,
+            hash: hash.to_string(),
+            is_attachment: false,
+        };
+        let enml = format!(
+            r#"<en-note><en-media type="image/png" hash="{}" style="--en-viewAs:attachment;"/></en-note>"#,
+            hash
+        );
+        let html = enml_to_html(&enml, &[resource]).unwrap();
+        assert!(
+            html.contains("data-notebook-file=\"true\""),
+            "expected a file attachment, got: {html}"
+        );
+        assert!(!html.contains("<img"), "got: {html}");
+    }
+
+    #[test]
+    fn en_media_without_view_as_attachment_style_still_renders_inline_image() {
+        let hash = "f03c1c2d96bc67eda02968c8b5af9008";
+        let resource = EnexResource {
+            data: vec![0x89, 0x50, 0x4e, 0x47],
+            mime: "image/png".to_string(),
+            filename: Some("photo.png".to_string()),
+            width: None,
+            height: None,
+            hash: hash.to_string(),
+            is_attachment: false,
+        };
+        let enml = format!(
+            r#"<en-note><en-media type="image/png" hash="{}"/></en-note>"#,
+            hash
+        );
+        let html = enml_to_html(&enml, &[resource]).unwrap();
+        assert!(html.contains("<img"), "expected inline image, got: {html}");
+        assert!(!html.contains("data-notebook-file=\"true\""), "got: {html}");
+    }
+
+    #[test]
+    fn en_media_with_other_view_as_value_still_renders_inline_image() {
+        let hash = "f03c1c2d96bc67eda02968c8b5af9008";
+        let resource = EnexResource {
+            data: vec![0x89, 0x50, 0x4e, 0x47],
+            mime: "image/png".to_string(),
+            filename: Some("photo.png".to_string()),
+            width: None,
+            height: None,
+            hash: hash.to_string(),
+            is_attachment: false,
+        };
+        let enml = format!(
+            r#"<en-note><en-media type="image/png" hash="{}" style="--en-viewAs:pdf-pageByPage;"/></en-note>"#,
+            hash
+        );
+        let html = enml_to_html(&enml, &[resource]).unwrap();
+        assert!(html.contains("<img"), "expected inline image, got: {html}");
+        assert!(!html.contains("data-notebook-file=\"true\""), "got: {html}");
+    }
+
+    #[test]
+    fn copy_html_attrs_keeps_colspan_rowspan_and_ordered_list_start() {
+        let enml = r#"<en-note><table><tr><td colspan="2" rowspan="3">Cell</td></tr></table><ol start="5"><li>Five</li></ol></en-note>"#;
+        let html = enml_to_html(enml, &[]).unwrap();
+        assert!(html.contains(r#"colspan="2""#), "got: {html}");
+        assert!(html.contains(r#"rowspan="3""#), "got: {html}");
+        assert!(html.contains(r#"start="5""#), "got: {html}");
+    }
+
+    #[test]
+    fn created_only_note_keeps_created_timestamp_instead_of_stamping_today() {
+        let enex = r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>Created Only</title>
+    <content><![CDATA[<en-note><div>Hello</div></en-note>]]></content>
+    <created>20200101T120000Z</created>
+  </note>
+</en-export>"#;
+        let (service, result) = import_bytes("created-only", enex.as_bytes());
+        assert_eq!(result.imported, 1, "errors: {:?}", result.errors);
+        let note = imported_note(&service, result.notebook_id);
+        let expected = parse_evernote_datetime("20200101T120000Z").unwrap();
+        assert_eq!(note.created_at, expected);
+        assert_eq!(note.updated_at, expected);
+    }
+
+    #[test]
+    fn updated_only_note_keeps_updated_timestamp_instead_of_stamping_today() {
+        let enex = r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>Updated Only</title>
+    <content><![CDATA[<en-note><div>Hello</div></en-note>]]></content>
+    <updated>20210605T083000Z</updated>
+  </note>
+</en-export>"#;
+        let (service, result) = import_bytes("updated-only", enex.as_bytes());
+        assert_eq!(result.imported, 1, "errors: {:?}", result.errors);
+        let note = imported_note(&service, result.notebook_id);
+        let expected = parse_evernote_datetime("20210605T083000Z").unwrap();
+        assert_eq!(note.created_at, expected);
+        assert_eq!(note.updated_at, expected);
+    }
+
+    #[test]
+    fn escaped_content_outside_cdata_imports_as_real_markup_with_single_decode() {
+        let enex = r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>Escaped</title>
+    <content>&lt;en-note&gt;&lt;div&gt;Tom &amp;amp; Jerry&lt;/div&gt;&lt;/en-note&gt;</content>
+    <created>20200101T120000Z</created>
+  </note>
+</en-export>"#;
+        let (service, result) = import_bytes("escaped-content", enex.as_bytes());
+        assert_eq!(result.imported, 1, "errors: {:?}", result.errors);
+        let note = imported_note(&service, result.notebook_id);
+        assert!(
+            note.content.contains("<div>Tom &amp; Jerry</div>"),
+            "expected a real div with a single-decoded ampersand, got: {}",
+            note.content
+        );
+        assert!(
+            !note.content.contains("&lt;en-note&gt;"),
+            "content should not still be escaped, got: {}",
+            note.content
+        );
+    }
+
+    #[test]
+    fn cdata_content_is_unaffected_by_single_decode_change() {
+        let enex = r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>CDATA</title>
+    <content><![CDATA[<en-note><div>Tom &amp; Jerry</div></en-note>]]></content>
+    <created>20200101T120000Z</created>
+  </note>
+</en-export>"#;
+        let (service, result) = import_bytes("cdata-content", enex.as_bytes());
+        assert_eq!(result.imported, 1, "errors: {:?}", result.errors);
+        let note = imported_note(&service, result.notebook_id);
+        assert!(
+            note.content.contains("<div>Tom &amp; Jerry</div>"),
+            "got: {}",
+            note.content
+        );
+    }
+
+    #[test]
+    fn reimporting_the_same_enex_bytes_skips_as_duplicates() {
+        let enex = r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>Dup Note</title>
+    <content><![CDATA[<en-note><div>Hello</div></en-note>]]></content>
+    <created>20200101T120000Z</created>
+    <updated>20200101T120000Z</updated>
+  </note>
+</en-export>"#;
+        let (service, first) = import_bytes("dup-reimport", enex.as_bytes());
+        assert_eq!(first.imported, 1, "errors: {:?}", first.errors);
+        assert_eq!(first.duplicates, 0);
+
+        let second = service
+            .import_enex(
+                enex.as_bytes(),
+                crate::models::EnexImportRequest {
+                    notebook_id: Some(first.notebook_id),
+                    notebook_name: Some("Imported".into()),
+                    stack_id: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(second.imported, 0, "errors: {:?}", second.errors);
+        assert_eq!(second.duplicates, 1);
+
+        let notes = service
+            .list_notes(Some(first.notebook_id), None, false, None, Some(false))
+            .unwrap();
+        assert_eq!(notes.len(), 1, "note count should be unchanged after reimport");
+    }
+
+    #[test]
+    fn notes_sharing_a_title_with_different_created_timestamps_both_import() {
+        let enex = r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>Same Title</title>
+    <content><![CDATA[<en-note><div>First</div></en-note>]]></content>
+    <created>20200101T120000Z</created>
+  </note>
+  <note>
+    <title>Same Title</title>
+    <content><![CDATA[<en-note><div>Second</div></en-note>]]></content>
+    <created>20210101T120000Z</created>
+  </note>
+</en-export>"#;
+        let (service, result) = import_bytes("same-title-different-created", enex.as_bytes());
+        assert_eq!(result.imported, 2, "errors: {:?}", result.errors);
+        assert_eq!(result.duplicates, 0);
+        let notes = service
+            .list_notes(Some(result.notebook_id), None, false, None, Some(false))
+            .unwrap();
+        assert_eq!(notes.len(), 2);
+    }
+
+    #[test]
+    fn note_with_no_created_timestamp_always_imports_since_it_cannot_be_keyed() {
+        let enex = r#"<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>No Created</title>
+    <content><![CDATA[<en-note><div>Hello</div></en-note>]]></content>
+  </note>
+</en-export>"#;
+        let (service, first) = import_bytes("no-created-reimport", enex.as_bytes());
+        assert_eq!(first.imported, 1, "errors: {:?}", first.errors);
+        assert_eq!(first.duplicates, 0);
+
+        let second = service
+            .import_enex(
+                enex.as_bytes(),
+                crate::models::EnexImportRequest {
+                    notebook_id: Some(first.notebook_id),
+                    notebook_name: Some("Imported".into()),
+                    stack_id: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(second.imported, 1, "errors: {:?}", second.errors);
+        assert_eq!(second.duplicates, 0);
+
+        let notes = service
+            .list_notes(Some(first.notebook_id), None, false, None, Some(false))
+            .unwrap();
+        assert_eq!(notes.len(), 2, "both imports should have created a note");
     }
 }

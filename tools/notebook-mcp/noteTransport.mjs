@@ -74,18 +74,35 @@ export async function checkHealth(apiBase, healthTimeoutMs = 5_000) {
 }
 
 /**
- * REST-backed note store. `notebookId` is optional - only `listNotes`,
- * `createNote`, and `search` scope to it; `getNote`/`updateNote`/
- * `softDeleteNote` operate on a note id directly and work with `notebookId`
- * left unset (that's what tools/notebook-links relies on: it updates a
- * specific note's content without being scoped to one notebook).
+ * REST-backed note store. `notebookId` is scalar | array | null - only
+ * `listNotes`, `createNote`, and `search` scope to it; `getNote`/
+ * `updateNote`/`softDeleteNote` operate on a note id directly and work with
+ * `notebookId` left unset (that's what tools/notebook-links relies on: it
+ * updates a specific note's content without being scoped to one notebook).
+ *
+ * Normalized internally to:
+ *   - `readIds`: null when unset (unscoped), else a deduped array of truthy
+ *     ids from `[].concat(notebookId)`. `listNotes`/`search` cover all of
+ *     `readIds`.
+ *   - `writeId`: `readIds ? readIds[0] : null` - the default create target.
  */
 export function httpNoteStore(apiBase, notebookId, requestTimeoutMs = 10_000) {
+  const readIds = notebookId == null ? null : [...new Set([].concat(notebookId).filter(Boolean))];
+  const writeId = readIds ? readIds[0] : null;
+
   const store = { offline: false, wrote: false };
   const fetchJson = (pathAndQuery, options) => apiFetchJson(apiBase, pathAndQuery, options, requestTimeoutMs);
-  const notebookQuery = notebookId ? `notebook_id=${notebookId}` : "";
 
-  store.listNotes = async () => fetchJson(`/api/v1/notes${notebookQuery ? `?${notebookQuery}` : ""}`);
+  store.listNotes = async () => {
+    if (!readIds) return fetchJson("/api/v1/notes");
+    if (readIds.length === 1) return fetchJson(`/api/v1/notes?notebook_id=${readIds[0]}`);
+    // Multiple notebooks: fetch each separately rather than an unfiltered
+    // list + client-side filter - the Dev DB is large (~880MB) and some
+    // notebooks (e.g. "My Notes") hold dozens of notes we'd otherwise pull
+    // across the wire for nothing.
+    const results = await Promise.all(readIds.map((id) => fetchJson(`/api/v1/notes?notebook_id=${id}`)));
+    return results.flat();
+  };
 
   store.getNote = async (id) => {
     try {
@@ -96,17 +113,26 @@ export function httpNoteStore(apiBase, notebookId, requestTimeoutMs = 10_000) {
     }
   };
 
-  store.findByExactTitle = async (title) => {
+  store.findByExactTitle = async (title, targetNotebookId) => {
     const notes = await store.listNotes();
-    const found = notes.find((n) => n.title === title);
-    return found ? { id: found.id, title: found.title } : null;
+    const found = notes.find((n) => n.title === title && (!targetNotebookId || n.notebook_id === targetNotebookId));
+    return found ? { id: found.id, title: found.title, notebook_id: found.notebook_id } : null;
   };
 
-  store.createNote = async (title, contentHtml) => {
-    if (!notebookId) throw new Error("httpNoteStore.createNote requires a notebookId.");
+  store.createNote = async (title, contentHtml, targetNotebookId) => {
+    let destNotebookId;
+    if (targetNotebookId) {
+      if (!readIds || !readIds.includes(targetNotebookId)) {
+        throw new Error(`httpNoteStore.createNote: notebook ${targetNotebookId} is not one of the scoped notebooks.`);
+      }
+      destNotebookId = targetNotebookId;
+    } else {
+      destNotebookId = writeId;
+    }
+    if (!destNotebookId) throw new Error("httpNoteStore.createNote requires a notebookId.");
     const created = await fetchJson("/api/v1/notes", {
       method: "POST",
-      body: JSON.stringify({ notebook_id: notebookId, title, content: contentHtml }),
+      body: JSON.stringify({ notebook_id: destNotebookId, title, content: contentHtml }),
     });
     store.wrote = true;
     return created;
@@ -136,9 +162,26 @@ export function httpNoteStore(apiBase, notebookId, requestTimeoutMs = 10_000) {
   };
 
   store.search = async (query, limit) => {
-    const params = new URLSearchParams({ q: query, limit: String(limit) });
-    if (notebookId) params.set("notebook_id", notebookId);
-    return fetchJson(`/api/v1/search?${params.toString()}`);
+    if (!readIds) {
+      const params = new URLSearchParams({ q: query, limit: String(limit) });
+      return fetchJson(`/api/v1/search?${params.toString()}`);
+    }
+    if (readIds.length === 1) {
+      const params = new URLSearchParams({ q: query, limit: String(limit), notebook_id: readIds[0] });
+      return fetchJson(`/api/v1/search?${params.toString()}`);
+    }
+    // Multiple notebooks: run the search once per notebook (same limit) and
+    // concatenate + slice. Cross-notebook relevance ranking is only
+    // approximate this way, since the API ranks results per-query rather
+    // than across a combined result set.
+    const results = await Promise.all(
+      readIds.map((id) => {
+        const params = new URLSearchParams({ q: query, limit: String(limit), notebook_id: id });
+        return fetchJson(`/api/v1/search?${params.toString()}`);
+      })
+    );
+    const notes = results.flatMap((r) => r.notes).slice(0, limit);
+    return { notes };
   };
 
   store.close = () => {};
@@ -177,8 +220,10 @@ function buildSqliteNoteStore({ envDb, cachedDbPath, notebookId }) {
  * write behind a live app's back) or `SqliteError` if SQLite mode can't find
  * a database.
  *
- * `notebookId` is optional (see {@link httpNoteStore}); pass `null` for
- * tools that only read/update notes by id.
+ * `notebookId` is scalar | array | null (see {@link httpNoteStore}); pass
+ * `null` for tools that only read/update notes by id. When an array is
+ * given, the FIRST element is the default write target (used by
+ * `createNote` when no explicit target notebook is passed).
  */
 export async function resolveNoteTransport({
   apiBase,

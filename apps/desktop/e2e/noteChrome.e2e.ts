@@ -258,6 +258,32 @@ describe("Evernote formatting toolbar", () => {
     assert.equal(await page.locator(".ProseMirror h1").innerText(), "Heading");
   });
 
+  it("keeps the formatting toolbar beside the note color rail", async () => {
+    await openEditableNote();
+    // Colors now live behind a single trigger in the note breadcrumb bar
+    // instead of an always-visible row of dots.
+    await page.getByTitle("Note colour").click();
+    await page.getByTitle("Orange", { exact: true }).click();
+    await page.waitForSelector(".editor-body.note-color-orange");
+
+    const rail = await page.evaluate(() => {
+      const body = document.querySelector(".editor-body")?.getBoundingClientRect();
+      const toolbarElement = document.querySelector(".editor-toolbar");
+      const toolbar = toolbarElement?.getBoundingClientRect();
+      if (!body || !toolbar || !toolbarElement) throw new Error("Editor body or toolbar is missing");
+      const accent = getComputedStyle(toolbarElement, "::before");
+      return {
+        offset: toolbar.left - body.left,
+        width: accent.width,
+        color: accent.backgroundColor,
+      };
+    });
+
+    assert.ok(Math.abs(rail.offset) < 0.1, `toolbar offset was ${rail.offset}px`);
+    assert.equal(rail.width, "4px");
+    assert.equal(rail.color, "rgb(247, 144, 9)");
+  });
+
   it("lists Checkbox in Insert and Strikethrough in More", async () => {
     await openEditableNote();
     await page.getByTitle("Insert").click();

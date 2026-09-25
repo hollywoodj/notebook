@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Notebook MCP server: a single-file, zero-dependency Node ESM server that
 // exposes a Claude<->Notebook bridge over stdio (MCP: newline-delimited
-// JSON-RPC 2.0). Hard-scoped to one notebook - see README.md.
+// JSON-RPC 2.0). Scoped to two notebooks (Dev, Reports) - see README.md.
 //
 // Transport is resolved per tool call: HTTP against notebook-api when it's
 // reachable, direct SQLite (node:sqlite, no new dependency) when it isn't -
@@ -27,6 +27,8 @@ import {
   formatNumberedItems,
   resolveRequiredProject,
   requireProjectArg,
+  applyBacklogEdits,
+  applyIdeaEdits,
 } from "./notes.mjs";
 import {
   OVERVIEW_NOTE_TITLE,
@@ -48,7 +50,31 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.join(__dirname, "config.local.json");
 
 const API_BASE = (process.env.NOTEBOOK_API || "http://127.0.0.1:8799").replace(/\/$/, "");
-const NOTEBOOK_ID = process.env.NOTEBOOK_MCP_NOTEBOOK_ID || "3634580e-8510-409a-9f1d-efba851586da";
+
+// Scoping is deliberately asymmetric: read-wide, write-narrow.
+//
+// - Read/visibility (list_notes, read_note, search_notes, and the
+//   getNoteScoped guard) covers BOTH notebooks - Dev and Reports.
+// - All structured/title-resolved machinery (Dev Log, the Overview note,
+//   project notes, list_projects, enable_project, disable_project,
+//   read_backlog, update_backlog, read_reports, add_report) stays pinned to
+//   Dev ONLY, via getNoteInDev rather than getNoteScoped. Those resolvers
+//   find notes by exact title - if they were allowed to match a Reports
+//   note, a report titled e.g. "Dev: Notebook" could silently be adopted as
+//   a project note and split that project's history. Reports is meant to
+//   hold freeform one-off report notes, never structured project state.
+//
+// Dev must stay FIRST in SCOPED_NOTEBOOK_IDS - it's the default write
+// target (see noteTransport.mjs's `writeId` normalization).
+const DEV_NOTEBOOK_ID = process.env.NOTEBOOK_MCP_NOTEBOOK_ID || "3634580e-8510-409a-9f1d-efba851586da";
+const REPORTS_NOTEBOOK_ID = process.env.NOTEBOOK_MCP_REPORTS_NOTEBOOK_ID || "e92e2eb9-651e-454b-8a66-1ba5c854d81e";
+const SCOPED_NOTEBOOK_IDS = [DEV_NOTEBOOK_ID, REPORTS_NOTEBOOK_ID];
+const NOTEBOOK_NAMES = { [DEV_NOTEBOOK_ID]: "Dev", [REPORTS_NOTEBOOK_ID]: "Reports" };
+const NOTEBOOK_NAME_TO_ID = { dev: DEV_NOTEBOOK_ID, reports: REPORTS_NOTEBOOK_ID };
+/** Human-readable notebook name for display (`## Dev`, `[Reports]`, etc.); falls back to the raw id. */
+function notebookName(id) {
+  return NOTEBOOK_NAMES[id] || id;
+}
 const REQUEST_TIMEOUT_MS = 10_000;
 // Generous on purpose. The old 800ms budget could not tell "the app is not
 // running" from "the app is busy": every API handler shares one mutex, so a
@@ -144,7 +170,7 @@ function saveOverviewSyncState(statResults) {
 async function resolveTransport() {
   return resolveNoteTransport({
     apiBase: API_BASE,
-    notebookId: NOTEBOOK_ID,
+    notebookId: SCOPED_NOTEBOOK_IDS,
     envDb: process.env.NOTEBOOK_DB,
     cachedDbPath: loadConfig().dbPath,
     forceSqlite: process.env.NOTEBOOK_MCP_FORCE_SQLITE === "1",
@@ -165,8 +191,27 @@ async function resolveTransport() {
 async function getNoteScoped(store, id) {
   const note = await store.getNote(id);
   if (!note) throw new ToolInputError(`No note found with id ${id}.`);
-  if (note.notebook_id !== NOTEBOOK_ID) {
-    throw new ToolInputError(`Note ${id} is not in the scoped notebook (${NOTEBOOK_ID}); refusing.`);
+  if (!SCOPED_NOTEBOOK_IDS.includes(note.notebook_id)) {
+    throw new ToolInputError(
+      `Note ${id} is not in either scoped notebook (Dev: ${DEV_NOTEBOOK_ID}, Reports: ${REPORTS_NOTEBOOK_ID}); refusing.`
+    );
+  }
+  return note;
+}
+
+/** Like getNoteScoped, but requires the note to live in Dev specifically.
+ * Every structured/title-resolved resolver (Dev Log, project notes, the
+ * Overview note) must use this instead of getNoteScoped - those resolvers
+ * match by exact title, and letting them match a Reports note could
+ * silently misfile a report as project state. See the scoping comment above
+ * SCOPED_NOTEBOOK_IDS. */
+async function getNoteInDev(store, id) {
+  const note = await store.getNote(id);
+  if (!note) throw new ToolInputError(`No note found with id ${id}.`);
+  if (note.notebook_id !== DEV_NOTEBOOK_ID) {
+    throw new ToolInputError(
+      `Note ${id} lives outside the Dev notebook (${DEV_NOTEBOOK_ID}); structured project tooling (Dev Log, project notes, backlog, reports, the Overview note) only operates on Dev.`
+    );
   }
   return note;
 }
@@ -196,13 +241,13 @@ async function findDevLogNote(store) {
   const config = loadConfig();
   if (config.devLogNoteId) {
     const note = await store.getNote(config.devLogNoteId);
-    if (note && !note.deleted_at && note.notebook_id === NOTEBOOK_ID && note.title === DEV_LOG_TITLE) {
+    if (note && !note.deleted_at && note.notebook_id === DEV_NOTEBOOK_ID && note.title === DEV_LOG_TITLE) {
       return note;
     }
   }
-  const found = await store.findByExactTitle(DEV_LOG_TITLE);
+  const found = await store.findByExactTitle(DEV_LOG_TITLE, DEV_NOTEBOOK_ID);
   if (found) {
-    const note = await getNoteScoped(store, found.id);
+    const note = await getNoteInDev(store, found.id);
     if (!note.deleted_at) {
       cacheDevLogNoteId(note.id);
       return note;
@@ -221,7 +266,7 @@ async function resolveDevLogNoteId(store) {
   return created.id;
 }
 
-/** The project's own note, if one currently exists in the scoped notebook (an
+/** The project's own note, if one currently exists in the Dev notebook (an
  * "enabled" project). Resolution order, first hit wins:
  *   (a) config cache under `project` - accepts the current `Dev: ` title, the
  *       legacy bare title, or a case-insensitive match of either (a cached id
@@ -242,7 +287,7 @@ async function findOwnProjectNote(store, project) {
     if (
       note &&
       !note.deleted_at &&
-      note.notebook_id === NOTEBOOK_ID &&
+      note.notebook_id === DEV_NOTEBOOK_ID &&
       [wantTitle, project].some(
         (t) => note.title === t || note.title.toLowerCase() === t.toLowerCase()
       )
@@ -252,20 +297,20 @@ async function findOwnProjectNote(store, project) {
   }
 
   // (b) exact match on "Dev: ProjectName"
-  const found = await store.findByExactTitle(wantTitle);
+  const found = await store.findByExactTitle(wantTitle, DEV_NOTEBOOK_ID);
   if (found) {
-    const note = await getNoteScoped(store, found.id);
+    const note = await getNoteInDev(store, found.id);
     if (!note.deleted_at) {
       cacheProjectNoteId(project, note.id);
       return note;
     }
   }
 
-  // (c) case-insensitive scan for "Dev: ProjectName"
-  const notes = await store.listNotes();
+  // (c) case-insensitive scan for "Dev: ProjectName" - Dev notes only.
+  const notes = (await store.listNotes()).filter((n) => n.notebook_id === DEV_NOTEBOOK_ID);
   const ciMatch = notes.find((n) => n.title.toLowerCase() === wantTitle.toLowerCase());
   if (ciMatch) {
-    const note = await getNoteScoped(store, ciMatch.id);
+    const note = await getNoteInDev(store, ciMatch.id);
     if (!note.deleted_at) {
       cacheProjectNoteId(project, note.id);
       return note;
@@ -273,9 +318,9 @@ async function findOwnProjectNote(store, project) {
   }
 
   // (d) transitional: legacy bare-title match, exact then case-insensitive.
-  const legacyFound = await store.findByExactTitle(project);
+  const legacyFound = await store.findByExactTitle(project, DEV_NOTEBOOK_ID);
   if (legacyFound) {
-    const note = await getNoteScoped(store, legacyFound.id);
+    const note = await getNoteInDev(store, legacyFound.id);
     if (!note.deleted_at) {
       cacheProjectNoteId(project, note.id);
       return note;
@@ -283,7 +328,7 @@ async function findOwnProjectNote(store, project) {
   }
   const legacyCiMatch = notes.find((n) => n.title.toLowerCase() === project.toLowerCase());
   if (legacyCiMatch) {
-    const note = await getNoteScoped(store, legacyCiMatch.id);
+    const note = await getNoteInDev(store, legacyCiMatch.id);
     if (!note.deleted_at) {
       cacheProjectNoteId(project, note.id);
       return note;
@@ -309,7 +354,7 @@ async function resolveProjectTarget(store, project) {
 async function getProjectBlock(store, project) {
   const own = await findOwnProjectNote(store, project);
   if (own) {
-    const note = await getNoteScoped(store, own.id);
+    const note = await getNoteInDev(store, own.id);
     return { kind: "own", note, block: parseProjectBlock(note.content, PROJECT_NOTE_OFFSET) };
   }
   const devLogNote = await findDevLogNote(store);
@@ -329,7 +374,7 @@ async function getProjectBlock(store, project) {
  * re-fetches immediately before writing - never reuses an earlier read. */
 async function withProjectBlock(store, project, mutate) {
   const target = await resolveProjectTarget(store, project);
-  const note = await getNoteScoped(store, target.noteId); // fresh GET, immediately before the write below
+  const note = await getNoteInDev(store, target.noteId); // fresh GET, immediately before the write below
   if (target.kind === "own") {
     const block = parseProjectBlock(note.content, PROJECT_NOTE_OFFSET);
     const result = mutate(block);
@@ -394,15 +439,17 @@ async function findOverviewNote(store) {
     if (
       note &&
       !note.deleted_at &&
-      note.notebook_id === NOTEBOOK_ID &&
+      note.notebook_id === DEV_NOTEBOOK_ID &&
       (note.title === OVERVIEW_NOTE_TITLE || note.title === LEGACY_OVERVIEW_NOTE_TITLE)
     ) {
       return note;
     }
   }
-  const found = (await store.findByExactTitle(OVERVIEW_NOTE_TITLE)) || (await store.findByExactTitle(LEGACY_OVERVIEW_NOTE_TITLE));
+  const found =
+    (await store.findByExactTitle(OVERVIEW_NOTE_TITLE, DEV_NOTEBOOK_ID)) ||
+    (await store.findByExactTitle(LEGACY_OVERVIEW_NOTE_TITLE, DEV_NOTEBOOK_ID));
   if (found) {
-    const note = await getNoteScoped(store, found.id);
+    const note = await getNoteInDev(store, found.id);
     if (!note.deleted_at) {
       cacheOverviewNoteId(note.id);
       return note;
@@ -453,7 +500,7 @@ async function ensureOverviewSynced(store, { force = false } = {}) {
  * fresh-read-modify-write convention. */
 async function withIdeasList(store, mutate) {
   const { note: justSynced } = await ensureOverviewSynced(store, { force: false });
-  const fresh = await getNoteScoped(store, justSynced.id); // fresh GET, immediately before the write below
+  const fresh = await getNoteInDev(store, justSynced.id); // fresh GET, immediately before the write below
   const zones = parseOverviewZones(fresh.content);
   const items = parseTaskListItems(zones.ideasZoneHtml);
   const result = mutate(items);
@@ -468,82 +515,6 @@ async function withIdeasList(store, mutate) {
 
 function textResult(text) {
   return { content: [{ type: "text", text }] };
-}
-
-/** Resolves a check/uncheck ref (an item number from read_backlog's output, or
- * exact item text) against a `combined` list of `{ it }}` entries (as produced
- * by combinedItems, or a flat `items.map((it) => ({ it }))` for Dev's Ideas
- * list). `label` only shapes the error message (e.g. `project "X"` or "Dev's
- * Ideas list"). */
-function makeResolveItemRef(combined, label) {
-  return function resolveItemRef(ref) {
-    const asString = String(ref).trim();
-    if (/^\d+$/.test(asString)) {
-      const n = Number(asString);
-      if (n < 1 || n > combined.length) {
-        return { error: `item number ${ref} (${label} currently has ${combined.length} item(s))` };
-      }
-      return { entry: combined[n - 1] };
-    }
-    const match = combined.find((c) => c.it.text === asString);
-    if (!match) return { error: `item text "${ref}"` };
-    return { entry: match };
-  };
-}
-
-/** Applies validated check/uncheck/add-bugs/add-improvements against one
- * `{ bugs, improvements }`-shaped block (or Dev's Ideas list, passed as
- * `{ bugs: items, improvements: [] }` so both add_bugs/add_improvements land
- * in the same flat array). Throws ToolInputError (no changes made) if any
- * check/uncheck ref doesn't resolve. Returns a human-readable summary string. */
-function applyBacklogEdits(block, { addBugs, addImprovements, checkRefs, uncheckRefs }, label) {
-  const combined = combinedItems(block);
-  const resolveItemRef = makeResolveItemRef(combined, label);
-
-  const checkResolved = checkRefs.map((r) => ({ ref: r, res: resolveItemRef(r) }));
-  const uncheckResolved = uncheckRefs.map((r) => ({ ref: r, res: resolveItemRef(r) }));
-  const failures = [...checkResolved, ...uncheckResolved].filter((x) => x.res.error).map((x) => x.res.error);
-  if (failures.length) {
-    throw new ToolInputError(`update_backlog: no matching item for ${failures.join(", ")}. No changes were made.`);
-  }
-
-  for (const { res } of checkResolved) res.entry.it.checked = true;
-  for (const { res } of uncheckResolved) res.entry.it.checked = false;
-  for (const text of addBugs) block.bugs.push({ text, checked: false });
-  for (const text of addImprovements) block.improvements.push({ text, checked: false });
-
-  const parts = [];
-  if (addBugs.length) parts.push(`added ${addBugs.length} bug(s)`);
-  if (addImprovements.length) parts.push(`added ${addImprovements.length} improvement(s)`);
-  if (checkResolved.length) parts.push(`checked ${checkResolved.length} item(s)`);
-  if (uncheckResolved.length) parts.push(`unchecked ${uncheckResolved.length} item(s)`);
-  return parts.length ? parts.join(", ") : "no changes";
-}
-
-/** Dev's Ideas list is a single flat list - unlike an ordinary project's
- * bugs/improvements split, add_bugs and add_improvements both just append to
- * it. Same validate-before-mutate shape as applyBacklogEdits otherwise. */
-function applyIdeaEdits(items, { addBugs, addImprovements, checkRefs, uncheckRefs }) {
-  const combined = items.map((it) => ({ it }));
-  const resolveItemRef = makeResolveItemRef(combined, `Dev's Ideas list`);
-
-  const checkResolved = checkRefs.map((r) => ({ ref: r, res: resolveItemRef(r) }));
-  const uncheckResolved = uncheckRefs.map((r) => ({ ref: r, res: resolveItemRef(r) }));
-  const failures = [...checkResolved, ...uncheckResolved].filter((x) => x.res.error).map((x) => x.res.error);
-  if (failures.length) {
-    throw new ToolInputError(`update_backlog: no matching item for ${failures.join(", ")}. No changes were made.`);
-  }
-
-  for (const { res } of checkResolved) res.entry.it.checked = true;
-  for (const { res } of uncheckResolved) res.entry.it.checked = false;
-  const newTexts = [...addBugs, ...addImprovements];
-  for (const text of newTexts) items.push({ text, checked: false });
-
-  const parts = [];
-  if (newTexts.length) parts.push(`added ${newTexts.length} idea(s)`);
-  if (checkResolved.length) parts.push(`checked ${checkResolved.length} item(s)`);
-  if (uncheckResolved.length) parts.push(`unchecked ${uncheckResolved.length} item(s)`);
-  return parts.length ? parts.join(", ") : "no changes";
 }
 
 function blockCounts(block) {
@@ -562,9 +533,19 @@ function blockCounts(block) {
 
 async function toolListNotes(_args, store) {
   const notes = await store.listNotes();
-  if (!notes.length) return textResult("(no notes in the scoped notebook yet)");
-  const lines = notes.map((n) => `- ${n.title || "(untitled)"}  [id: ${n.id}]  updated: ${n.updated_at}`);
-  return textResult(lines.join("\n"));
+  if (!notes.length) return textResult("(no notes in Dev or Reports yet)");
+  const byNotebook = new Map();
+  for (const n of notes) {
+    if (!byNotebook.has(n.notebook_id)) byNotebook.set(n.notebook_id, []);
+    byNotebook.get(n.notebook_id).push(n);
+  }
+  const sections = SCOPED_NOTEBOOK_IDS.filter((id) => byNotebook.get(id)?.length).map((id) => {
+    const lines = byNotebook
+      .get(id)
+      .map((n) => `- ${n.title || "(untitled)"}  [id: ${n.id}]  updated: ${n.updated_at}`);
+    return `## ${notebookName(id)}\n${lines.join("\n")}`;
+  });
+  return textResult(sections.join("\n\n"));
 }
 
 function describeRef({ note_id, title }) {
@@ -573,33 +554,52 @@ function describeRef({ note_id, title }) {
 
 async function toolReadNote(args, store) {
   const note = await resolveNoteRef(store, args);
-  if (!note) throw new ToolInputError(`No note found matching ${describeRef(args)} in the scoped notebook.`);
+  if (!note) throw new ToolInputError(`No note found matching ${describeRef(args)} in Dev or Reports.`);
   return textResult(`# ${note.title}\n\n${htmlToMarkdown(note.content)}`);
 }
 
 async function toolWriteNote(args, store) {
-  const { note_id, title, content_markdown, mode = "append", create_if_missing = false } = args;
+  const { note_id, title, content_markdown, mode = "append", create_if_missing = false, notebook } = args;
   if (!note_id && !title) throw new ToolInputError("Provide note_id or title.");
   if (typeof content_markdown !== "string") throw new ToolInputError("content_markdown is required.");
   if (!["replace", "append", "prepend"].includes(mode)) {
     throw new ToolInputError(`Invalid mode "${mode}"; use replace, append, or prepend.`);
   }
+  if (notebook !== undefined && !["dev", "reports"].includes(notebook)) {
+    throw new ToolInputError(`Invalid notebook "${notebook}"; use "dev" or "reports".`);
+  }
 
   let existing;
   if (note_id) {
     existing = await getNoteScoped(store, note_id);
+  } else if (notebook) {
+    const found = await store.findByExactTitle(title, NOTEBOOK_NAME_TO_ID[notebook]);
+    existing = found ? await getNoteScoped(store, found.id) : null;
   } else {
-    existing = await resolveNoteRef(store, { title });
+    // No notebook given: check Dev and Reports explicitly rather than
+    // letting an unscoped lookup silently pick whichever the store happens
+    // to return first - a title colliding across notebooks must never be
+    // guessed at.
+    const [devFound, reportsFound] = await Promise.all([
+      store.findByExactTitle(title, DEV_NOTEBOOK_ID),
+      store.findByExactTitle(title, REPORTS_NOTEBOOK_ID),
+    ]);
+    if (devFound && reportsFound) {
+      throw new ToolInputError(
+        `write_note: title "${title}" matches notes in both Dev [id: ${devFound.id}] and Reports [id: ${reportsFound.id}]. Pass notebook:"dev" or notebook:"reports" to disambiguate.`
+      );
+    }
+    const found = devFound || reportsFound;
+    existing = found ? await getNoteScoped(store, found.id) : null;
   }
 
   if (!existing) {
     if (!create_if_missing) {
-      throw new ToolInputError(
-        `No note titled "${title}" found in the scoped notebook. Pass create_if_missing:true to create it.`
-      );
+      throw new ToolInputError(`No note titled "${title}" found in Dev or Reports. Pass create_if_missing:true to create it.`);
     }
-    const created = await store.createNote(title, markdownToHtml(content_markdown));
-    return textResult(`Created note "${title}" [id: ${created.id}].`);
+    const createId = NOTEBOOK_NAME_TO_ID[notebook || "dev"];
+    const created = await store.createNote(title, markdownToHtml(content_markdown), createId);
+    return textResult(`Created note "${title}" [id: ${created.id}] in ${notebookName(createId)}.`);
   }
 
   // Read-modify-write: re-GET immediately before the write, never reuse a cached copy.
@@ -619,8 +619,10 @@ async function toolSearchNotes(args, store) {
   if (typeof query !== "string" || !query.trim()) throw new ToolInputError("query is required.");
   const limit = Number.isInteger(args.limit) && args.limit > 0 ? args.limit : 20;
   const result = await store.search(query, limit);
-  if (!result.notes.length) return textResult(`No matches for "${query}" in the scoped notebook.`);
-  const lines = result.notes.map((n) => `- ${n.title || "(untitled)"}  [id: ${n.id}]\n  ${n.snippet}`);
+  if (!result.notes.length) return textResult(`No matches for "${query}" in Dev or Reports.`);
+  const lines = result.notes.map(
+    (n) => `- [${notebookName(n.notebook_id)}] ${n.title || "(untitled)"}  [id: ${n.id}]\n  ${n.snippet}`
+  );
   return textResult(lines.join("\n"));
 }
 
@@ -630,18 +632,18 @@ async function toolSearchNotes(args, store) {
  * note. A one-off note with no prefix is not a project, even though it also
  * isn't Dev Log or the overview. */
 async function listAllProjects(store) {
-  const notes = await store.listNotes();
+  const notes = (await store.listNotes()).filter((n) => n.notebook_id === DEV_NOTEBOOK_ID);
   const devLogSummary = notes.find((n) => n.title === DEV_LOG_TITLE);
   const rows = [];
   if (devLogSummary) {
-    const devLogNote = await getNoteScoped(store, devLogSummary.id);
+    const devLogNote = await getNoteInDev(store, devLogSummary.id);
     for (const p of parseDevLog(devLogNote.content).projects) {
       rows.push({ name: p.name, enabled: false, block: { bugs: p.bugs, improvements: p.improvements, reviews: p.reviews } });
     }
   }
   for (const n of notes) {
     if (!isProjectNoteTitle(n.title, DEV_LOG_TITLE)) continue;
-    const note = await getNoteScoped(store, n.id);
+    const note = await getNoteInDev(store, n.id);
     rows.push({ name: projectNameFromTitle(n.title), enabled: true, block: parseProjectBlock(note.content, PROJECT_NOTE_OFFSET) });
   }
   rows.sort((a, b) => a.name.localeCompare(b.name));
@@ -692,7 +694,8 @@ async function toolUpdateBacklog(args, store) {
   const addImprovements = Array.isArray(args.add_improvements) ? args.add_improvements.map(String) : [];
   const checkRefs = Array.isArray(args.check) ? args.check : [];
   const uncheckRefs = Array.isArray(args.uncheck) ? args.uncheck : [];
-  const edits = { addBugs, addImprovements, checkRefs, uncheckRefs };
+  const removeRefs = Array.isArray(args.remove) ? args.remove : [];
+  const edits = { addBugs, addImprovements, checkRefs, uncheckRefs, removeRefs };
 
   if (isDevProject(project)) {
     const summary = await withIdeasList(store, (items) => applyIdeaEdits(items, edits));
@@ -802,13 +805,13 @@ async function toolDisableProject(args, store) {
   }
   const ownNote = await findOwnProjectNote(store, project);
   if (!ownNote) {
-    return textResult(`"${project}" is not enabled (no dedicated note in the scoped notebook) - nothing to disable.`);
+    return textResult(`"${project}" is not enabled (no dedicated note in Dev) - nothing to disable.`);
   }
-  const fresh = await getNoteScoped(store, ownNote.id); // fresh
+  const fresh = await getNoteInDev(store, ownNote.id); // fresh
   const block = parseProjectBlock(fresh.content, PROJECT_NOTE_OFFSET);
 
   const devLogId = await resolveDevLogNoteId(store);
-  const devLogNote = await getNoteScoped(store, devLogId); // fresh
+  const devLogNote = await getNoteInDev(store, devLogId); // fresh
   const devLog = parseDevLog(devLogNote.content);
   const idx = devLog.projects.findIndex((p) => p.name === project);
   if (idx !== -1) devLog.projects.splice(idx, 1); // shouldn't exist while enabled, but guard against drift
@@ -893,7 +896,7 @@ async function toolRenameNote(args, store) {
   const { note_id, title, new_title } = args;
   if (!note_id && !title) throw new ToolInputError("Provide note_id or title.");
   const note = await resolveNoteRef(store, { note_id, title });
-  if (!note) throw new ToolInputError(`No note found matching ${describeRef({ note_id, title })} in the scoped notebook.`);
+  if (!note) throw new ToolInputError(`No note found matching ${describeRef({ note_id, title })} in Dev or Reports.`);
 
   if (typeof new_title !== "string") throw new ToolInputError("new_title is required.");
   const trimmed = new_title.trim();
@@ -905,7 +908,7 @@ async function toolRenameNote(args, store) {
 
   const clash = await store.findByExactTitle(trimmed);
   if (clash && clash.id !== note.id) {
-    throw new ToolInputError(`rename_note: another note is already titled "${trimmed}" [id: ${clash.id}] in the scoped notebook.`);
+    throw new ToolInputError(`rename_note: another note is already titled "${trimmed}" [id: ${clash.id}] (${notebookName(clash.notebook_id)}).`);
   }
 
   if (note.title === DEV_LOG_TITLE || trimmed === DEV_LOG_TITLE) {
@@ -935,13 +938,13 @@ async function toolRenameNote(args, store) {
 const TOOLS = {
   list_notes: {
     description:
-      "List all notes in the scoped notebook (id, title, last-updated). This notebook only ever holds a 'Dev Log' catch-all note, the global 'Dev - Overview' note, plus one note per enabled project. Only notes inside this one hard-scoped notebook are visible - there is no way to list, browse, or move notes into other notebooks.",
+      "List all notes across both scoped notebooks - Dev and Reports (id, title, last-updated), grouped by notebook. Dev holds the 'Dev Log' catch-all note, the global 'Dev - Overview' note, one note per enabled project, and any one-off notes; Reports holds freeform one-off report notes written via write_note with notebook:\"reports\". There is no tool that lists, browses, or moves notes into any OTHER notebook - the blast radius of this server stays these two.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     handler: toolListNotes,
   },
   read_note: {
     description:
-      "Read a note's full content as Markdown. Provide either note_id or an exact title (title lookups only search the scoped notebook). Refuses notes outside the scoped notebook.",
+      "Read a note's full content as Markdown. Provide either note_id or an exact title (title lookups search both Dev and Reports). Refuses notes outside those two scoped notebooks.",
     inputSchema: {
       type: "object",
       properties: {
@@ -954,7 +957,7 @@ const TOOLS = {
   },
   write_note: {
     description:
-      "Create or update a note in the scoped notebook, given Markdown content (converted to the app's rich-text HTML). `mode` controls how content_markdown combines with any existing content: 'append' (default) adds after, 'prepend' adds before, 'replace' overwrites. Set create_if_missing:true to create the note (requires title) when no match exists. Every write is a fresh read-modify-write, and the app's note revision history covers mistakes (written on both transports).",
+      "Create or update a note in Dev or Reports, given Markdown content (converted to the app's rich-text HTML). `notebook` ('dev', default, or 'reports') selects the target notebook for creation and pins title lookups to it; when omitted and an exact title match exists in BOTH notebooks, the call is refused naming both note ids rather than guessing - pass notebook to disambiguate. `mode` controls how content_markdown combines with any existing content: 'append' (default) adds after, 'prepend' adds before, 'replace' overwrites. Set create_if_missing:true to create the note (requires title) when no match exists. Every write is a fresh read-modify-write, and the app's note revision history covers mistakes (written on both transports). Reports holds freeform one-off report notes only - all project/backlog/review tooling (add_report, update_backlog, enable_project, etc.) is unaffected by this selector and always operates on Dev.",
     inputSchema: {
       type: "object",
       properties: {
@@ -972,6 +975,13 @@ const TOOLS = {
           default: false,
           description: "Create the note (by title) if no matching note exists yet.",
         },
+        notebook: {
+          type: "string",
+          enum: ["dev", "reports"],
+          default: "dev",
+          description:
+            "Which notebook to target: 'dev' (default) or 'reports'. Selects the notebook on create, and pins the title lookup to it. Required to disambiguate when a title exists in both notebooks - never guessed.",
+        },
       },
       required: ["content_markdown"],
       additionalProperties: false,
@@ -979,7 +989,8 @@ const TOOLS = {
     handler: toolWriteNote,
   },
   search_notes: {
-    description: "Full-text search notes inside the scoped notebook. Returns matching titles, a snippet, and each note's id, ranked by relevance.",
+    description:
+      "Full-text search notes across both Dev and Reports. Returns matching titles (each tagged with its notebook), a snippet, and each note's id, ranked by relevance (cross-notebook ranking is approximate when both notebooks have hits, since each is searched separately and then merged).",
     inputSchema: {
       type: "object",
       properties: {
@@ -1003,7 +1014,7 @@ const TOOLS = {
   },
   update_backlog: {
     description:
-      "Add and/or check off items in one project's Bugs / Future Improvements checklists. Routing: writes to the project's own note if it has one (see enable_project), otherwise to its section in the 'Dev Log' catch-all note, creating that section (and Dev Log itself) on demand. project: \"Dev\" (case-insensitive) is reserved and targets the flat Ideas list in the global 'Dev - Overview' note instead - add_bugs/add_improvements both just append to it there. add_bugs/add_improvements add new unchecked items. check/uncheck each take an item number (from read_backlog's output) or exact item text, and tick/untick existing items. All references are validated before anything is written - if any check/uncheck reference doesn't match, the whole call fails with no changes made. project defaults to the current working directory's folder name if omitted (the Dev root resolves to \"Dev\").",
+      "Add, check off, and/or remove items in one project's Bugs / Future Improvements checklists. Routing: writes to the project's own note if it has one (see enable_project), otherwise to its section in the 'Dev Log' catch-all note, creating that section (and Dev Log itself) on demand. project: \"Dev\" (case-insensitive) is reserved and targets the flat Ideas list in the global 'Dev - Overview' note instead - add_bugs/add_improvements both just append to it there. add_bugs/add_improvements add new unchecked items. check/uncheck/remove each take an item number (from read_backlog's output) or exact item text; check/uncheck tick/untick existing items, remove deletes them outright (permanent in the note body - recover via the note's revision history, not the trash). All references are validated before anything is written - if any check/uncheck/remove reference doesn't match, the whole call fails with no changes made. Within one call, check/uncheck is applied first, then remove, then add. project defaults to the current working directory's folder name if omitted (the Dev root resolves to \"Dev\").",
     inputSchema: {
       type: "object",
       properties: {
@@ -1019,6 +1030,11 @@ const TOOLS = {
           type: "array",
           items: { oneOf: [{ type: "string" }, { type: "integer" }] },
           description: "Item numbers (from read_backlog) or exact item text to mark unchecked.",
+        },
+        remove: {
+          type: "array",
+          items: { oneOf: [{ type: "string" }, { type: "integer" }] },
+          description: "Item numbers (from read_backlog) or exact item text to delete outright. Removal is permanent in the note body; recover via the note's revision history, not the trash.",
         },
       },
       required: ["project"],
@@ -1056,7 +1072,7 @@ const TOOLS = {
   },
   enable_project: {
     description:
-      "Give a project its own note, titled with just the project name, inside the scoped notebook. Moves (never copies) that project's whole section out of the 'Dev Log' catch-all note into the new note, promoting its heading levels - the content ends up in exactly one place. If the project had no Dev Log section yet, creates an empty note. No-op with a clear message if the project already has its own note.",
+      "Give a project its own note, titled with just the project name, inside Dev. Moves (never copies) that project's whole section out of the 'Dev Log' catch-all note into the new note, promoting its heading levels - the content ends up in exactly one place. If the project had no Dev Log section yet, creates an empty note. No-op with a clear message if the project already has its own note.",
     inputSchema: {
       type: "object",
       properties: { project: { type: "string", description: "Project name (required, no default)." } },
@@ -1067,7 +1083,7 @@ const TOOLS = {
   },
   disable_project: {
     description:
-      "Inverse of enable_project: folds a project's own note back into the 'Dev Log' catch-all note as a '## ProjectName' section (demoting heading levels), then moves the now-empty project note to trash (soft delete only - always recoverable, never permanent). Only ever operates on a note that resolves as that project's note inside the scoped notebook. No-op with a clear message if the project isn't currently enabled.",
+      "Inverse of enable_project: folds a project's own note back into the 'Dev Log' catch-all note as a '## ProjectName' section (demoting heading levels), then moves the now-empty project note to trash (soft delete only - always recoverable, never permanent). Only ever operates on a note that resolves as that project's note inside Dev. No-op with a clear message if the project isn't currently enabled.",
     inputSchema: {
       type: "object",
       properties: { project: { type: "string", description: "Project name (required, no default)." } },
@@ -1078,7 +1094,7 @@ const TOOLS = {
   },
   list_projects: {
     description:
-      "List every project known to the 'Dev Log' catch-all note or holding its own note in the scoped notebook, with its enabled state (own note vs. Dev Log section) and item counts (open/total bugs and improvements, review count). Never lists 'Dev - Overview' - it's the global note, not a project.",
+      "List every project known to the 'Dev Log' catch-all note or holding its own note in Dev, with its enabled state (own note vs. Dev Log section) and item counts (open/total bugs and improvements, review count). Never lists 'Dev - Overview' - it's the global note, not a project. Dev-only: Reports notes never appear here.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     handler: toolListProjects,
   },
@@ -1106,7 +1122,7 @@ const TOOLS = {
   },
   rename_note: {
     description:
-      "Rename a note in the scoped notebook. Provide note_id or the note's exact current title to find it (scoping is enforced the same as every other tool). No-op with a plain message if new_title already matches the current title. Refuses if another note in the scoped notebook already holds new_title, or if the rename touches 'Dev Log' on either side (that title is structural and resolved by constant, not renameable). If the renamed note was the project or overview note, the id cache is updated to follow the new title. The app keeps note revision history, so a rename is recoverable even if it turns out to be a mistake.",
+      "Rename a note in Dev or Reports. Provide note_id or the note's exact current title to find it (scoping is enforced the same as every other tool). No-op with a plain message if new_title already matches the current title. Refuses if another note in either notebook already holds new_title, or if the rename touches 'Dev Log' on either side (that title is structural and resolved by constant, not renameable). If the renamed note was the project or overview note, the id cache is updated to follow the new title. The app keeps note revision history, so a rename is recoverable even if it turns out to be a mistake.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1132,7 +1148,7 @@ const TOOL_DEFS = Object.entries(TOOLS).map(([name, t]) => ({
 // ---------------------------------------------------------------------------
 
 const SUPPORTED_PROTOCOL_VERSIONS = ["2024-11-05", "2025-03-26", "2025-06-18"];
-const SERVER_INFO = { name: "notebook-mcp", version: "0.3.0" };
+const SERVER_INFO = { name: "notebook-mcp", version: "0.4.0" };
 
 function send(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
@@ -1261,4 +1277,4 @@ process.stdin.on("end", () => process.exit(0));
 process.on("uncaughtException", (err) => log("uncaughtException:", err && err.stack ? err.stack : err));
 process.on("unhandledRejection", (err) => log("unhandledRejection:", err));
 
-log(`notebook-mcp starting. API=${API_BASE} notebook=${NOTEBOOK_ID} config=${CONFIG_PATH}`);
+log(`notebook-mcp starting. API=${API_BASE} dev=${DEV_NOTEBOOK_ID} reports=${REPORTS_NOTEBOOK_ID} config=${CONFIG_PATH}`);

@@ -121,6 +121,120 @@ export function formatNumberedItems(items, startNum) {
 }
 
 // ---------------------------------------------------------------------------
+// update_backlog's edit application: check/uncheck/remove/add, validated
+// before anything is mutated. Lives here (rather than in server.mjs, where
+// it used to live) so it can be exercised directly by tests without pulling
+// in server.mjs's stdio/transport side effects, which start as soon as that
+// module is imported.
+// ---------------------------------------------------------------------------
+
+/** Resolves a check/uncheck/remove ref (an item number from read_backlog's
+ * output, or exact item text) against a `combined` list of `{ it }}` entries
+ * (as produced by combinedItems, or a flat `items.map((it) => ({ it }))` for
+ * Dev's Ideas list). `label` only shapes the error message (e.g. `project
+ * "X"` or "Dev's Ideas list"). */
+function makeResolveItemRef(combined, label) {
+  return function resolveItemRef(ref) {
+    const asString = String(ref).trim();
+    if (/^\d+$/.test(asString)) {
+      const n = Number(asString);
+      if (n < 1 || n > combined.length) {
+        return { error: `item number ${ref} (${label} currently has ${combined.length} item(s))` };
+      }
+      return { entry: combined[n - 1] };
+    }
+    const match = combined.find((c) => c.it.text === asString);
+    if (!match) return { error: `item text "${ref}"` };
+    return { entry: match };
+  };
+}
+
+/** Applies validated check/uncheck/remove/add-bugs/add-improvements against
+ * one `{ bugs, improvements }`-shaped block (or Dev's Ideas list, passed as
+ * `{ bugs: items, improvements: [] }` so both add_bugs/add_improvements land
+ * in the same flat array). Throws ToolInputError (no changes made) if any
+ * check/uncheck/remove ref doesn't resolve.
+ *
+ * Application order is check/uncheck, then remove, then add - not the order
+ * refs happen to be given. A numeric remove ref (like a numeric check/uncheck
+ * ref) is resolved against the pre-mutation `combined` list, so removing
+ * before adding matters: adding first would let a stale number end up
+ * pointing at a newly added item. Removal itself is by object identity
+ * (`indexOf(entry.it)` on the live array at the moment of removal, not a
+ * precomputed index) - splicing by a batch of precomputed indices is the
+ * classic bug where removing items 1 and 2 actually removes items 1 and 3,
+ * because the first splice shifts everything after it. Returns a
+ * human-readable summary string. */
+export function applyBacklogEdits(block, { addBugs, addImprovements, checkRefs, uncheckRefs, removeRefs }, label) {
+  const combined = combinedItems(block);
+  const resolveItemRef = makeResolveItemRef(combined, label);
+
+  const checkResolved = checkRefs.map((r) => ({ ref: r, res: resolveItemRef(r) }));
+  const uncheckResolved = uncheckRefs.map((r) => ({ ref: r, res: resolveItemRef(r) }));
+  const removeResolved = removeRefs.map((r) => ({ ref: r, res: resolveItemRef(r) }));
+  const failures = [...checkResolved, ...uncheckResolved, ...removeResolved]
+    .filter((x) => x.res.error)
+    .map((x) => x.res.error);
+  if (failures.length) {
+    throw new ToolInputError(`update_backlog: no matching item for ${failures.join(", ")}. No changes were made.`);
+  }
+
+  for (const { res } of checkResolved) res.entry.it.checked = true;
+  for (const { res } of uncheckResolved) res.entry.it.checked = false;
+  for (const { res } of removeResolved) {
+    const list = block[res.entry.list];
+    const idx = list.indexOf(res.entry.it);
+    if (idx !== -1) list.splice(idx, 1);
+  }
+  for (const text of addBugs) block.bugs.push({ text, checked: false });
+  for (const text of addImprovements) block.improvements.push({ text, checked: false });
+
+  const parts = [];
+  if (addBugs.length) parts.push(`added ${addBugs.length} bug(s)`);
+  if (addImprovements.length) parts.push(`added ${addImprovements.length} improvement(s)`);
+  if (checkResolved.length) parts.push(`checked ${checkResolved.length} item(s)`);
+  if (uncheckResolved.length) parts.push(`unchecked ${uncheckResolved.length} item(s)`);
+  if (removeResolved.length) parts.push(`removed ${removeResolved.length} item(s)`);
+  return parts.length ? parts.join(", ") : "no changes";
+}
+
+/** Dev's Ideas list is a single flat list - unlike an ordinary project's
+ * bugs/improvements split, add_bugs and add_improvements both just append to
+ * it, and removal splices `items` directly by identity (entries have no
+ * `list` field to route through). Same validate-before-mutate discipline and
+ * check/uncheck -> remove -> add ordering as applyBacklogEdits otherwise. */
+export function applyIdeaEdits(items, { addBugs, addImprovements, checkRefs, uncheckRefs, removeRefs }) {
+  const combined = items.map((it) => ({ it }));
+  const resolveItemRef = makeResolveItemRef(combined, `Dev's Ideas list`);
+
+  const checkResolved = checkRefs.map((r) => ({ ref: r, res: resolveItemRef(r) }));
+  const uncheckResolved = uncheckRefs.map((r) => ({ ref: r, res: resolveItemRef(r) }));
+  const removeResolved = removeRefs.map((r) => ({ ref: r, res: resolveItemRef(r) }));
+  const failures = [...checkResolved, ...uncheckResolved, ...removeResolved]
+    .filter((x) => x.res.error)
+    .map((x) => x.res.error);
+  if (failures.length) {
+    throw new ToolInputError(`update_backlog: no matching item for ${failures.join(", ")}. No changes were made.`);
+  }
+
+  for (const { res } of checkResolved) res.entry.it.checked = true;
+  for (const { res } of uncheckResolved) res.entry.it.checked = false;
+  for (const { res } of removeResolved) {
+    const idx = items.indexOf(res.entry.it);
+    if (idx !== -1) items.splice(idx, 1);
+  }
+  const newTexts = [...addBugs, ...addImprovements];
+  for (const text of newTexts) items.push({ text, checked: false });
+
+  const parts = [];
+  if (newTexts.length) parts.push(`added ${newTexts.length} idea(s)`);
+  if (checkResolved.length) parts.push(`checked ${checkResolved.length} item(s)`);
+  if (uncheckResolved.length) parts.push(`unchecked ${uncheckResolved.length} item(s)`);
+  if (removeResolved.length) parts.push(`removed ${removeResolved.length} idea(s)`);
+  return parts.length ? parts.join(", ") : "no changes";
+}
+
+// ---------------------------------------------------------------------------
 // Dev Log: many named project blocks (offset 1), each wrapped in
 // `<h2>ProjectName</h2>`, preceded by an intro paragraph.
 // ---------------------------------------------------------------------------

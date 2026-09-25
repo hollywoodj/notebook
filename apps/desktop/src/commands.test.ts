@@ -90,6 +90,7 @@ function stubContext(overrides: Partial<CommandContext> = {}): CommandContext {
     searchInNotebook: noop,
     setListView: noop,
     importNotes: noop,
+    importNotesFolder: noop,
     setNotebookDefault: noop,
     setNotebookStack: noop,
     deleteNotebook: noop,

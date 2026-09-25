@@ -66,6 +66,7 @@ import { LinkDialog } from "./LinkDialog";
 import { FontFamily, FontSize } from "./fontMarks";
 import { Callout, Subscript, Superscript } from "./editorMarks";
 import { CodeCopyButton } from "./codeCopyButton";
+import { CollapsibleHeading } from "./collapsibleHeading";
 import {
   FileAttachment,
   USE_FILE_AS_TITLE,
@@ -426,6 +427,7 @@ export function NoteEditor({
       Subscript,
       Callout,
       CodeCopyButton,
+      CollapsibleHeading,
     ],
     content,
     autofocus: false,

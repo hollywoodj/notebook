@@ -12,11 +12,16 @@ import {
   formatNumberedItems,
   resolveRequiredProject,
   requireProjectArg,
+  applyBacklogEdits,
   ToolInputError,
 } from "../notes.mjs";
 
 function emptyBlock() {
   return { bugs: [], improvements: [], reviews: [] };
+}
+
+function noEdits(overrides = {}) {
+  return { addBugs: [], addImprovements: [], checkRefs: [], uncheckRefs: [], removeRefs: [], ...overrides };
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +79,120 @@ test("parseProjectBlock tolerates an empty block (all three headings still emitt
   assert.match(html, /<h2>Architecture Reviews<\/h2>/);
   const reparsed = parseProjectBlock(html, PROJECT_NOTE_OFFSET);
   assert.deepEqual(reparsed, emptyBlock());
+});
+
+// ---------------------------------------------------------------------------
+// applyBacklogEdits: remove, plus its interaction with add/check/uncheck
+// ---------------------------------------------------------------------------
+
+test("applyBacklogEdits removes an item by number", () => {
+  const block = {
+    bugs: [
+      { text: "b1", checked: false },
+      { text: "b2", checked: false },
+    ],
+    improvements: [{ text: "i1", checked: false }],
+    reviews: [],
+  };
+  // combined numbering: 1=b1, 2=b2, 3=i1
+  const summary = applyBacklogEdits(block, noEdits({ removeRefs: [2] }), `project "X"`);
+  assert.deepEqual(block.bugs, [{ text: "b1", checked: false }]);
+  assert.deepEqual(block.improvements, [{ text: "i1", checked: false }]);
+  assert.match(summary, /removed 1 item\(s\)/);
+});
+
+test("applyBacklogEdits removes an item by exact text", () => {
+  const block = {
+    bugs: [
+      { text: "b1", checked: false },
+      { text: "b2", checked: false },
+    ],
+    improvements: [],
+    reviews: [],
+  };
+  applyBacklogEdits(block, noEdits({ removeRefs: ["b1"] }), `project "X"`);
+  assert.deepEqual(block.bugs, [{ text: "b2", checked: false }]);
+});
+
+test("applyBacklogEdits removing two items in one call removes exactly those two - the index-vs-identity splicing trap", () => {
+  // If removal computed both target indices up front and spliced them in
+  // sequence, removing 1 and 2 would actually remove 1 and 3 - the first
+  // splice shifts everything after it down by one. Removal must instead
+  // find each item's live index (by object identity) at the moment it is
+  // spliced.
+  const block = {
+    bugs: [
+      { text: "b1", checked: false },
+      { text: "b2", checked: false },
+      { text: "b3", checked: false },
+      { text: "b4", checked: false },
+    ],
+    improvements: [],
+    reviews: [],
+  };
+  applyBacklogEdits(block, noEdits({ removeRefs: [1, 2] }), `project "X"`);
+  assert.deepEqual(block.bugs, [
+    { text: "b3", checked: false },
+    { text: "b4", checked: false },
+  ]);
+});
+
+test("applyBacklogEdits removes across both lists in one call, each landing in its own array", () => {
+  const block = {
+    bugs: [
+      { text: "b1", checked: false },
+      { text: "b2", checked: false },
+    ],
+    improvements: [
+      { text: "i1", checked: false },
+      { text: "i2", checked: false },
+    ],
+    reviews: [],
+  };
+  // combined numbering: 1=b1, 2=b2, 3=i1, 4=i2
+  applyBacklogEdits(block, noEdits({ removeRefs: [2, 3] }), `project "X"`);
+  assert.deepEqual(block.bugs, [{ text: "b1", checked: false }]);
+  assert.deepEqual(block.improvements, [{ text: "i2", checked: false }]);
+});
+
+test("applyBacklogEdits is atomic: a bogus remove ref alongside a valid one aborts the whole call, including a pending add", () => {
+  const block = {
+    bugs: [
+      { text: "b1", checked: false },
+      { text: "b2", checked: false },
+    ],
+    improvements: [],
+    reviews: [],
+  };
+  const snapshot = JSON.parse(JSON.stringify(block));
+  assert.throws(
+    () =>
+      applyBacklogEdits(
+        block,
+        noEdits({ removeRefs: [1, "does not exist"], addBugs: ["new bug"] }),
+        `project "X"`
+      ),
+    ToolInputError
+  );
+  assert.deepEqual(block, snapshot, "block must be completely unchanged when any ref fails to resolve");
+});
+
+test("applyBacklogEdits applies remove + add in the documented order (check/uncheck -> remove -> add)", () => {
+  const block = {
+    bugs: [
+      { text: "b1", checked: false },
+      { text: "b2", checked: false },
+    ],
+    improvements: [],
+    reviews: [],
+  };
+  const summary = applyBacklogEdits(block, noEdits({ removeRefs: [1], addBugs: ["b3"] }), `project "X"`);
+  assert.deepEqual(block.bugs, [
+    { text: "b2", checked: false },
+    { text: "b3", checked: false },
+  ]);
+  assert.match(summary, /removed 1 item\(s\)/);
+  assert.match(summary, /added 1 bug\(s\)/);
 });
 
 // ---------------------------------------------------------------------------
@@ -260,8 +379,8 @@ test("review entries stay newest-first as add_report's unshift pattern maintains
 // ---------------------------------------------------------------------------
 
 test("resolveRequiredProject defaults to cwd basename, resolving the Dev root to the reserved \"Dev\" project", () => {
-  assert.equal(resolveRequiredProject("Explicit", "C:/Users/James/Dev/Apps/notebook"), "Explicit");
-  assert.equal(resolveRequiredProject(undefined, "C:/Users/James/Dev/Apps/notebook"), "notebook");
+  assert.equal(resolveRequiredProject("Explicit", "C:/Users/James/Dev/Apps/Notebook"), "Explicit");
+  assert.equal(resolveRequiredProject(undefined, "C:/Users/James/Dev/Apps/Notebook"), "Notebook");
   assert.equal(resolveRequiredProject(undefined, "C:/Users/James/Dev"), "Dev");
 });
 

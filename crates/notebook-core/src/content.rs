@@ -13,6 +13,6 @@ pub mod plain;
 
 pub use attachment::{basename, default_attachment_name, looks_like_pdf, sniff_mime};
 pub use checklist::normalize_evernote_checklist_html;
-pub use entities::decode_xml_entities;
+pub use entities::{decode_xml_entities, decode_xml_entities_once};
 pub use html::file_attachment_html;
 pub use plain::strip_html;

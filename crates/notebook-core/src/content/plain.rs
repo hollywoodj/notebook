@@ -34,6 +34,7 @@ pub fn strip_html(html: &str) -> String {
                         | "h5"
                         | "h6"
                         | "header"
+                        | "hr"
                         | "li"
                         | "main"
                         | "nav"
@@ -95,5 +96,13 @@ mod tests {
             strip_html("<p>Bare &amp and &unknown; stay</p>"),
             "Bare &amp and &unknown; stay"
         );
+    }
+
+    #[test]
+    fn treats_a_divider_as_a_block_break() {
+        // Evernote's horizontal rule separates two blocks; without `hr` in the
+        // block list the text on either side ran together in search snippets
+        // and note-list previews.
+        assert_eq!(strip_html("<div>a</div><hr/><div>b</div>"), "a b");
     }
 }

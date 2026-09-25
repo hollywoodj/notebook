@@ -98,17 +98,42 @@ export function navIconTitle(label: string, count?: number | null): string {
 export type SidebarSectionId = (typeof DEFAULT_SIDEBAR_SECTIONS)[number];
 
 export const DEFAULT_SIDEBAR_SECTIONS = [
-  "notes",
   "shortcuts",
-  "reminders",
+  "notes",
   "notebooks",
   "tags",
+  "reminders",
   "templates",
   "files",
   "archived",
   "saved",
   "trash",
 ] as const;
+
+/** Utility sections that sit pinned at the foot of the sidebar, below a flexible gap. */
+export const BOTTOM_SIDEBAR_SECTIONS = [
+  "templates",
+  "files",
+  "archived",
+  "saved",
+  "trash",
+] as const satisfies readonly SidebarSectionId[];
+
+export function isBottomSidebarSection(id: SidebarSectionId): boolean {
+  return (BOTTOM_SIDEBAR_SECTIONS as readonly string[]).includes(id);
+}
+
+/** Splits the user's section order into the top group and the pinned bottom group,
+ *  preserving relative order within each. */
+export function partitionSidebarSections(sections: SidebarSectionId[]): {
+  top: SidebarSectionId[];
+  bottom: SidebarSectionId[];
+} {
+  return {
+    top: sections.filter((id) => !isBottomSidebarSection(id)),
+    bottom: sections.filter((id) => isBottomSidebarSection(id)),
+  };
+}
 
 export const SIDEBAR_SECTIONS_KEY = "notebook.sidebarSections";
 

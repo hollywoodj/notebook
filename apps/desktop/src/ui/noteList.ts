@@ -47,56 +47,17 @@ function startOfLocalDay(date: Date): number {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }
 
-export function groupNotesForList<
-  T extends { is_pinned: boolean; created_at: string; updated_at: string },
->(
+export function groupNotesForList<T extends { is_pinned: boolean }>(
   notes: T[],
-  sortBy: "updated" | "created" | "title" | "reminder",
-  now = new Date()
+  showPinnedGroup: boolean
 ): NoteListGroup<T>[] {
-  if (sortBy === "title") {
-    const pinned = notes.filter((note) => note.is_pinned);
-    const rest = notes.filter((note) => !note.is_pinned);
-    const groups: NoteListGroup<T>[] = [];
-    if (pinned.length) groups.push({ key: "pinned", label: "Pinned", notes: pinned });
-    if (rest.length) groups.push({ key: "all", label: "", notes: rest });
-    return groups.length ? groups : [{ key: "all", label: "", notes }];
-  }
-
-  const today = startOfLocalDay(now);
-  const yesterday = today - 86_400_000;
-  const week = today - 7 * 86_400_000;
-  const buckets: Record<string, T[]> = {
-    pinned: [],
-    today: [],
-    yesterday: [],
-    week: [],
-    earlier: [],
-  };
-  for (const note of notes) {
-    if (note.is_pinned) {
-      buckets.pinned.push(note);
-      continue;
-    }
-    const stamp = startOfLocalDay(
-      new Date(sortBy === "created" ? note.created_at : note.updated_at)
-    );
-    if (stamp >= today) buckets.today.push(note);
-    else if (stamp >= yesterday) buckets.yesterday.push(note);
-    else if (stamp >= week) buckets.week.push(note);
-    else buckets.earlier.push(note);
-  }
-  return (
-    [
-      ["pinned", "Pinned"],
-      ["today", "Today"],
-      ["yesterday", "Yesterday"],
-      ["week", "Previous 7 Days"],
-      ["earlier", "Earlier"],
-    ] as const
-  )
-    .filter(([key]) => buckets[key].length > 0)
-    .map(([key, label]) => ({ key, label, notes: buckets[key] }));
+  if (!showPinnedGroup) return [{ key: "all", label: "", notes }];
+  const pinned = notes.filter((note) => note.is_pinned);
+  const rest = notes.filter((note) => !note.is_pinned);
+  const groups: NoteListGroup<T>[] = [];
+  if (pinned.length) groups.push({ key: "pinned", label: "Pinned", notes: pinned });
+  if (rest.length) groups.push({ key: "all", label: "", notes: rest });
+  return groups.length ? groups : [{ key: "all", label: "", notes }];
 }
 
 export function groupNotesByNotebook<T extends { notebook_name: string }>(

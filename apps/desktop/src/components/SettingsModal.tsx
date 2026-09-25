@@ -56,6 +56,7 @@ export function SettingsModal({
   onResetPrefs,
   onRestoreTemplates,
   onImport,
+  onImportFolder,
   onEmptyTrash,
   initialSection = "application",
   sidebarSections = [],
@@ -72,6 +73,7 @@ export function SettingsModal({
   onResetPrefs: () => void;
   onRestoreTemplates: () => void;
   onImport: () => void;
+  onImportFolder: () => void;
   onEmptyTrash: () => void;
   initialSection?: SettingsSection;
   sidebarSections?: SidebarSectionId[];
@@ -535,11 +537,16 @@ export function SettingsModal({
               <>
                 <SettingsRow
                   title="Import Evernote"
-                  hint="Bring in .enex notebooks, including images and tags."
+                  hint="Bring in .enex notebooks, including images and tags. A folder imports every .enex file in it."
                 >
-                  <button className="primary-btn" onClick={onImport}>
-                    Import .enex
-                  </button>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button className="primary-btn" onClick={onImport}>
+                      Import .enex
+                    </button>
+                    <button className="ghost-btn" onClick={onImportFolder}>
+                      Import folder
+                    </button>
+                  </div>
                 </SettingsRow>
                 <SettingsRow
                   title="Restore built-in templates"

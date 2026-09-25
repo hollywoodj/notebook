@@ -26,23 +26,32 @@ describe("note drag payload", () => {
 });
 
 describe("groupNotesForList", () => {
-  it("puts pinned notes first and buckets the rest by day", () => {
-    const now = new Date("2026-08-17T15:00:00");
+  it("puts pinned notes first in a notebook view", () => {
     const notes = [
-      { id: "p", is_pinned: true, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" },
-      { id: "t", is_pinned: false, created_at: "2026-08-17T10:00:00", updated_at: "2026-08-17T10:00:00" },
-      { id: "y", is_pinned: false, created_at: "2026-08-16T10:00:00", updated_at: "2026-08-16T10:00:00" },
-      { id: "e", is_pinned: false, created_at: "2026-01-02T00:00:00Z", updated_at: "2026-01-02T00:00:00Z" },
+      { id: "p", is_pinned: true },
+      { id: "t", is_pinned: false },
+      { id: "y", is_pinned: false },
+      { id: "e", is_pinned: false },
     ];
-    const groups = groupNotesForList(notes, "updated", now);
+    const groups = groupNotesForList(notes, true);
     assert.deepEqual(
       groups.map((group) => [group.label, group.notes.map((note) => note.id)]),
       [
         ["Pinned", ["p"]],
-        ["Today", ["t"]],
-        ["Yesterday", ["y"]],
-        ["Earlier", ["e"]],
+        ["", ["t", "y", "e"]],
       ]
+    );
+  });
+
+  it("ignores pin order outside a notebook view", () => {
+    const notes = [
+      { id: "p", is_pinned: true },
+      { id: "t", is_pinned: false },
+    ];
+    const groups = groupNotesForList(notes, false);
+    assert.deepEqual(
+      groups.map((group) => [group.label, group.notes.map((note) => note.id)]),
+      [["", ["p", "t"]]]
     );
   });
 });

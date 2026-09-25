@@ -249,7 +249,9 @@ describe("Evernote list chrome", () => {
     assert.match(appSource, /type: "archived"/);
     assert.match(appSource, /Untagged/);
     assert.match(appSource, /Clear filters/);
-    assert.match(appSource, /list-filters-btn/);
+    // Filters and Sort share one borderless icon-button treatment in the
+    // Evernote-style list header (list-filters-btn was folded into it).
+    assert.match(appSource, /list-tool-btn/);
     assert.match(appSource, /note-card-date/);
     assert.match(appSource, /note-updated/);
     assert.match(appSource, /saveStateLabel/);

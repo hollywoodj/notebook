@@ -43,7 +43,47 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
 describe("createNoteSession", () => {
+  it("overlapping loadNoteInto calls each keep their own skip credit, even resolving out of order", async () => {
+    // Regression for notes jumping to the top of a date sort on a bare
+    // click: fast sidebar clicks fire overlapping `getNote` calls, and an
+    // earlier click's fetch can resolve after a later one's. A single
+    // shared boolean flag let the second resolution "steal" the skip
+    // armed for the first, leaving one load's autosave effect unguarded -
+    // triggering a same-content save that only bumped `updated_at`.
+    const n1 = note({ id: "n1", title: "One" });
+    const n2 = note({ id: "n2", title: "Two" });
+    const gates: Record<string, ReturnType<typeof deferred<Note>>> = {
+      n1: deferred<Note>(),
+      n2: deferred<Note>(),
+    };
+    const session = createNoteSession({
+      api: { getNote: (id: string) => gates[id].promise },
+    });
+
+    void session.loadNoteInto("n1");
+    void session.loadNoteInto("n2");
+
+    gates.n2.resolve(n2);
+    await flushMicrotasks();
+    assert.equal(session.get().activeNote?.id, "n2");
+    assert.equal(session.consumeSkipNextSave(), true);
+
+    gates.n1.resolve(n1);
+    await flushMicrotasks();
+    assert.equal(session.get().activeNote?.id, "n1");
+    assert.equal(session.consumeSkipNextSave(), true);
+  });
+
+
   it("clearNote clears active note, selection and lastClicked, and arms skipNextSave", async () => {
     const n1 = note({ id: "n1" });
     const session = createNoteSession({ api: fakeApi({ n1 }) });

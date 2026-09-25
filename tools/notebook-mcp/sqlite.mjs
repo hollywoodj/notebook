@@ -210,15 +210,25 @@ function rowToNote(row) {
  * store: listNotes/getNote/findByExactTitle/createNote/updateNote/
  * renameNote/softDeleteNote/search, plus `offline: true`, a `wrote` flag the
  * caller can inspect after the call, and `close()`.
+ *
+ * `notebookId` is scalar | array | null. Normalized to:
+ *   - `readIds`: null when the arg is null/undefined (unscoped - every
+ *     notebook is visible), else a deduped array of truthy ids from
+ *     `[].concat(arg)`. Read/list/search operate across all of `readIds`.
+ *   - `writeId`: `readIds ? readIds[0] : null` - the default create target
+ *     when no explicit target is given to createNote.
  */
 export function createSqliteStore(dbPath, notebookId) {
+  const readIds = notebookId == null ? null : [...new Set([].concat(notebookId).filter(Boolean))];
+  const writeId = readIds ? readIds[0] : null;
+
   const db = new DatabaseSync(dbPath);
   db.exec("PRAGMA busy_timeout = 5000"); // only pragma we touch - the Rust side owns the rest.
 
   function notebookUserId() {
-    const row = db.prepare("SELECT user_id FROM notebooks WHERE id = ?").get(notebookId);
+    const row = db.prepare("SELECT user_id FROM notebooks WHERE id = ?").get(writeId);
     if (!row) {
-      throw new Error(`Notebook ${notebookId} was not found in ${dbPath}.`);
+      throw new Error(`Notebook ${writeId} was not found in ${dbPath}.`);
     }
     return row.user_id;
   }
@@ -236,26 +246,47 @@ export function createSqliteStore(dbPath, notebookId) {
   const store = { offline: true, wrote: false };
 
   store.listNotes = async () => {
+    let where = "deleted_at IS NULL AND COALESCE(is_template, 0) = 0";
+    const params = [];
+    if (readIds) {
+      where += ` AND notebook_id IN (${readIds.map(() => "?").join(", ")})`;
+      params.push(...readIds);
+    }
     const rows = db
       .prepare(
-        "SELECT id, title, updated_at FROM notes " +
-          "WHERE notebook_id = ? AND deleted_at IS NULL AND COALESCE(is_template, 0) = 0 " +
+        `SELECT id, title, notebook_id, updated_at FROM notes WHERE ${where} ` +
           "ORDER BY is_pinned DESC, updated_at DESC"
       )
-      .all(notebookId);
-    return rows.map((r) => ({ id: r.id, title: r.title, updated_at: r.updated_at }));
+      .all(...params);
+    return rows.map((r) => ({ id: r.id, title: r.title, notebook_id: r.notebook_id, updated_at: r.updated_at }));
   };
 
   store.getNote = async (id) => rowToNote(getNoteRow(id));
 
-  store.findByExactTitle = async (title) => {
-    const row = db
-      .prepare("SELECT id, title FROM notes WHERE notebook_id = ? AND title = ? AND deleted_at IS NULL LIMIT 1")
-      .get(notebookId, title);
-    return row ? { id: row.id, title: row.title } : null;
+  store.findByExactTitle = async (title, targetNotebookId) => {
+    let where = "title = ? AND deleted_at IS NULL";
+    const params = [title];
+    if (targetNotebookId) {
+      where += " AND notebook_id = ?";
+      params.push(targetNotebookId);
+    } else if (readIds) {
+      where += ` AND notebook_id IN (${readIds.map(() => "?").join(", ")})`;
+      params.push(...readIds);
+    }
+    const row = db.prepare(`SELECT id, title, notebook_id FROM notes WHERE ${where} LIMIT 1`).get(...params);
+    return row ? { id: row.id, title: row.title, notebook_id: row.notebook_id } : null;
   };
 
-  store.createNote = async (title, contentHtml) => {
+  store.createNote = async (title, contentHtml, targetNotebookId) => {
+    let destNotebookId;
+    if (targetNotebookId) {
+      if (!readIds || !readIds.includes(targetNotebookId)) {
+        throw new Error(`createNote: notebook ${targetNotebookId} is not one of the scoped notebooks.`);
+      }
+      destNotebookId = targetNotebookId;
+    } else {
+      destNotebookId = writeId;
+    }
     const id = randomUUID();
     const now = nowRfc3339();
     const userId = notebookUserId();
@@ -266,7 +297,7 @@ export function createSqliteStore(dbPath, notebookId) {
         "INSERT INTO notes (id, user_id, notebook_id, title, content, content_plain, is_pinned, " +
           "reminder_at, source_url, is_template, template_category, created_at, updated_at) " +
           "VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0, NULL, ?, ?)"
-      ).run(id, userId, notebookId, title, contentHtml, contentPlain, now, now);
+      ).run(id, userId, destNotebookId, title, contentHtml, contentPlain, now, now);
       insertRevision(id, title, contentHtml, now);
       db.exec("COMMIT");
     } catch (err) {
@@ -334,15 +365,18 @@ export function createSqliteStore(dbPath, notebookId) {
       .map((term) => `"${term.replace(/"/g, '""')}"*`);
     const ftsQuery = terms.join(" AND ");
     if (!ftsQuery) return { notes: [] };
+    let where = "n.deleted_at IS NULL AND COALESCE(n.is_template, 0) = 0 AND n.id IN (SELECT note_id FROM notes_fts WHERE notes_fts MATCH ?)";
+    const params = [ftsQuery];
+    if (readIds) {
+      where += ` AND n.notebook_id IN (${readIds.map(() => "?").join(", ")})`;
+      params.push(...readIds);
+    }
     const rows = db
-      .prepare(
-        "SELECT n.id, n.title, n.content_plain FROM notes n " +
-          "WHERE n.notebook_id = ? AND n.deleted_at IS NULL AND COALESCE(n.is_template, 0) = 0 " +
-          "AND n.id IN (SELECT note_id FROM notes_fts WHERE notes_fts MATCH ?) " +
-          "ORDER BY n.updated_at DESC LIMIT ?"
-      )
-      .all(notebookId, ftsQuery, limit);
-    return { notes: rows.map((r) => ({ id: r.id, title: r.title, snippet: r.content_plain.slice(0, 200) })) };
+      .prepare(`SELECT n.id, n.title, n.notebook_id, n.content_plain FROM notes n WHERE ${where} ORDER BY n.updated_at DESC LIMIT ?`)
+      .all(...params, limit);
+    return {
+      notes: rows.map((r) => ({ id: r.id, title: r.title, notebook_id: r.notebook_id, snippet: r.content_plain.slice(0, 200) })),
+    };
   };
 
   store.close = () => db.close();

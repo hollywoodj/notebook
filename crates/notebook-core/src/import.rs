@@ -13,6 +13,11 @@ use crate::service::NotebookService;
 
 use self::enex::{parse_enex, EnexNote};
 
+enum ImportOutcome {
+    Imported,
+    Duplicate,
+}
+
 impl NotebookService {
     pub fn import_enex(&self, data: &[u8], options: EnexImportRequest) -> Result<EnexImportResult> {
         let parsed = parse_enex(data)?;
@@ -22,6 +27,7 @@ impl NotebookService {
             .unwrap_or_else(|| "Imported".to_string());
         let mut imported = 0u32;
         let mut skipped = 0u32;
+        let mut duplicates = 0u32;
         let mut errors = Vec::new();
         let mut primary_notebook_id = None;
         let mut primary_notebook_name = None;
@@ -46,7 +52,8 @@ impl NotebookService {
             }
 
             match self.import_enex_note(notebook_id, enex_note) {
-                Ok(()) => imported += 1,
+                Ok(ImportOutcome::Imported) => imported += 1,
+                Ok(ImportOutcome::Duplicate) => duplicates += 1,
                 Err(e) => {
                     skipped += 1;
                     errors.push(ImportError {
@@ -70,6 +77,7 @@ impl NotebookService {
         Ok(EnexImportResult {
             imported,
             skipped,
+            duplicates,
             notebook_id,
             notebook_name,
             notebook_count,
@@ -106,7 +114,11 @@ impl NotebookService {
         Ok(notebook.id)
     }
 
-    fn import_enex_note(&self, notebook_id: Uuid, note: EnexNote) -> Result<()> {
+    fn import_enex_note(&self, notebook_id: Uuid, note: EnexNote) -> Result<ImportOutcome> {
+        if self.note_already_imported(notebook_id, &note.title, note.created)? {
+            return Ok(ImportOutcome::Duplicate);
+        }
+
         let tag_ids: Vec<Uuid> = note
             .tags
             .iter()
@@ -164,11 +176,48 @@ impl NotebookService {
             )?;
         }
 
-        if let (Some(created_at), Some(updated_at)) = (note.created, note.updated) {
+        // A note missing one of <created>/<updated> should still keep the
+        // timestamp it does have, rather than falling through to "today" for
+        // both. Evernote semantics: a note that was never updated has
+        // updated == created.
+        let created_at = note.created.or(note.updated);
+        let updated_at = note.updated.or(note.created);
+        if let (Some(created_at), Some(updated_at)) = (created_at, updated_at) {
             self.set_note_timestamps(created.id, created_at, updated_at)?;
         }
 
-        Ok(())
+        Ok(ImportOutcome::Imported)
+    }
+
+    /// Keyed on notebook + title + created timestamp - title alone is not
+    /// unique in real data. A note with no `<created>` timestamp can't be
+    /// keyed safely, so it always imports (returns `false`).
+    fn note_already_imported(
+        &self,
+        notebook_id: Uuid,
+        title: &str,
+        created: Option<DateTime<Utc>>,
+    ) -> Result<bool> {
+        let Some(created) = created else {
+            return Ok(false);
+        };
+        let user_id = self.db().default_user_id()?;
+        let mut stmt = self.db().connection().prepare(
+            "SELECT created_at FROM notes WHERE user_id = ?1 AND notebook_id = ?2 AND title = ?3 AND deleted_at IS NULL",
+        )?;
+        let rows = stmt.query_map(
+            rusqlite::params![user_id.to_string(), notebook_id.to_string(), title],
+            |row| row.get::<_, String>(0),
+        )?;
+        for row in rows {
+            let existing = row?;
+            if let Ok(existing_dt) = DateTime::parse_from_rfc3339(&existing) {
+                if existing_dt.with_timezone(&Utc) == created {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
 
     fn set_note_timestamps(

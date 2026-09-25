@@ -7,14 +7,63 @@ const { spawn } = require("child_process");
 const API_HOST = "127.0.0.1";
 const API_PORT = 8799;
 const DEV_URL = "http://127.0.0.1:1420";
+const APP_NAME = "Notebook";
+const RESTART_ARG = "--restart-app";
 // A dev run launches electron.exe directly, so without an explicit icon
 // Windows would show the stock Electron icon instead of Notebook's own.
 const APP_ICON = path.join(__dirname, "..", "build", process.platform === "win32" ? "icon.ico" : "icon.png");
 
 let apiProcess = null;
 let mainWindow = null;
+let restartingApp = false;
 let pendingOpenUrl =
   process.argv.find((item) => String(item).startsWith("notebook:")) ?? null;
+
+function restartApp() {
+  if (restartingApp) return;
+  restartingApp = true;
+  // Without this, the relaunched process starts before this one has actually released the
+  // single-instance lock, so its own requestSingleInstanceLock() fails and it quits itself -
+  // the app just closes instead of restarting.
+  app.releaseSingleInstanceLock();
+  // Goes through the shared launcher instead of app.relaunch(), which would just re-exec
+  // whatever was last built - this way restart rebuilds from source first.
+  // Dev/CLAUDE.md: "Every app rebuilds when it starts" / "Restart lives on the icon menu".
+  spawn('powershell.exe', [
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+    '-File', 'C:\\Users\\James\\Dev\\Scripts\\launch-app.ps1', '-App', 'Notebook',
+  ], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  app.quit();
+}
+
+/**
+ * The "Restart Notebook" entry in the taskbar jump list. It launches a throwaway second
+ * instance carrying RESTART_ARG; the running instance sees it in `second-instance` and restarts
+ * itself.
+ *
+ * Explorer runs jump list tasks from its own working directory, not the project folder, so the
+ * app path passed to electron.exe must be absolute - a relative one resolves against Explorer's
+ * directory, finds nothing, and dies silently before the running instance ever hears about it.
+ * A task that cannot work announces itself instead of pretending to succeed.
+ */
+function installRestartTask() {
+  if (process.platform !== "win32") return;
+  const appPath = app.getAppPath();
+  if (!app.isPackaged && !path.isAbsolute(appPath)) {
+    console.error(`${APP_NAME}: not registering the restart task - the app path is not absolute (${appPath})`);
+    return;
+  }
+  const args = app.isPackaged ? [RESTART_ARG] : [appPath, RESTART_ARG];
+  const workingDirectory = app.isPackaged ? path.dirname(process.execPath) : appPath;
+  const registered = app.setUserTasks([{ program: process.execPath, arguments: args.map((arg) => `"${arg}"`).join(" "),
+    workingDirectory,
+    ...(!app.isPackaged && fs.existsSync(APP_ICON)
+      ? { iconPath: APP_ICON, iconIndex: 0 }
+      : { iconPath: process.execPath, iconIndex: 0 }),
+    title: `Restart ${APP_NAME}`,
+    description: `Restart ${APP_NAME} to load the latest build` }]);
+  if (!registered) console.error(`${APP_NAME}: Windows rejected the restart task registration`);
+}
 
 function sendOpenUrl(url) {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -172,6 +221,10 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on("second-instance", (_event, argv) => {
+    if (argv.includes(RESTART_ARG)) {
+      restartApp();
+      return;
+    }
     const url = argv.find((item) => String(item).startsWith("notebook:"));
     if (url) sendOpenUrl(url);
     if (mainWindow) {
@@ -235,6 +288,7 @@ if (!gotLock) {
     // Ties windows to this app's own taskbar/Start Menu identity instead of
     // Electron's, which is what makes the explicit icon above take effect.
     app.setAppUserModelId("app.notebook.desktop");
+    installRestartTask();
     // Notebook is light-mode-only; without this, the native window chrome
     // (title bar) still follows the OS dark/light setting even though the
     // in-app UI is hardcoded to light.

@@ -198,7 +198,13 @@ pub fn list_summaries(conn: &Connection, filter: NoteListFilter) -> Result<Vec<N
     }
     sql.push_str(" WHERE ");
     sql.push_str(&conditions.join(" AND "));
-    sql.push_str(" ORDER BY n.is_pinned DESC, n.updated_at DESC");
+    // Pinning only bubbles a note to the top of its own notebook's list -
+    // there is no global "pinned" ordering across other views.
+    if filter.notebook_id.is_some() {
+        sql.push_str(" ORDER BY n.is_pinned DESC, n.updated_at DESC");
+    } else {
+        sql.push_str(" ORDER BY n.updated_at DESC");
+    }
 
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![filter.user_id.to_string()], SummaryRow::from_sql)?;

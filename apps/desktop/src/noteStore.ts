@@ -138,7 +138,9 @@ export async function loadNotes(
     if (filter.type === "reminders") {
       return new Date(a.reminder_at || 0).getTime() - new Date(b.reminder_at || 0).getTime();
     }
-    if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
+    if (filter.type === "notebook" && a.is_pinned !== b.is_pinned) {
+      return a.is_pinned ? -1 : 1;
+    }
     if (sortBy === "title") return a.title.localeCompare(b.title);
     if (sortBy === "created") {
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();

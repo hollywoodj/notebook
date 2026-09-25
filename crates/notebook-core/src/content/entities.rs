@@ -23,7 +23,15 @@ pub fn decode_xml_entities(input: &str) -> String {
     }
 }
 
-fn decode_xml_entities_once(input: &str) -> String {
+/// Decode XML/HTML named and numeric character entities exactly once.
+///
+/// Unlike [`decode_xml_entities`], which decodes twice to repair Evernote's
+/// double-escaped titles, this is the single-pass decoder for payloads that
+/// were escaped exactly once - e.g. `<content>` from exporters (Joplin,
+/// Apple Notes, Notion) that escape the ENML instead of wrapping it in
+/// CDATA. Double-decoding such content would turn a legitimate `&amp;amp;`
+/// into a bare `&`, and worse, could materialise real tags.
+pub fn decode_xml_entities_once(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut rest = input;
     while let Some(start) = rest.find('&') {

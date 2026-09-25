@@ -84,6 +84,7 @@ function stubMenu(overrides: Partial<AppMenuContext> = {}): AppMenuContext {
     searchInNotebook: noop,
     setListView: noop,
     importNotes: noop,
+    importNotesFolder: noop,
     setNotebookDefault: noop,
     setNotebookStack: noop,
     deleteNotebook: noop,
@@ -148,6 +149,7 @@ describe("buildMenuBar", () => {
     assert.ok(tools);
     assert.equal(labels(file.items).includes("Import Notes…"), true);
     assert.equal(labels(tools.items).includes("Import from Evernote…"), true);
+    assert.equal(labels(tools.items).includes("Import Evernote Folder…"), true);
     const share = file.items.find((item) => "label" in item && item.label === "Share");
     assert.ok(share && "children" in share && share.children);
     assert.equal(labels(share.children).includes("Send to OmniClone"), true);

@@ -335,6 +335,7 @@ impl NotebookBackend for FakeBackend {
         Ok(EnexImportResult {
             imported: 0,
             skipped: 0,
+            duplicates: 0,
             notebook_id: Uuid::new_v4(),
             notebook_name: "Imported".to_string(),
             notebook_count: 0,
