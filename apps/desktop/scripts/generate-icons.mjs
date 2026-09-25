@@ -18,27 +18,36 @@ const COVER = "#157A5B";
 const BINDING = "#0D4C38"; // cover at 62% luminance
 const RULE = "#FAF9F5";
 
-// The mark on a 100-unit square. At 32 px and below the third rule is
-// dropped and the other two thicken so they never smear together; 16 px
-// also tightens the corner radius.
+// Pixel-snapped geometry for the small frames, in that frame's own pixels:
+// the spine's right edge, the rules' left and right edges, the short third
+// rule's right edge, the rule height and each rule's top.
+const SNAPPED = {
+  16: { corner: 18, spine: 5, left: 6, right: 14, short: 11, h: 2, tops: [3, 7, 11] },
+  24: { corner: 21.5, spine: 7, left: 9, right: 20, short: 16, h: 2, tops: [6, 11, 16] },
+  32: { corner: 21.5, spine: 10, left: 12, right: 27, short: 21, h: 3, tops: [8, 14, 20] },
+};
+
+// The mark on a 100-unit square. The 32 px and smaller frames keep all
+// three rules but snap them to whole pixels so they never smear together.
 function mark(size) {
   let corner = 21.5;
   let spine = 30;
-  let rules;
-  if (size <= 16) {
-    corner = 18;
-    spine = 31;
-    rules = [{ x: 45, y: 30, w: 42, h: 12 }, { x: 45, y: 58, w: 42, h: 12 }];
-  } else if (size <= 24) {
-    rules = [{ x: 44, y: 28, w: 40, h: 10 }, { x: 44, y: 62, w: 40, h: 10 }];
-  } else if (size <= 32) {
-    rules = [{ x: 44, y: 28, w: 40, h: 9 }, { x: 44, y: 63, w: 40, h: 9 }];
-  } else {
-    rules = [
-      { x: 44, y: 26, w: 40, h: 8 },
-      { x: 44, y: 46, w: 40, h: 8 },
-      { x: 44, y: 66, w: 25, h: 8 },
-    ];
+  let rules = [
+    { x: 40, y: 26, w: 44, h: 8 },
+    { x: 40, y: 46, w: 44, h: 8 },
+    { x: 40, y: 66, w: 28, h: 8 },
+  ];
+  const snapped = SNAPPED[size];
+  if (snapped) {
+    const u = (px) => (px * 100) / size;
+    corner = snapped.corner;
+    spine = u(snapped.spine);
+    rules = snapped.tops.map((top, i) => ({
+      x: u(snapped.left),
+      y: u(top),
+      w: u((i === 2 ? snapped.short : snapped.right) - snapped.left),
+      h: u(snapped.h),
+    }));
   }
   // Large frames keep the 1000/1024 optical footprint; small ones go
   // full-bleed so the edges land on whole pixels.
